@@ -1,0 +1,2266 @@
+//Программа является узлом сети 
+//
+#include <stdio.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <string.h>
+#include <time.h>
+#include <sys/time.h>
+
+#include "PICA_node.h"
+#include "PICA_proto.h"
+#include "PICA_msgproc.h"
+#include "PICA_nodeaddrlist.h"
+#include "PICA_common.h"
+#include "PICA_nodejoinskynet.h"
+
+#ifdef NO_RAND_DEV
+#include "PICA_rand_seed.h"
+#endif
+
+#define MAX_NEWCONNS 64
+
+#define NEWCONN_TIMEOUT 10 //sec
+#define JOINSKYNET_TIMEOUT 15
+#define SELECT_TIMEOUT 1
+
+clock_t TMO_CCLINK_WAITACTIVE=15;//CONF //таймаут ожидания перехода соединения в активное состояние
+
+char *my_addr;//TEMP CONF FIXME  собственный ip-адрес узла, на котором он ожидает соединения
+
+SOCKET listen_comm_sck;//*
+
+SSL_CTX* ctx;
+struct newconn newconns[MAX_NEWCONNS];
+unsigned int newconns_pos=0;
+
+
+struct client *client_tree_root;//корень дерева клиентов
+struct client *client_list_head;//указатель на первый элемент списка клиентов или 0, если список пуст
+struct client *client_list_end;//указатель на последний элемент списка клиентов или 0, если список пуст
+
+struct cclink *cclink_list_head;
+struct cclink *cclink_list_end;
+
+unsigned int cclink_list_count;
+
+struct nodelink *nodelink_list_head;
+struct nodelink *nodelink_list_end;
+unsigned int nodelink_list_count;
+
+struct PICA_nodeaddr *nodeaddr_list_head;
+struct PICA_nodeaddr *nodeaddr_list_end;
+unsigned int nodeaddr_list_count;
+
+
+char msg_VERDIFFER[4]={PICA_PROTO_VERDIFFER,PICA_PROTO_VERDIFFER,PICA_PROTO_VER_HIGH,PICA_PROTO_VER_LOW};
+const unsigned int msg_VERDIFFER_len=4;
+
+unsigned int procmsg_INITREQ(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_CONNID(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_NODECONNREQ(unsigned char* buf,unsigned int size,void* ptr);
+
+unsigned int procmsg_CONNREQOUTG(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_CONNALLOW(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_CONNDENY(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_NODERESP(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_NEWNODE(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_NODELISTREQ(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_NODELIST(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_N2NFOUND(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_SEARCH(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_N2NCONNREQOUTG(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_N2NALLOW(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_N2NNOTFOUND(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_N2NMSG(unsigned char* buf,unsigned int size,void* ptr);
+
+struct cclink* cclink_list_add(struct client *clr,struct client *cle);
+struct cclink* cclink_list_search(unsigned int caller_id, unsigned int callee_id);
+struct cclink* cclink_list_findwaitsearch(unsigned int callee_id);
+void cclink_list_addlocal(struct client *clr,struct client *cle);
+void cclink_list_delete(struct cclink *l);
+void cclink_list_addn2nclr(struct client *clr,unsigned int callee_id);
+void cclink_setwaitconn(struct cclink *ccl);
+void cclink_list_addn2ncle(unsigned int caller_id, struct nodelink *caller_node, struct client *cle);
+void cclink_activate(struct cclink *ccl,SOCKET s);
+void cclink_attach_remotecle_node(struct cclink *ccl, struct nodelink *callee_node);
+
+struct client* client_tree_search(unsigned int id);//
+struct client *client_list_addnew(struct newconn *nc);
+struct PICA_proto_msg* client_wbuf_push(struct client *c,unsigned int msgid,unsigned int size);
+
+struct PICA_proto_msg* nodelink_wbuf_push(struct nodelink *nl,unsigned int msgid,unsigned int size);
+int nodelink_rbuf_grow(struct nodelink *nl);
+int nodelink_attach_nodeaddr(struct nodelink *nl, unsigned int addr_type, void* nodeaddr, unsigned int nodeaddr_size);
+struct nodelink *nodelink_list_addnew(struct newconn *nc);
+void nodelink_list_delete(struct nodelink *n);
+
+void newconn_close(struct newconn* nc);
+void newconn_free(struct newconn* nc);
+struct newconn* newconn_add(struct newconn *ncs,int *pos);
+
+//описание формата сообщений, которые могут приходить _ОТ_ клиентов по управляющему защищенному соединению 
+#define MSGINFO_MSGSNUM(arr) (sizeof(arr)/sizeof(struct PICA_msginfo))
+
+struct PICA_msginfo  _msginfo_comm[]={
+{PICA_PROTO_CONNREQOUTG, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNREQOUTG_SIZE, procmsg_CONNREQOUTG},
+{PICA_PROTO_CONNALLOW, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNALLOW_SIZE, procmsg_CONNALLOW}, 
+{PICA_PROTO_CONNDENY, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNDENY_SIZE, procmsg_CONNDENY},
+{PICA_PROTO_CLNODELISTREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CLNODELISTREQ_SIZE, procmsg_NODELISTREQ}
+};//---!!! PING!!!
+
+struct PICA_msginfo _msginfo_node[]={
+{PICA_PROTO_INITRESPOK,PICA_MSG_FIXED_SIZE,PICA_PROTO_INITRESPOK_SIZE,procmsg_NODERESP},
+{PICA_PROTO_VERDIFFER ,PICA_MSG_FIXED_SIZE,PICA_PROTO_VERDIFFER_SIZE,procmsg_NODERESP},
+{PICA_PROTO_NEWNODE_IPV4 ,PICA_MSG_FIXED_SIZE,PICA_PROTO_NEWNODE_IPV4_SIZE,procmsg_NEWNODE},
+{PICA_PROTO_NODELISTREQ,PICA_MSG_FIXED_SIZE,PICA_PROTO_NODELISTREQ_SIZE,procmsg_NODELISTREQ},
+{PICA_PROTO_NODELIST,PICA_MSG_VAR_SIZE,PICA_MSG_VARSIZE_INT16,procmsg_NODELIST},
+
+{PICA_PROTO_SEARCH,PICA_MSG_FIXED_SIZE,PICA_PROTO_SEARCH_SIZE,procmsg_SEARCH},
+{PICA_PROTO_N2NFOUND,PICA_MSG_FIXED_SIZE,PICA_PROTO_N2NFOUND_SIZE,procmsg_N2NFOUND},
+{PICA_PROTO_N2NFOUNDCACHE,PICA_MSG_VAR_SIZE,PICA_MSG_VARSIZE_INT16,procmsg_N2NFOUND},
+{PICA_PROTO_N2NCONNREQOUTG,PICA_MSG_FIXED_SIZE,PICA_PROTO_N2NCONNREQOUTG_SIZE,procmsg_N2NCONNREQOUTG},
+{PICA_PROTO_N2NALLOW,PICA_MSG_FIXED_SIZE,PICA_PROTO_N2NALLOW_SIZE,procmsg_N2NALLOW},
+{PICA_PROTO_N2NNOTFOUND,PICA_MSG_FIXED_SIZE,PICA_PROTO_N2NNOTFOUND_SIZE,procmsg_N2NNOTFOUND},
+{PICA_PROTO_N2NMSG,PICA_MSG_VAR_SIZE,PICA_MSG_VARSIZE_INT16,procmsg_N2NMSG}
+};
+
+struct PICA_msginfo _msginfo_newconn[]={
+{PICA_PROTO_INITREQ,PICA_MSG_FIXED_SIZE,PICA_PROTO_INITREQ_SIZE,procmsg_INITREQ},
+{PICA_PROTO_CONNID,PICA_MSG_FIXED_SIZE,PICA_PROTO_CONNID_SIZE,procmsg_CONNID},
+{PICA_PROTO_NODECONNREQ,PICA_MSG_FIXED_SIZE,PICA_PROTO_NODECONNREQ_SIZE,procmsg_NODECONNREQ}
+};
+
+
+
+unsigned int procmsg_INITREQ(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct newconn *nc=(struct newconn*)ptr;
+struct PICA_proto_msg *mp;
+
+if (buf[2]==PICA_PROTO_VER_HIGH && buf[3]==PICA_PROTO_VER_LOW)
+	{
+	struct client *c;
+	c=client_list_addnew(nc);
+	if (!c)
+		return 0;
+	
+	newconn_free(nc);
+
+	if (mp=client_wbuf_push(c,PICA_PROTO_INITRESPOK,PICA_PROTO_INITRESPOK_SIZE))
+		{
+		mp->tail[0]='O';
+		mp->tail[1]='K';
+		}
+	
+	c->state=PICA_CLSTATE_SENDINGRESP;
+	printf("got PICA_PROTO_INITREQ from client\n");//debug
+	}///////---------<<<<<<<<<<< new client
+else
+	{
+	//// PICA_PROTO_VERDIFFER
+	send(nc->sck,msg_VERDIFFER,msg_VERDIFFER_len,0);
+	return 0;
+	}
+
+return 1;
+}
+
+unsigned int procmsg_CONNID(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct PICA_proto_msg *mp;
+struct newconn *nc=(struct newconn*)ptr;
+unsigned int caller_id,callee_id;
+struct cclink *link;
+
+puts("received CONNID");//debug
+
+caller_id=*((unsigned int*)(buf+2));
+callee_id=*((unsigned int*)(buf+6));
+
+printf("CONNID: caller_id=%u callee_id=%u\n",caller_id,callee_id);//debug
+
+link=cclink_list_search(caller_id,callee_id);
+
+if (!link)
+	return 0;
+
+puts("\ncclink found");//debug
+
+printf("link->state = %i\n", link->state);//debug
+
+if (link->state!=PICA_CCLINK_LOCAL_WAITCONNCLE && link->state!=PICA_CCLINK_LOCAL_WAITCONNCLR
+	&& link->state!=PICA_CCLINK_N2NCLR_WAITCONNCLR  && link->state!=PICA_CCLINK_N2NCLE_WAITCONNCLE)
+	return 0;
+
+{
+struct client *c;
+//проверка IP адреса.
+//IP адрес должен совпадать с адресом  клиента в управляющем соединении
+
+if (link->state==PICA_CCLINK_LOCAL_WAITCONNCLE || link->state==PICA_CCLINK_N2NCLE_WAITCONNCLE)
+	c = link->p2;
+else if (link->state==PICA_CCLINK_LOCAL_WAITCONNCLR || link->state==PICA_CCLINK_N2NCLR_WAITCONNCLR)
+	c = link->p1;
+
+if (nc->addr.sin_addr.s_addr!=c->addr.sin_addr.s_addr)
+	{
+	puts("IP check failed");//debug
+	return 0;
+	}
+}
+
+if (link->state==PICA_CCLINK_LOCAL_WAITCONNCLE)
+	{
+	if(mp=client_wbuf_push(link->p1,PICA_PROTO_FOUND,PICA_PROTO_FOUND_SIZE))
+		{
+		*((unsigned int*)mp->tail)=callee_id;
+		}
+	else
+		{
+		puts("unable to send FOUND to caller");//debug
+		cclink_list_delete(link);
+		return 0;
+		}
+	}
+
+if (link->state==PICA_CCLINK_N2NCLE_WAITCONNCLE)
+	{
+	if(mp=nodelink_wbuf_push(link->caller_node,PICA_PROTO_N2NALLOW,PICA_PROTO_N2NALLOW_SIZE))
+		{
+		*((unsigned int*)mp->tail)=caller_id;
+		*((unsigned int*)(mp->tail+4))=callee_id;
+		}
+	else
+		{
+		puts("unable to send N2NALLOW to caller node");//debug
+		cclink_list_delete(link);
+		return 0;
+		}
+	}
+
+cclink_activate(link,nc->sck);
+newconn_free(nc);
+return 1;
+}
+
+unsigned int procmsg_NODECONNREQ(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct newconn *nc=(struct newconn*)ptr;
+struct PICA_proto_msg *mp;
+
+if (buf[2]==PICA_PROTO_VER_HIGH &&
+	buf[3]==PICA_PROTO_VER_LOW)
+	{
+	////-прием входящего подключения
+	//--------------------------
+	struct nodelink *nl;
+	nl=nodelink_list_addnew(nc);
+	newconn_free(nc);
+	if (!nl)
+		return 0;
+
+	if (mp=nodelink_wbuf_push(nl,PICA_PROTO_INITRESPOK,PICA_PROTO_INITRESPOK_SIZE))
+		{
+		mp->tail[0]='O';
+		mp->tail[1]='K';
+		}
+	}
+else
+	{
+	//// PICA_PROTO_VERDIFFER
+	send(nc->sck,msg_VERDIFFER,msg_VERDIFFER_len,0);
+	return 0;
+	}
+
+return 1;
+}
+
+
+void mapfunc_sendsearchreq(struct nodelink *p,unsigned int id)
+{
+struct PICA_proto_msg *mp;
+
+mp=nodelink_wbuf_push(p,PICA_PROTO_SEARCH,PICA_PROTO_SEARCH_SIZE);
+
+if (mp)
+	*((unsigned int*)mp->tail) = id;
+	
+}
+
+int nodelink_send_searchreq(unsigned int id)
+{
+if (!nodelink_list_count)
+	return 0;
+
+LISTMAP(nodelink,nodelink,mapfunc_sendsearchreq,id);
+    
+return 1;
+}
+
+unsigned int procmsg_CONNREQOUTG(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct client *i,*o;//i - указатель на вызывающего клиента, o - вызываемого(если найден)
+unsigned int callee_id;
+struct PICA_proto_msg *mp;
+
+puts("procmsg_CONNREQOUTGOING");//debug
+
+i=(struct client *)ptr;
+
+callee_id=*(unsigned int*)(buf+2);
+
+if (o=client_tree_search(callee_id))
+	{
+	#warning "duplicated connections" // сделать проверку на наличие уже имеющегося соединения между клиентами
+	// и если оно есть, то разрывать его, либо... ???? надо подумать
+
+	#warning "self" // а еще - если клиент вызывает сам себя?
+
+	//отправить o _CONNREQINC
+	if (mp=client_wbuf_push(o,PICA_PROTO_CONNREQINC,PICA_PROTO_CONNREQINC_SIZE))
+		{
+		*((unsigned int*)mp->tail)=i->id;
+		cclink_list_addlocal(i,o);
+		return 1;
+		}
+	
+	return 1;//сообщение отправить не удалось, но все равно возвращаем 1
+	}
+	
+if (cclink_list_findwaitsearch(callee_id)/*search request for this id is already in progress*/ 
+    		|| nodelink_send_searchreq(callee_id) /*make new search*/)
+	{
+	cclink_list_addn2nclr(i,callee_id);
+    	return 1;
+	}
+	
+//отправить i _NOTFOUND
+if (mp=client_wbuf_push(i,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE))
+	{
+	*((unsigned int*)mp->tail)=callee_id;
+	puts("sending NOTFOUND... put to senq q...");//debug
+	}
+
+return 1;
+}
+
+unsigned int procmsg_CONNALLOW(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct client *caller,*callee;
+struct cclink *link;
+unsigned int caller_id;
+
+puts("procmsg_CONNALLOW");//debug
+
+callee=(struct client *)ptr;
+caller_id=*(unsigned int*)(buf+2);
+
+puts("procmsg_CONNALLOW_");//debug
+printf("ptr=%X\n",ptr);//debug
+
+puts("procmsg_CONNALLOW__");//debug
+
+
+link=cclink_list_search(caller_id,callee->id);
+
+if (!link)
+	return 0;
+
+if (link->state!=PICA_CCLINK_LOCAL_WAITREP &&
+    link->state!=PICA_CCLINK_N2NCLE_WAITREP)
+    return 0;
+
+cclink_setwaitconn(link);
+	
+puts("procmsg_CONNALLOW - return 1");//debug
+return 1;
+}
+
+unsigned int procmsg_CONNDENY(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct client *caller,*callee;
+struct cclink *link;
+unsigned int caller_id;
+struct PICA_proto_msg *mp;
+
+puts("procmsg_procmsg_CONNDENY");//debug
+
+callee=(struct client *)ptr;
+caller_id=*(unsigned int*)(buf+2);
+
+link=cclink_list_search(caller_id,callee->id);
+
+if (!link)
+	return 0;
+
+caller = link -> p1;//check for NULL if not LOCAL
+
+if (link->state!=PICA_CCLINK_LOCAL_WAITREP &&
+    link->state!=PICA_CCLINK_N2NCLE_WAITREP)
+	{
+	cclink_list_delete(link);
+	return 0;
+	}
+
+if (link->state==PICA_CCLINK_LOCAL_WAITREP)
+	{
+	//отправить caller _NOTFOUND
+	if (mp=client_wbuf_push(caller,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE))
+		{
+		*((unsigned int*)mp->tail)=callee->id;
+		}
+	}
+else if (link->state==PICA_CCLINK_N2NCLE_WAITREP)
+	{
+	//отправить caller N2NNOTFOUND
+	if (mp=nodelink_wbuf_push(link->caller_node,PICA_PROTO_N2NNOTFOUND,PICA_PROTO_N2NNOTFOUND_SIZE))
+		{
+		*((unsigned int*)mp->tail)=caller_id;
+		*( ((unsigned int*)mp->tail)+1)=callee->id;
+		}
+	}
+
+cclink_list_delete(link);
+
+return 1;
+}
+
+unsigned int procmsg_NODERESP(unsigned char* buf,unsigned int size,void* ptr)
+{
+switch(buf[0])
+	{
+	case PICA_PROTO_INITRESPOK:
+	if (buf[2]!='O' || buf[3]!='K')
+		return 0;
+
+	*((int*)ptr)=0;
+	break;
+	case PICA_PROTO_VERDIFFER:
+	((char*)ptr)[0]=buf[2];
+	((char*)ptr)[1]=buf[3];
+	break;
+	}
+
+return 1;
+}
+
+unsigned int procmsg_NEWNODE(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct nodelink *n=(struct nodelink *)ptr;
+
+switch (buf[0])
+	{
+    	case PICA_PROTO_NEWNODE_IPV4:
+	printf("NEWNODE_IPV4: ip %.16s port %hu\n",inet_ntoa(*(struct in_addr*)(buf+2)),ntohs(*(uint16_t*)(buf+6)));//debug
+	{
+	struct PICA_nodeaddr_ipv4 na_ipv4;
+
+	na_ipv4.magick=PICA_PROTO_NEWNODE_IPV4;
+	na_ipv4.addr=*(in_addr_t*)(buf+2);
+	na_ipv4.port=*(in_port_t*)(buf+6);
+	//int nodelink_attach_nodeaddr(struct nodelink *nl, unsigned int addr_type, void* nodeaddr, unsigned int nodeaddr_size)
+	nodelink_attach_nodeaddr(n,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
+	}
+	break;
+	case PICA_PROTO_NEWNODE_IPV6:
+	#warning "TO DO"
+	break;
+	case PICA_PROTO_NEWNODE_DNS:
+	#warning "TODO"
+	break;
+	}
+
+
+
+return 1;
+}
+
+unsigned int procmsg_NODELISTREQ(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct PICA_proto_msg *mp;
+struct nodelink *nlp;
+unsigned int nl_size=0;
+struct nodelink *n=0;
+struct client *c=0;
+
+switch(buf[0])
+	{
+	case PICA_PROTO_CLNODELISTREQ:
+	c = (struct client *)ptr;
+	break;
+	case PICA_PROTO_NODELISTREQ:
+	n = (struct nodelink *)ptr;
+	break;
+	}
+
+unsigned char *nl_buf=malloc(65536);
+
+if (!nl_buf)
+    return 0;//ERR 
+
+puts("NODELISTREQ");//debug
+
+{//TEMP FIXME CONF
+//собственный адрес узла
+nl_buf[nl_size]=PICA_PROTO_NEWNODE_IPV4;
+*((in_addr_t*)(nl_buf+nl_size+1))=inet_addr(my_addr);
+*((uint16_t*)(nl_buf+nl_size+5))=htons(PICA_COMM_PORT);
+nl_size+=PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
+}
+
+nlp=nodelink_list_head;
+while(nlp && nl_size < 65532)//MAP
+	{
+    	switch(nlp->addr_type)
+		{
+	    	case PICA_PROTO_NEWNODE_IPV4:
+		if ( PICA_PROTO_NODELISTREQ == buf[0] && 
+			 ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->addr==((struct PICA_nodeaddr_ipv4*)n->node_addr)->addr    &&
+			((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->port==((struct PICA_nodeaddr_ipv4*)n->node_addr)->port )
+			break;//exclude requester's address
+		 
+		nl_buf[nl_size]=PICA_PROTO_NEWNODE_IPV4;
+		*((in_addr_t*)(nl_buf+nl_size+1)) = ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->addr;
+		*((uint16_t*)(nl_buf+nl_size+5)) = ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->port;
+		nl_size += PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;//CONF 
+		break;
+		}
+//#warning "set limit on list size, <65532 bytes!!!"    
+	 nlp = nlp->next;
+	}
+
+switch(buf[0])
+	{
+	case PICA_PROTO_CLNODELISTREQ:
+	mp =  client_wbuf_push( c, PICA_PROTO_CLNODELIST, nl_size+4);
+	break;
+	case PICA_PROTO_NODELISTREQ:
+	mp = nodelink_wbuf_push( n, PICA_PROTO_NODELIST, nl_size+4);
+	break;
+	}
+
+if (mp)
+	{
+	*((uint16_t*)mp->tail)=nl_size;
+	memcpy(mp->tail+2,nl_buf,nl_size);
+	}
+
+free(nl_buf);
+return 1;
+}
+
+unsigned int procmsg_NODELIST(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct PICA_nodeaddr_ipv4 na_ipv4;
+
+struct nodelink *n=(struct nodelink *)ptr;
+unsigned int listsize=size-2-PICA_MSG_VARSIZE_INT16;
+unsigned int listleft=listsize;
+
+puts("NODELIST");//debug
+printf("NODELIST_SIZE:%u\n",listsize);
+
+while(listleft)
+	{
+#warning "strict error checking!!! -- listleft overflow, unknown list items, check listleft >= possible item size"
+	if (listleft==listsize) //first entry, sender node's address
+		{
+		switch(buf[size-listleft])
+			{
+			case PICA_PROTO_NEWNODE_IPV4:
+			na_ipv4.magick=PICA_PROTO_NEWNODE_IPV4;
+			na_ipv4.addr=*(in_addr_t*)(buf+size-listleft+1);
+			na_ipv4.port=*(in_port_t*)(buf+size-listleft+5);
+			nodelink_attach_nodeaddr(n,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
+
+			listleft-=PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
+			break;
+			}
+		continue;
+		}
+	else
+		{
+		char addr[256];
+		struct newconn nc;
+		struct nodelink *nlp;
+
+		memset(addr,0,256);
+		memset(&nc,0,sizeof(struct newconn));
+
+		switch(buf[size-listleft])
+			{
+			case PICA_PROTO_NEWNODE_IPV4:
+			na_ipv4.magick=PICA_PROTO_NEWNODE_IPV4;
+			na_ipv4.addr=*(in_addr_t*)(buf+size-listleft+1);
+			na_ipv4.port=*(in_port_t*)(buf+size-listleft+5);
+
+			sprintf(addr,"%.16s",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
+			if (try_connect_to_node(addr,ntohs(na_ipv4.port),&nc))
+				if (try_get_reply(&nc))
+					{
+					nlp=nodelink_list_addnew(&nc);
+					send_newnode(nlp,my_addr);
+					nodelink_attach_nodeaddr(nlp,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
+					printf("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));//debug
+					}
+
+			listleft-=PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
+			break;
+			}
+		}
+	}
+
+return 1;
+}
+
+unsigned int procmsg_N2NFOUND(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct cclink *cc;
+struct nodelink *n=(struct nodelink *)ptr;
+unsigned int callee_id=*(unsigned int*)(buf+2);
+struct PICA_proto_msg *mp;
+
+while(cc=cclink_list_findwaitsearch(callee_id))
+	{
+	cclink_attach_remotecle_node(cc,n);
+	if(mp=nodelink_wbuf_push(n,PICA_PROTO_N2NCONNREQOUTG,PICA_PROTO_N2NCONNREQOUTG_SIZE))
+		{
+		*((unsigned int*)mp->tail) = cc->caller_id;
+		*((unsigned int*)(mp->tail+4)) = callee_id;
+		}	
+	}
+return 1;
+}
+
+unsigned int procmsg_SEARCH(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct nodelink *n=(struct nodelink *)ptr;
+unsigned int callee_id=*(unsigned int*)(buf+2);
+struct PICA_proto_msg *mp;
+struct client *callee;
+
+if (callee=client_tree_search(callee_id))
+	{
+	if(mp=nodelink_wbuf_push(n,PICA_PROTO_N2NFOUND,PICA_PROTO_N2NFOUND_SIZE))
+		{
+		*((unsigned int*)mp->tail) = callee_id;
+		}
+	}
+return 1;
+}
+
+unsigned int procmsg_N2NCONNREQOUTG(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct nodelink *n=(struct nodelink *)ptr;
+unsigned int caller_id,callee_id;
+struct PICA_proto_msg *mp;
+struct client *callee;
+
+caller_id=*(unsigned int*)(buf+2);
+callee_id=*(unsigned int*)(buf+6);
+
+if (callee=client_tree_search(callee_id))
+	{
+	if (mp=client_wbuf_push(callee,PICA_PROTO_CONNREQINC,PICA_PROTO_CONNREQINC_SIZE))
+		{
+		*((unsigned int*)mp->tail)=caller_id;
+		cclink_list_addn2ncle(caller_id, n, callee);
+		}
+	}
+else
+	{
+	if(mp=nodelink_wbuf_push(n,PICA_PROTO_N2NNOTFOUND,PICA_PROTO_N2NNOTFOUND_SIZE))
+		{
+		*((unsigned int*)mp->tail) = caller_id;
+		*((unsigned int*)(mp->tail+4)) = callee_id;
+		}
+	}
+return 1;
+}
+
+unsigned int procmsg_N2NALLOW(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct nodelink *n=(struct nodelink *)ptr;
+unsigned int caller_id,callee_id;
+struct PICA_proto_msg *mp;
+struct cclink *cc;
+
+caller_id=*(unsigned int*)(buf+2);
+callee_id=*(unsigned int*)(buf+6);
+
+cc=cclink_list_search(caller_id,callee_id);
+
+if (cc)
+	{
+	if (mp=client_wbuf_push(cc->p1,PICA_PROTO_FOUND,PICA_PROTO_FOUND_SIZE))
+		{
+		*((unsigned int*)mp->tail)=callee_id;
+	
+		cclink_setwaitconn(cc);
+		}
+	}
+return 1;
+}
+
+unsigned int procmsg_N2NNOTFOUND(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct nodelink *n=(struct nodelink *)ptr;
+unsigned int caller_id,callee_id;
+struct PICA_proto_msg *mp;
+struct cclink *cc;
+
+caller_id=*(unsigned int*)(buf+2);
+callee_id=*(unsigned int*)(buf+6);
+
+cc=cclink_list_search(caller_id,callee_id);
+
+if (cc)
+	{
+	if (mp=client_wbuf_push(cc->p1,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE))
+		{
+		*((unsigned int*)mp->tail)=callee_id;
+		}
+	cclink_list_delete(cc);
+	}
+
+return 1;
+}
+
+unsigned int procmsg_N2NMSG(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct nodelink *n=(struct nodelink *)ptr;
+struct PICA_proto_msg *mp;
+unsigned int sender_id,receiver_id;
+struct cclink *cc;
+unsigned int len,datalen;
+
+len=*(unsigned short*)(buf+2);
+sender_id=*(unsigned int*)(buf+4);
+receiver_id=*(unsigned int*)(buf+8);
+
+if (len<8)
+	return 0;
+datalen=len-8;
+
+cc=cclink_list_search(sender_id,receiver_id);
+
+if (cc && cc->state==PICA_CCLINK_N2NCLE_ACTIVE)
+	{
+	if (datalen + cc->bufpos_p1p2 > cc->buflen_p1p2)
+		{
+		cclink_list_delete(cc);//CLOSING CCLINK DUE TO BUFER OVERRUN --------- FIXME FIX FIX FIX
+		return 1;
+		}
+
+	memcpy(cc->buf_p1p2 + cc->bufpos_p1p2, buf+12,datalen);
+	cc->bufpos_p1p2 += datalen;
+	return 1;
+	}
+///////////////
+cc=cclink_list_search(receiver_id,sender_id);
+
+if (cc && cc->state==PICA_CCLINK_N2NCLR_ACTIVE)
+	{
+	if (datalen + cc->bufpos_p2p1 > cc->buflen_p2p1)
+		{
+		cclink_list_delete(cc);//CLOSING CCLINK DUE TO BUFER OVERRUN --------- FIXME FIX FIX FIX
+		return 1;
+		}
+
+	memcpy(cc->buf_p2p1 + cc->bufpos_p2p1, buf+12,datalen);
+	cc->bufpos_p2p1 += datalen;
+	return 1;
+	}
+
+if(mp=nodelink_wbuf_push(n,PICA_PROTO_N2NNOTFOUND,PICA_PROTO_N2NNOTFOUND_SIZE))
+	{
+	*((unsigned int*)mp->tail) = sender_id;
+	*((unsigned int*)(mp->tail+4)) = receiver_id;
+	}
+
+return 1;
+}
+
+
+struct cclink* cclink_list_findwaitsearch(unsigned int callee_id)
+{
+struct cclink *c;
+c = cclink_list_head;
+while(c)
+	{
+	if (c->callee_id == callee_id && c->state==PICA_CCLINK_N2NCLR_WAITSEARCH)
+		return c;
+	c=c->next;
+	}
+return 0;
+}
+
+struct cclink* cclink_list_search(unsigned int caller_id, unsigned int callee_id)
+{
+struct cclink *c;
+c= cclink_list_head;
+
+while(c)
+	{
+	if (c->caller_id == caller_id && c->callee_id == callee_id)
+		return c;
+	c=c->next;
+	}
+return 0;
+}
+
+void cclink_list_delete(struct cclink *l) 
+{
+//удаление из глобального списка 
+if (l->prev)
+	l->prev->next=l->next;
+else
+	cclink_list_head=l->next;
+
+if (l->next)
+	l->next->prev=l->prev;
+else
+	cclink_list_end=l->prev;
+
+if (l->p1)
+	if (l->sck_p1)
+		{
+		SHUTDOWN(l->sck_p1);
+		CLOSE(l->sck_p1);
+		}
+
+if (l->p2)
+	if (l->sck_p2)
+		{
+		SHUTDOWN(l->sck_p2);
+		CLOSE(l->sck_p2);
+		}
+
+
+if (l->buf_p1p2)
+	free(l->buf_p1p2);
+
+if (l->buf_p2p1)
+	free(l->buf_p2p1);
+
+free(l);
+cclink_list_count--;
+}
+
+
+//clr - caller
+//cle - callee
+// null value of clr or cle means that corresponding client is on remote node, is not local client
+struct cclink* cclink_list_add(struct client *clr,struct client *cle)
+{
+struct cclink *l;
+
+puts("cclink_list_add");//debug
+
+l=(struct cclink*)calloc(sizeof(struct cclink),1);
+
+if (!l)
+	return 0;
+
+//l->state=PICA_LINKSTATE_WAITREP;
+
+l->p1=clr;
+l->p2=cle;
+
+//добавление в глобальный список
+if (cclink_list_head)
+	{
+	cclink_list_end->next=l;
+	l->prev=cclink_list_end;
+	cclink_list_end=l;
+	}
+else
+	{
+	cclink_list_head=l;
+	cclink_list_end=l;
+	}
+
+//timestamp
+l->tmst=time(0);
+
+cclink_list_count++;
+
+return l;
+}
+
+
+void cclink_list_addlocal(struct client *clr,struct client *cle)
+{
+struct cclink *l;
+
+l=cclink_list_add(clr,cle);
+
+if (l)
+	{
+	l->state=PICA_CCLINK_LOCAL_WAITREP;
+	l->caller_id = l->p1->id;
+	l->callee_id = l->p2->id;
+	}
+
+}
+
+void cclink_list_addn2nclr(struct client *clr,unsigned int callee_id)
+{
+struct cclink *l;
+
+l=cclink_list_add(clr,0);
+
+if (l)
+	{
+	l->state=PICA_CCLINK_N2NCLR_WAITSEARCH;
+	l->caller_id = l->p1->id;
+	l->callee_id = callee_id;
+	}
+}
+
+void cclink_attach_remotecle_node(struct cclink *ccl, struct nodelink *callee_node)
+{
+if (ccl && ccl->state==PICA_CCLINK_N2NCLR_WAITSEARCH)
+	{
+	ccl->state=PICA_CCLINK_N2NCLR_WAITREP;
+	ccl->callee_node=callee_node;
+	}
+}
+
+void cclink_list_addn2ncle(unsigned int caller_id, struct nodelink *caller_node, struct client *cle)
+{
+struct cclink *l;
+
+l=cclink_list_add(0,cle);
+
+if (l)
+	{
+	l->state=PICA_CCLINK_N2NCLE_WAITREP;
+	l->caller_id = caller_id;
+	l->callee_id = l->p2->id;
+	l->caller_node = caller_node;
+	}
+
+}
+
+void cclink_setwaitconn(struct cclink *ccl)
+{
+switch (ccl->state)
+	{
+	case PICA_CCLINK_LOCAL_WAITREP:
+	ccl->state=PICA_CCLINK_LOCAL_WAITCONNCLE;
+	//
+	break;
+	case PICA_CCLINK_N2NCLR_WAITREP:
+	ccl->state=PICA_CCLINK_N2NCLR_WAITCONNCLR;
+	break;
+	case PICA_CCLINK_N2NCLE_WAITREP:
+	ccl->state=PICA_CCLINK_N2NCLE_WAITCONNCLE;
+	break;
+	default:
+	    ;
+	}
+}
+
+int cclink_allocbufs(struct cclink *ccl)
+{
+ccl->buf_p1p2 = malloc(DEFAULT_BUF_SIZE);
+ccl->buf_p2p1 = malloc(DEFAULT_BUF_SIZE);
+if (!ccl->buf_p1p2 || !ccl->buf_p2p1)
+	{
+	if (ccl->buf_p1p2)
+		free(ccl->buf_p1p2);
+	if (ccl->buf_p2p1)
+		free(ccl->buf_p2p1);
+	return 0;
+	}
+ccl->buflen_p1p2 = DEFAULT_BUF_SIZE;
+ccl->buflen_p2p1 = DEFAULT_BUF_SIZE;
+return 1;
+}
+
+void cclink_activate(struct cclink *ccl,SOCKET s)
+{
+switch(ccl->state)
+	{
+	case PICA_CCLINK_LOCAL_WAITCONNCLE:
+	ccl->sck_p2 = s;
+	ccl->state = PICA_CCLINK_LOCAL_WAITCONNCLR;
+	break;
+	case PICA_CCLINK_LOCAL_WAITCONNCLR:
+	ccl->sck_p1 = s;
+	if (!cclink_allocbufs(ccl))
+		{
+		cclink_list_delete(ccl);
+		return;
+		}
+	ccl->state = PICA_CCLINK_LOCAL_ACTIVE;
+	puts("caller cclink established");//debug
+	break;
+	case PICA_CCLINK_N2NCLR_WAITCONNCLR:
+	ccl->sck_p1 = s;
+	if (!cclink_allocbufs(ccl))
+		{
+		cclink_list_delete(ccl);
+		return;
+		}
+	ccl->state = PICA_CCLINK_N2NCLR_ACTIVE;
+	break;
+	case PICA_CCLINK_N2NCLE_WAITCONNCLE:
+	ccl->sck_p2 = s;
+	if (!cclink_allocbufs(ccl))
+		{
+		cclink_list_delete(ccl);
+		return;
+		}
+	ccl->state = PICA_CCLINK_N2NCLE_ACTIVE;
+	break;
+	}
+}
+
+
+int PICA_node_init()
+{
+struct sockaddr_in sd;
+
+SSL_load_error_strings();
+SSL_library_init(); 
+
+puts("This product includes software developed by the OpenSSL Project\n\
+for use in the OpenSSL Toolkit (http://www.openssl.org/\n");
+puts("This product includes cryptographic software written by\n\
+Eric Young (eay@cryptsoft.com)\n");
+puts(SSLeay_version(SSLEAY_VERSION));
+
+
+#ifdef WIN32
+WSADATA wsd;
+WSAStartup(MAKEWORD(2,2),&wsd);
+#endif
+
+//CONF -AF_INET6 ????
+listen_comm_sck=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+//ERR_CHECK
+
+memset(&sd,0,sizeof(sd));
+
+sd.sin_family=AF_INET;
+sd.sin_addr.s_addr=INADDR_ANY;//CONF
+sd.sin_port=htons(PICA_COMM_PORT);//CONF
+
+bind(listen_comm_sck,(struct sockaddr*)&sd,sizeof(sd));
+listen(listen_comm_sck,20);
+//ERR_CHECK
+
+{
+int ret_comm;
+unsigned long arg=1;
+#ifdef WIN32
+ret_comm=ioctlsocket(listen_comm_sck,FIONBIO,&arg);
+// ret_data=ioctlsocket(listen_data_sck,FIONBIO,&arg);
+// ret_data=ioctlsocket(listen_node_sck,FIONBIO,&arg);
+#else
+ret_comm=ioctl(listen_comm_sck,FIONBIO,(int*)&arg);
+// ret_data=ioctl(listen_data_sck,FIONBIO,(int*)&arg);
+// ret_data=ioctl(listen_node_sck,FIONBIO,(int*)&arg);
+#endif
+printf("ioctl ret_comm=%i\n",ret_comm);//debug
+}
+
+#ifdef NO_RAND_DEV  
+PICA_rand_seed();
+#endif
+
+ctx=SSL_CTX_new(TLSv1_method());
+
+if (!ctx)
+;//ERR_CHECK
+
+return 1;
+}
+
+//функция возвращает номер клиента id в бинарном виде, извлекая его из строки,
+//которая возвращается функцией X509_NAME_oneline и представляет собой DN из сертификата клиента
+int get_id_fromsubjstr(char* DN_str,unsigned int* id)
+{
+char* tmp1;
+char* tmp2;
+
+tmp1=strstr(DN_str,"/CN=");
+
+if (!tmp1)
+	return 0;
+
+tmp2=strchr(tmp1,'#');
+
+if (!tmp2)
+	return 0;
+
+*tmp2=0;
+
+tmp1+=4;
+
+if (tmp1==tmp2)
+		return 0;
+
+*id=(unsigned int)strtol(tmp1,0,10);
+
+*tmp2='#';
+return 1;
+}
+
+
+void newconn_close(struct newconn* nc)
+{
+CLOSE(nc->sck);
+
+
+nc->sck=0;
+nc->pos=0;   printf("newconn_close: closing connection\n");//debug
+}
+
+//функция ищет свободный элемент в массиве структур newconn и возвращает на него указатель
+//В случае, если свободный элемент не найден, возвращается элемент с наиболее поздней отметкой времени,
+//при этом соединение закрывается
+struct newconn* newconn_add(struct newconn *ncs,int *pos)
+{
+time_t min;
+int min_pos=0;
+if (*pos<MAX_NEWCONNS && !ncs[*pos].sck)
+	{
+	goto ret;
+	}
+else
+	{
+	*pos=0;
+	min=ncs->tmst;
+	while(ncs[*pos].sck && *pos<MAX_NEWCONNS)
+		{
+		if (ncs[*pos].tmst<min)
+			{
+			min=ncs[*pos].tmst;
+			min_pos=*pos;
+			}
+		(*pos)++;
+		}
+
+	if ( (*pos)==MAX_NEWCONNS)
+		{
+		*pos=min_pos;
+		SHUTDOWN(ncs[min_pos].sck);
+		CLOSE(ncs[min_pos].sck);
+		}
+	}
+
+ret:
+ncs[*pos].pos=0;
+ncs[*pos].tmst=time(0);
+return &ncs[(*pos)++];
+}
+
+void newconn_free(struct newconn* nc)
+{
+nc->sck=0;
+//nc->pos=0; - pos value is being used in processmsgdatastream
+}
+
+int client_tree_add(struct client *ci)
+{
+struct client *i;
+if (client_tree_root)
+	{
+	i=client_tree_root;
+	
+	do 
+		{
+		if (i->id==ci->id)
+			return 0;
+
+		if (ci->id < i->id)
+			{
+			if (i->left)
+				i=i->left;
+			else
+				{
+				i->left=ci;
+				ci->up=i;
+				return 1;
+				}
+			}
+		else
+			{
+			if (i->right)
+				i=i->right;
+			else
+				{
+				i->right=ci;
+				ci->up=i;
+				return 1;
+				}
+			}
+		}
+	while(1);
+	}
+else
+	client_tree_root=ci;
+
+return 1;
+}
+
+struct client* client_tree_search(unsigned int id)//надо бы потестить
+{
+struct client* i_ptr;
+i_ptr=client_tree_root;
+
+printf("client_tree_search: searching for %u...\n",id);//debug
+
+while(i_ptr)
+	{
+	if (i_ptr->id==id)
+		return i_ptr;
+
+	if (id < i_ptr->id)
+		i_ptr=i_ptr->left;
+	else
+		i_ptr=i_ptr->right;
+	}
+
+puts("client_tree_search- id not found");//debug
+return 0;
+}
+
+void client_tree_print(struct client *c)
+{
+if (!c)
+	{
+	puts("NULL");
+	return;
+	}
+
+printf("%p: %u LEFT: %p, RIGHT: %p\n", c, c->id, c->left, c->right);
+
+if (c->left)
+	client_tree_print(c->left);
+
+if (c->right)
+	client_tree_print(c->right);
+}
+
+//удаление структуры из дерева 
+void client_tree_remove(struct client* ci)
+{
+struct client** p_link;//указывает на left или right в родительском узле
+
+if (!ci->up)
+	{
+	p_link = &client_tree_root;
+	}
+else
+	{
+	if (ci==ci->up->left)
+		p_link=&(ci->up->left);
+	else
+		p_link=&(ci->up->right);
+	}
+	
+	
+if (!ci->left && !ci->right)
+	{
+	*p_link=0;
+	return;
+	}
+
+if (ci->left && !ci->right)
+	{
+	ci->left->up=ci->up;
+	*p_link=ci->left;
+	return;
+	}
+
+if (!ci->left && ci->right)
+	{
+	ci->right->up=ci->up;
+	*p_link=ci->right;
+	return;
+	}
+
+
+	{
+	struct client *lm;
+	lm=ci->right;
+		while(lm->left) lm=lm->left;//поиск самого левого узла правого поддерева
+
+	if (lm!=ci->right)
+		{  
+		lm->up->left=lm->right;
+		lm->right=ci->right;
+		}
+	lm->left=ci->left;	
+	lm->up=ci->up;
+	*p_link=lm;
+	}
+}
+
+struct client *client_list_addnew(struct newconn *nc)
+{
+struct client* ci;
+
+ci=(struct client *)calloc(1,sizeof(struct client));
+
+if (!ci)	return 0;
+
+ci->ssl_comm =SSL_new (ctx);
+
+if (!ci->ssl_comm)
+	{
+	free(ci);
+	return 0;
+	}
+
+if (client_list_end)
+	{
+	client_list_end->next=ci;
+	ci->prev=client_list_end;
+	client_list_end=ci;
+	}
+else
+	{
+	client_list_head=ci;
+	client_list_end=ci;
+	}
+
+ci->sck_comm=nc->sck;
+ci->addr=nc->addr;
+
+
+SSL_set_fd(ci->ssl_comm,ci->sck_comm);
+
+//ci->state=PICA_CLSTATE_SENDINGRESP;
+
+printf("client_list_addnew: returning %X\n",ci);//debug
+return ci;
+}
+
+void client_list_delete(struct client* ci)
+{
+printf("client_list_delete: ci=%X\n",ci);//debug
+
+SSL_free(ci->ssl_comm);
+//удаление из списка
+if (ci->prev)
+	ci->prev->next=ci->next;
+else
+	client_list_head=ci->next;
+
+if (ci->next)
+	ci->next->prev=ci->prev;
+else
+	client_list_end=ci->prev;
+
+//удаление из дерева
+if (client_tree_search(ci->id) == ci)
+	{
+	client_tree_remove(ci);
+	client_tree_print(client_tree_root);//debug
+	}
+
+
+CLOSE(ci->sck_comm);
+
+free(ci);
+}
+
+struct PICA_proto_msg* client_wbuf_push
+	(struct client *c,unsigned int msgid,unsigned int size)
+{
+//Дальнейший вариант - размер буфера w_buf может увеличиться в
+//этой функции путем вызова realloc, если размер сообщения превышает половину 
+//текущего размера буфера
+//Если буфер занят меньше, чем на половину, его размер может уменьшаться где-нибудь
+//в другом месте, для экономии памяти 
+	if (CL_WBUFSIZE - c->w_pos >= size) 
+		{
+		struct PICA_proto_msg *mp=(struct PICA_proto_msg *)(c->w_buf + c->w_pos);
+		mp->head[0]=mp->head[1]=msgid;
+		c->w_pos+=size;
+		return mp;
+		}
+	else
+		return 0;
+}
+
+struct nodelink *nodelink_list_addnew(struct newconn *nc)
+{
+struct nodelink *nl;
+
+nl=(struct nodelink*)calloc(1,sizeof(struct nodelink));
+
+if (!nl)
+	return 0;
+
+if (nodelink_list_end)
+	{
+	nodelink_list_end->next=nl;
+	nl->prev=nodelink_list_end;
+	nodelink_list_end=nl;
+	}
+else
+	{
+	nodelink_list_head=nl;
+	nodelink_list_end=nl;
+	}
+
+nl->sck=nc->sck;
+nl->addr=nc->addr;
+
+nl->r_buf=calloc(1,DEFAULT_BUF_SIZE);
+if (!nl->r_buf)
+	{
+	free(nl);
+	return 0;
+	}
+nl->buflen_r=DEFAULT_BUF_SIZE;
+
+printf("nodelink_list_addnew: returning %X\n",nl);//debug
+nodelink_list_count++;
+return nl;
+}
+
+void nodelink_list_delete(struct nodelink *n)
+{
+if (n->r_buf)
+	free(n->r_buf);
+
+if (n->w_buf)
+	free(n->w_buf);
+
+if (n->node_addr)
+	free(n->node_addr);
+
+CLOSE(n->sck);
+
+if (n->prev)
+	n->prev->next=n->next;
+else
+	nodelink_list_head=n->next;
+
+if (n->next)
+	n->next->prev=n->prev;
+else
+	nodelink_list_end=n->prev;
+
+nodelink_list_count--;
+free(n);
+}
+
+int nodelink_attach_nodeaddr(struct nodelink *nl, unsigned int addr_type, void* nodeaddr, unsigned int nodeaddr_size)
+{
+if (nl && nodeaddr)
+	{
+	if (nl->node_addr)
+	    	free(nl->node_addr);
+	    
+	nl->node_addr=malloc(nodeaddr_size);
+	if (!nl->node_addr)
+		return 0;//ERR_CHECK
+	memcpy(nl->node_addr,nodeaddr,nodeaddr_size);
+
+	nl->addr_type=addr_type;
+	return 1;
+	}
+return 0;
+}
+
+int nodelink_rbuf_grow(struct nodelink *nl)
+{
+unsigned char *p;
+
+puts(__FUNCTION__);//debug
+
+p=realloc(nl->r_buf,nl->buflen_r + DEFAULT_BUF_SIZE);
+
+if (!p)
+	{
+	puts("out of memory");//debug
+	return 0;
+	}
+nl->r_buf = p;
+nl->buflen_r +=DEFAULT_BUF_SIZE;
+
+return 1;
+}
+
+struct PICA_proto_msg* nodelink_wbuf_push
+	(struct nodelink *nl,unsigned int msgid,unsigned int size)
+{
+struct PICA_proto_msg *mp;
+    
+if (!nl->w_buf)
+	{
+	nl->w_buf=calloc(1,DEFAULT_BUF_SIZE );
+	if (!nl->w_buf)
+		{
+		puts("out of memory");//debug
+		return 0;
+		}
+	nl->buflen_w=DEFAULT_BUF_SIZE;
+	}
+
+if ((nl->buflen_w - nl->w_pos) < size)
+	{
+	unsigned char *p;
+	p=realloc(nl->w_buf,size + nl->w_pos);
+
+	if (p) 
+		{
+		nl->w_buf=p;
+		nl->buflen_w=size + nl->w_pos;
+		}
+	else 
+		return 0;
+	}
+		
+mp=(struct PICA_proto_msg *)(nl->w_buf + nl->w_pos);
+mp->head[0]=mp->head[1]=msgid;
+nl->w_pos+=size;
+return mp;
+}
+
+
+
+// обработка различных таймаутов. Отправка пингов
+
+void process_timeouts_newconn()
+{
+clock_t t;
+int i;
+
+t=time(0);
+
+for (i=0;i<MAX_NEWCONNS;i++)
+	{
+	if (newconns[i].sck)
+		{
+		if (newconns[i].tmst<t)
+			{
+			if (t-newconns[i].tmst>NEWCONN_TIMEOUT)
+				{
+				newconn_close(newconns+i);
+				puts("closing by timeout(1): ");//debug
+				}
+			}
+		else if ( newconns[i].tmst-t>NEWCONN_TIMEOUT)
+			{
+			newconn_close(newconns+i);
+			puts("closing by timeout(2): ");//debug
+			}
+		}
+	}
+}
+
+void process_timeouts_c2c()
+{
+struct cclink *il;
+
+il=cclink_list_head;
+
+while(il)
+	{
+	switch(il->state)
+		{
+		case PICA_CCLINK_LOCAL_ACTIVE: 
+		case PICA_CCLINK_N2NCLR_ACTIVE:
+		case PICA_CCLINK_N2NCLE_ACTIVE:
+
+		//idle timeout (>=60sec), update timestamp at process_c2c
+
+		break;
+		default:
+		if ((time(0)- il->tmst)>TMO_CCLINK_WAITACTIVE)
+			{
+			struct cclink *dl;
+			dl=il;
+			il=il->next;
+			cclink_list_delete(dl);
+			puts("inactive cclink closed by timeout");//debug
+			continue;
+			}
+		}
+	il=il->next;
+	}
+}
+
+int process_timeouts()
+{
+process_timeouts_newconn();
+process_timeouts_c2c();
+//..
+return 1;
+}
+
+void set_select_fd(SOCKET s, fd_set *readfds, int *nfds)
+{
+FD_SET(s,readfds);
+
+if (s > *nfds)
+	*nfds=s;
+
+//printf("set_select_fd([socket %i ])\n",s);//debug
+}
+
+void listen_set_fds(fd_set *readfds,int *nfds)
+{
+set_select_fd(listen_comm_sck,readfds,nfds);
+}
+
+void newconn_set_fds(fd_set *readfds,int *nfds)
+{
+int i;
+
+for (i=0;i<MAX_NEWCONNS;i++)
+	if (newconns[i].sck)
+		set_select_fd(newconns[i].sck,readfds,nfds);
+}
+
+void c2n_set_fds(fd_set *readfds,int *nfds)
+{
+struct client *i_ptr; 
+
+i_ptr=client_list_head;
+while(i_ptr)
+	{
+	set_select_fd(i_ptr->sck_comm,readfds,nfds);
+
+	i_ptr=i_ptr->next;
+	}
+}
+
+void c2c_set_fds(fd_set *readfds,int *nfds)
+{
+struct cclink *cc;
+
+cc=cclink_list_head;
+while(cc)
+	{
+	if ( !cc->jam_p1p2 && (cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLR_ACTIVE) )
+		set_select_fd(cc->sck_p1,readfds,nfds);
+	
+	if ( !cc->jam_p2p1 && (cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLE_ACTIVE) )
+		set_select_fd(cc->sck_p2,readfds,nfds);
+
+	cc=cc->next;
+	}
+}
+
+void n2n_set_fds(fd_set *readfds,int *nfds)
+{
+struct nodelink *nl;
+nl=nodelink_list_head;
+
+while(nl)
+	{
+	set_select_fd(nl->sck,readfds,nfds);
+	nl=nl->next;
+	}
+}
+
+void process_listen_read(fd_set *readfds)
+{
+struct newconn *nc;
+SOCKET s;
+struct sockaddr_in addr;
+int addrsize=sizeof(struct sockaddr_in);
+if (FD_ISSET(listen_comm_sck,readfds))
+	{
+	puts("accept");//debug
+	s=accept(listen_comm_sck,(struct sockaddr*)&addr,&addrsize);
+
+	if (s>0)
+		{
+		nc=newconn_add(newconns,&newconns_pos);
+		
+		nc->sck=s;		
+		nc->addr=addr;
+		printf("accepted connection\n");//debug
+		}
+	else
+		{
+		newconn_free(nc);
+		 
+		perror("accept:");//debug
+		printf("accept error!\n");//debug
+		//ERR_CHECK
+		}
+	}
+
+//IPv6
+}
+
+void process_newconn_read(fd_set *readfds)
+{
+int i,ret;
+
+for (i=0;i<MAX_NEWCONNS;i++)
+	if (newconns[i].sck && FD_ISSET(newconns[i].sck,readfds))
+		{
+		ret=recv(newconns[i].sck,newconns[i].buf+newconns[i].pos,NEWCONN_BUFSIZE - newconns[i].pos,0);
+
+		if (ret<=0)
+			{
+			perror("process_newconn_read - recv:");//debug
+			newconn_close(newconns+i);
+			continue;
+			}
+		newconns[i].pos+=ret;
+	
+		if(!PICA_processdatastream(newconns[i].buf,&(newconns[i].pos),newconns+i  /*arg*/,_msginfo_newconn, MSGINFO_MSGSNUM(_msginfo_newconn) ))
+			{
+			puts("processdatastream error\n");//debug
+			newconn_close(newconns+i);
+			}
+		//FD_CLR(newconns[i].sck,readfds);
+		}
+}
+
+
+
+void process_c2n_read(fd_set *readfds)
+{
+struct client *i_ptr,*kill_ptr;
+int ret;
+
+i_ptr=client_list_head;
+kill_ptr=0;
+
+while (i_ptr)
+	{
+	if (FD_ISSET(i_ptr->sck_comm,readfds))
+		switch(i_ptr->state)
+		{
+		case PICA_CLSTATE_CONNECTED:
+		ret=SSL_read(i_ptr->ssl_comm,i_ptr->r_buf+i_ptr->r_pos,CL_RBUFSIZE-i_ptr->r_pos);
+		
+		if (!ret)
+			kill_ptr=i_ptr;
+
+		if (ret<0)
+			switch(SSL_get_error(i_ptr->ssl_comm,ret))
+				{
+				case SSL_ERROR_WANT_WRITE:
+				case SSL_ERROR_WANT_READ:
+				break;
+				default:
+				kill_ptr=i_ptr;
+				}
+		
+		if (ret>0)
+			{
+			i_ptr->r_pos+=ret;
+			if(!PICA_processdatastream(i_ptr->r_buf,&(i_ptr->r_pos),i_ptr,_msginfo_comm, MSGINFO_MSGSNUM(_msginfo_comm) ))
+						kill_ptr=i_ptr;
+
+			}
+		break;
+		case PICA_CLSTATE_TLSNEGOTIATION:
+		i_ptr->w_pos=1;//????
+		//-------------- <<<<<<<<<<<<<<<<<<<<<<<<----------------------------------------
+		break;
+		};
+	
+	i_ptr=i_ptr->next;
+	
+	if (kill_ptr)
+		{
+		client_list_delete(kill_ptr);
+		kill_ptr=0;
+		}
+	}
+
+}
+
+void process_c2c_read(fd_set *readfds)
+{
+int i,ret;
+struct cclink *cc,*kill_ptr;
+
+cc=cclink_list_head;
+kill_ptr=0;
+
+while(cc)
+	{
+	if ((cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLR_ACTIVE) 
+		&& FD_ISSET(cc->sck_p1,readfds) && !cc->jam_p1p2 )
+		{
+		ret=recv(cc->sck_p1,cc->buf_p1p2 + cc->bufpos_p1p2,cc->buflen_p1p2 - cc->bufpos_p1p2,0);
+		printf("DATA recv  p1p2: ret=%i\n",ret);//debug
+		if (ret>0)
+			{
+			cc->bufpos_p1p2+=ret;
+			}
+		else
+			kill_ptr=cc;	
+		}
+
+	if ((cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLE_ACTIVE) 
+		&& FD_ISSET(cc->sck_p2,readfds)  && !cc->jam_p2p1 )
+		{
+		ret=recv(cc->sck_p2,cc->buf_p2p1 + cc->bufpos_p2p1,cc->buflen_p2p1 - cc->bufpos_p2p1,0);
+		printf("DATA recv  p2p1: ret=%i\n",ret);//debug
+		if (ret>0)
+			{
+			cc->bufpos_p2p1+=ret;
+			}
+		else
+			kill_ptr=cc;	
+		}
+
+
+	cc=cc->next;
+	
+	if (kill_ptr)
+		{
+		cclink_list_delete(kill_ptr);
+		kill_ptr=0;
+		}
+	}
+}
+
+void process_n2n_read(fd_set *readfds)
+{
+int i,ret;
+struct nodelink *nl,*kill_ptr;
+
+nl=nodelink_list_head;
+kill_ptr=0;
+
+while(nl)
+	{
+	if (FD_ISSET(nl->sck,readfds))
+		{
+		ret=recv(nl->sck,nl->r_buf+nl->r_pos,nl->buflen_r - nl->r_pos,0);
+			
+		if (ret<=0)
+			{
+			perror("n2n_read recv:");//debug
+			kill_ptr=nl;
+			}
+		else
+			{
+			nl->r_pos+=ret;
+		
+			if(!PICA_processdatastream(nl->r_buf,&(nl->r_pos),nl,_msginfo_node, MSGINFO_MSGSNUM(_msginfo_node) ))
+				kill_ptr=nl;
+
+			if (nl->buflen_r == nl->r_pos)
+				if (!nodelink_rbuf_grow(nl))
+					kill_ptr=nl;
+			}
+		}
+	    
+	nl=nl->next;
+	
+	if (kill_ptr)
+		{
+		nodelink_list_delete(kill_ptr);puts("process_n2n_read - calling nodelink_list_delete");//debug
+		kill_ptr=0;
+		}
+	}
+}
+
+void process_c2n_write()
+{
+struct client *i_ptr,*kill_ptr;
+int ret;
+
+i_ptr=client_list_head;
+kill_ptr=0;
+
+while(i_ptr)
+	{
+	//---------
+	switch(i_ptr->state)
+		{
+		case PICA_CLSTATE_CONNECTED:
+		if (!i_ptr->w_pos)			
+		break;			
+
+		if (!i_ptr->btw_ssl)
+			i_ptr->btw_ssl=i_ptr->w_pos;
+		
+		ret=SSL_write(i_ptr->ssl_comm,i_ptr->w_buf,i_ptr->btw_ssl);
+		
+		printf("process_comm: write: ret of SSL_write=%i\n",ret);//debug
+		
+		if (ret==i_ptr->btw_ssl)
+			{
+			i_ptr->w_pos-=i_ptr->btw_ssl;
+			i_ptr->btw_ssl=0;
+			}
+
+		if (!ret)
+			kill_ptr=i_ptr;
+
+		if (ret<0)
+			{
+			ret=SSL_get_error(i_ptr->ssl_comm,ret);
+			if (ret!=SSL_ERROR_WANT_WRITE && ret!=SSL_ERROR_WANT_READ)
+				kill_ptr=i_ptr;
+			}
+		break;
+		case PICA_CLSTATE_SENDINGRESP:
+		ret=send(i_ptr->sck_comm,i_ptr->w_buf,i_ptr->w_pos,0);
+		printf("process_comm:  write: sendingresp w_pos=%u  ret=%i\n",i_ptr->w_pos,ret);//debug
+		if (!ret)
+			kill_ptr=i_ptr;
+		
+		if (ret==SOCKET_ERROR)
+		;//ERR_CHECK
+		
+		if (ret < i_ptr->w_pos)
+			memmove(i_ptr->w_buf,i_ptr->w_buf+ret,i_ptr->w_pos - ret); //ring buffer is better (??)
+
+		i_ptr->w_pos-=ret;
+
+		
+		if (!i_ptr->w_pos)
+			i_ptr->state=PICA_CLSTATE_TLSNEGOTIATION;
+			
+			puts("SENDINGRESP");//debug
+		break;
+		case PICA_CLSTATE_TLSNEGOTIATION:
+		i_ptr->w_pos=0;
+		ret=SSL_connect(i_ptr->ssl_comm);
+		
+		printf("wr SSL_connect=%i\n",ret);//debug
+		
+		if (!ret)
+			kill_ptr=i_ptr;
+		
+		if (ret<0)
+			{
+			int eret;
+			eret=SSL_get_error(i_ptr->ssl_comm,ret);
+			switch(eret)
+				{
+				case SSL_ERROR_WANT_WRITE:
+				i_ptr->w_pos=1;
+				printf("wr WANT_WRITE\n");//debug
+				break;
+				case SSL_ERROR_WANT_READ:
+	    printf("wr WANT_READ\n");//debug
+				break;
+				default:
+	    printf("wr SSL_get_error=%i",eret);//debug
+				kill_ptr=i_ptr;
+				}
+			}
+		if (ret==1)
+		//проверить сертификат пользователя
+		{
+		X509* client_cert;
+		char* DN_str;
+
+		printf("SSL connection using %s\n", SSL_get_cipher(i_ptr->ssl_comm));//debug
+
+		client_cert=SSL_get_peer_certificate (i_ptr->ssl_comm);
+		if (!client_cert)
+			{
+			//ERR_CHECK //нет сертификата
+			kill_ptr=i_ptr;
+			}
+		//извлечение идентификационного  номера из сертификата
+		DN_str=X509_NAME_oneline(X509_get_subject_name(client_cert), 0, 0);
+		if (!DN_str)
+			{
+			//ERR_CHECK
+			kill_ptr=i_ptr;
+			}
+		ret=get_id_fromsubjstr(DN_str,&i_ptr->id);
+		if (!ret)
+			{
+			//ERR_CHECK //ошибка выделения id
+			kill_ptr=i_ptr;
+			}
+    printf("user id=%u\n",i_ptr->id);//debug
+		#warning "see comments below"
+		//сделать проверку названия сети!!!!---------------------------<<<<<<<<<<<<<<<<<<<<<<
+					
+		OPENSSL_free(DN_str);
+		X509_free(client_cert);
+		//прицепить структуру к дереву
+		if (client_tree_search(i_ptr->id))
+		    ret = 0;//id already exists in tree
+		else
+			{
+			ret=client_tree_add(i_ptr);
+			client_tree_print(client_tree_root);//debug
+			}
+		if (!ret)
+			{
+			//ERR_CHECK  //не уникальный id
+			kill_ptr=i_ptr;
+			}
+		i_ptr->state=PICA_CLSTATE_CONNECTED;
+		}
+		break;
+		}
+	//---------
+
+	i_ptr=i_ptr->next;
+
+	if (kill_ptr)
+		{
+		client_list_delete(kill_ptr);
+		kill_ptr=0;
+		}
+	}
+}
+
+void process_c2c_write()
+{
+int i,ret;
+struct cclink *cc,*kill_ptr;
+
+cc=cclink_list_head;
+kill_ptr=0;
+
+while(cc)
+	{
+	if (cc->bufpos_p1p2/* && (cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLE_ACTIVE)*/)
+		{
+		if (cc->state==PICA_CCLINK_N2NCLR_ACTIVE)//receiver is on remote node
+			{
+			int sendlen;
+			struct PICA_proto_msg *mp;
+			
+			sendlen = (cc->bufpos_p1p2 > PICA_PROTO_N2NMSG_MAXDATASIZE) ? PICA_PROTO_N2NMSG_MAXDATASIZE : cc->bufpos_p1p2;
+
+			if(mp=nodelink_wbuf_push(cc->callee_node,PICA_PROTO_N2NMSG,sendlen+12))
+				{
+				*((unsigned short*)mp->tail) = 8+sendlen;
+				*((unsigned int*)(mp->tail+2))=cc->caller_id;
+				*((unsigned int*)(mp->tail+6))=cc->callee_id;
+				memcpy(mp->tail+10, cc->buf_p1p2, sendlen);
+				ret=sendlen;
+				}
+			else
+				ret=0;
+			}
+		else
+			ret=send(cc->sck_p2,cc->buf_p1p2,cc->bufpos_p1p2,MSG_NOSIGNAL);
+
+		printf("DATA send  p1p2: ret=%i\n",ret);//debug
+		if (ret>0)
+			{
+			if (ret < cc->bufpos_p1p2)
+				memmove(cc->buf_p1p2,cc->buf_p1p2+ret,cc->bufpos_p1p2-ret);//may be it's better to implement ring buffer here
+			cc->bufpos_p1p2-=ret;
+			cc->jam_p1p2=0;
+			}
+
+		if (ret==0)
+			{
+			kill_ptr=cc;
+			}
+		if (ret==-1)
+			{
+			#ifdef WIN32
+			ret=WSAGetLastError();
+			if (ret==WSAEWOULDBLOCK || ret==WSAENOBUFS)
+				cc->jam_p1p2=1;
+			else
+				{
+				kill_ptr=cc;
+				}
+			#else
+			ret=errno;
+			if (ret==EAGAIN || ret==ENOBUFS)
+				cc->jam_p1p2=1;
+			else
+				{
+				kill_ptr=cc;
+				}
+			#endif
+			}
+		
+		}
+	if (cc->bufpos_p2p1 /*&& (cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLR_ACTIVE)*/)
+		{
+		if (cc->state==PICA_CCLINK_N2NCLE_ACTIVE)//receiver is on remote node
+			{
+			int sendlen;
+			struct PICA_proto_msg *mp;
+			
+			sendlen = (cc->bufpos_p2p1 > PICA_PROTO_N2NMSG_MAXDATASIZE) ? PICA_PROTO_N2NMSG_MAXDATASIZE : cc->bufpos_p2p1;
+
+			if(mp=nodelink_wbuf_push(cc->caller_node,PICA_PROTO_N2NMSG,sendlen+12))
+				{
+				*((unsigned short*)mp->tail) = 8+sendlen;
+				*((unsigned int*)(mp->tail+2))=cc->callee_id;
+				*((unsigned int*)(mp->tail+6))=cc->caller_id;
+				memcpy(mp->tail+10, cc->buf_p2p1, sendlen);
+				ret=sendlen;
+				}
+			else
+				ret=0;
+			}
+		else
+			ret=send(cc->sck_p1,cc->buf_p2p1,cc->bufpos_p2p1,MSG_NOSIGNAL);
+
+		printf("DATA send  p2p1: ret=%i\n",ret);//debug
+		if (ret>0)
+			{
+			if (ret < cc->bufpos_p2p1)
+				memmove(cc->buf_p2p1,cc->buf_p2p1+ret,cc->bufpos_p2p1-ret);//may be it's better to implement ring buffer here
+			cc->bufpos_p2p1-=ret;
+			cc->jam_p2p1=0;
+			}
+
+		if (ret==0)
+			{
+			kill_ptr=cc;
+			}
+		if (ret==-1)
+			{
+			#ifdef WIN32
+			ret=WSAGetLastError();
+			if (ret==WSAEWOULDBLOCK || ret==WSAENOBUFS)
+				cc->jam_p2p1=1;
+			else
+				{
+				kill_ptr=cc;
+				}
+			#else
+			ret=errno;
+			if (ret==EAGAIN || ret==ENOBUFS)
+				cc->jam_p2p1=1;
+			else
+				{
+				kill_ptr=cc;
+				}
+			#endif
+			
+			}
+		
+		}
+		
+	cc=cc->next;
+	
+	if (kill_ptr)
+		{
+		cclink_list_delete(kill_ptr);
+		kill_ptr=0;
+		}
+	}
+}
+
+void process_n2n_write()
+{
+int ret;
+struct nodelink *nl,*kill_ptr;
+
+nl=nodelink_list_head;
+kill_ptr=0;
+
+while(nl)
+	{
+	if (nl->w_pos>0)
+		{
+		ret=send(nl->sck,nl->w_buf,nl->w_pos,MSG_NOSIGNAL);
+
+		if (ret>0)
+			{
+			if (ret < nl->w_pos)
+				memmove(nl->w_buf,nl->w_buf+ret,nl->w_pos-ret);//may be it's better to implement ring buffer here
+			nl->w_pos-=ret;
+			}
+		if (ret<0)
+			{
+			#ifdef WIN32
+			ret=WSAGetLastError();
+			if (!(ret==WSAEWOULDBLOCK || ret==WSAENOBUFS))
+				kill_ptr=nl;
+			#else
+			ret=errno;
+			if (!(ret==EAGAIN || ret==ENOBUFS || ret == EINTR))
+				kill_ptr=nl;
+			#endif
+			}
+		if (ret==0)
+			kill_ptr=nl;
+		}
+
+	nl=nl->next;
+	
+	if (kill_ptr)
+		{
+		nodelink_list_delete(kill_ptr);puts("process_n2n_write - calling nodelink_list_delete");//debug
+		kill_ptr=0;
+		}
+	}
+}
+
+int node_loop()
+{
+fd_set fds;
+struct timeval tv; 
+int nfds,ret;
+    
+do
+	{
+	FD_ZERO(&fds);
+	tv.tv_sec=SELECT_TIMEOUT;
+	tv.tv_usec=0;
+
+	listen_set_fds(&fds,&nfds);
+	newconn_set_fds(&fds,&nfds);
+	c2n_set_fds(&fds,&nfds);
+	c2c_set_fds(&fds,&nfds);
+	n2n_set_fds(&fds,&nfds);
+	
+	ret=select(nfds+1,&fds,0,0,&tv);
+	
+	if (ret<0)
+		{
+		perror("node_loop-select error ");
+		//ERR_CHECK
+		return -1;
+		}
+
+	if (ret>0)
+		{
+		process_c2n_read(&fds);
+		process_c2c_read(&fds);
+		process_n2n_read(&fds);
+		process_newconn_read(&fds);
+		process_listen_read(&fds);
+		}
+		
+		
+	process_c2n_write();
+	process_c2c_write();
+	process_n2n_write();
+	
+	process_timeouts();
+	}
+while(1);////<<<<<<<<<<
+return 0;
+}
+
+int main(int argc,char** argv)
+{
+printf("PicaPica node started\n");//debug
+
+if (!PICA_node_init())
+	return -1;
+
+//if (PICA_node_joinskynet("nodelist")<=0)//CONF имя файла
+	/*return -1*/;//вывести предупреждение, что ни к одному другому узлу подключиться не удалось
+
+PICA_node_joinskynet("nodes.sqlite",argv[1]);//CONF-CONF имя файла с адресами узлов, свой адрес
+
+my_addr=argv[1];//TEMP FIXME 
+
+return node_loop();
+}

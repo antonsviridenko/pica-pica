@@ -1,0 +1,1 @@
+gcc -o add_newconn   test_addnewconn.c ../CACA_node.c -l ssl -l crypto  -I /mnt/win_c3/pract/home_mdv_root_jr/Downloads/openssl-0.9.8h/openssl-0.9.8h/include/ -L ../../home_mdv_root_jr/Downloads/openssl-0.9.8h/openssl-0.9.8h/ 

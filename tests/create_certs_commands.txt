@@ -1,0 +1,6 @@
+ 
+openssl req -out picapica_test_CA.pem -newkey rsa:8192 -keyout picapica_test_CA_pkey.pem -x509 -days 3680 -utf8 
+
+openssl req -out tester13req.pem -newkey rsa:4096 -keyout tester13pkey.pem -new -days 3680 -utf8  
+
+openssl ca -config ca_config.txt -in tester13req.pem -out tester13cert.pem -utf8

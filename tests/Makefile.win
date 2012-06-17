@@ -1,0 +1,36 @@
+# Project: test_client_win
+# Makefile created by Dev-C++ 4.9.9.2
+
+CPP  = g++.exe
+CC   = gcc.exe
+WINDRES = windres.exe
+RES  = 
+OBJ  = test_client.o ../CACA_client.o ../CACA_msgproc.o $(RES)
+LINKOBJ  = test_client.o ../CACA_client.o ../CACA_msgproc.o $(RES)
+LIBS =  -L"D:/Dev-Cpp/lib" ../../home_mdv_root_jr/Downloads/openssl-0.9.8h/openssl-0.9.8h/lib_a_win/libssl.a ../../../Dev-Cpp/lib/libgdi32.a ../../../Dev-Cpp/lib/libws2_32.a ../../home_mdv_root_jr/Downloads/openssl-0.9.8h/openssl-0.9.8h/lib_a_win/libcrypto.a ../../../Dev-Cpp/lib/libgdi32.a ../../../Dev-Cpp/lib/libws2_32.a  
+INCS =  -I"D:/Dev-Cpp/include"  -I"D:/pract/home_mdv_root_jr/Downloads/openssl-0.9.8h/openssl-0.9.8h/include" 
+CXXINCS =  -I"D:/Dev-Cpp/lib/gcc/mingw32/3.4.2/include"  -I"D:/Dev-Cpp/include/c++/3.4.2/backward"  -I"D:/Dev-Cpp/include/c++/3.4.2/mingw32"  -I"D:/Dev-Cpp/include/c++/3.4.2"  -I"D:/Dev-Cpp/include"  -I"D:/pract/home_mdv_root_jr/Downloads/openssl-0.9.8h/openssl-0.9.8h/include" 
+BIN  = test_client_win.exe
+CXXFLAGS = $(CXXINCS)  
+CFLAGS = $(INCS)  
+RM = rm -f
+
+.PHONY: all all-before all-after clean clean-custom
+
+all: all-before test_client_win.exe all-after
+
+
+clean: clean-custom
+	${RM} $(OBJ) $(BIN)
+
+$(BIN): $(OBJ)
+	$(CC) $(LINKOBJ) -o "test_client_win.exe" $(LIBS)
+
+test_client.o: test_client.c
+	$(CC) -c test_client.c -o test_client.o $(CFLAGS)
+
+../CACA_client.o: ../CACA_client.c
+	$(CC) -c ../CACA_client.c -o ../CACA_client.o $(CFLAGS)
+
+../CACA_msgproc.o: ../CACA_msgproc.c
+	$(CC) -c ../CACA_msgproc.c -o ../CACA_msgproc.o $(CFLAGS)
