@@ -74,35 +74,65 @@ return N;
 
 
 
-int PICA_nodeaddr_list_save(char* listfilename,struct PICA_nodeaddr *list_head)
+int PICA_nodeaddr_save(char* dbfilename, struct PICA_nodeaddr *naddr)
 {
-/*
-FILE *f_list;
-struct PICA_nodeaddr *list_item;
+sqlite3 *db;
+sqlite3_stmt *stmt;
+int ret;
+const char query[] = "insert into nodes (address, port, last_active, inactive_count) values(:addr, :port, strftime('%s','now'), 0);";
 
-f_list=fopen(listfilename,"w");
+ret = sqlite3_open(dbfilename, &db);
 
-if (f_list==0)
+if (ret != SQLITE_OK)
 	{
-	puts("error opening node list for save");
-	//ERR_CHECK
-	return -1; // -1 коды ошибок
+	fprintf(stderr, "Can't open nodelist database: %s\n", sqlite3_errmsg(db));
+	sqlite3_close(db);
+	return -1;
 	}
 
-list_item=list_head;
-while(list_item)
-	{
-	int ret;
-	ret=fprintf(f_list,"%s %u %u\n",list_item->addr,list_item->port,list_item->unavail_count);
+ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 
-	if (ret<0)
-		return -1;
-	
-	list_item=list_item->next;
+if (ret != SQLITE_OK)
+	{
+	fprintf(stderr, "Can't prepare SQLite statement: %s\n", sqlite3_errmsg(db));
+	sqlite3_close(db);
+	return -1;
 	}
 
+ret = sqlite3_bind_text(stmt, 1, naddr->addr, -1, SQLITE_STATIC);
 
-return fclose(f_list);*/
+if (ret != SQLITE_OK)
+	{
+	fprintf(stderr, "Can't bind address value: %s\n", sqlite3_errmsg(db));
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+	return -1;
+	}
+
+ret = sqlite3_bind_int(stmt, 2, naddr->port);
+
+if (ret != SQLITE_OK)
+	{
+	fprintf(stderr, "Can't bind port value: %s\n", sqlite3_errmsg(db));
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+	return -1;
+	}
+
+ret = sqlite3_step(stmt);
+
+if (ret !=SQLITE_DONE)
+{
+	fprintf(stderr, "Can't execute query: %s\n", sqlite3_errmsg(db));
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+	return -1;
+}
+
+sqlite3_finalize(stmt);
+sqlite3_close(db);
+
+return 1;
 }
 
 void PICA_nodeaddr_list_free(struct PICA_nodeaddr *list_head)

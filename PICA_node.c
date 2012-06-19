@@ -581,11 +581,12 @@ while(listleft)
 		}
 	else
 		{
-		char addr[256];
+		struct PICA_nodeaddr na;
+		//char addr[256];
 		struct newconn nc;
 		struct nodelink *nlp;
 
-		memset(addr,0,256);
+		memset(na.addr,0,256);
 		memset(&nc,0,sizeof(struct newconn));
 
 		switch(buf[size-listleft])
@@ -595,8 +596,8 @@ while(listleft)
 			na_ipv4.addr=*(in_addr_t*)(buf+size-listleft+1);
 			na_ipv4.port=*(in_port_t*)(buf+size-listleft+5);
 
-			sprintf(addr,"%.16s",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-			if (try_connect_to_node(addr,ntohs(na_ipv4.port),&nc))
+			sprintf(na.addr,"%.16s",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
+			if (try_connect_to_node(na.addr,ntohs(na_ipv4.port),&nc))
 				if (try_get_reply(&nc))
 					{
 					nlp=nodelink_list_addnew(&nc);
@@ -604,10 +605,13 @@ while(listleft)
 					nodelink_attach_nodeaddr(nlp,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
 					printf("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));//debug
 					}
+					
+			na.port = ntohs(na_ipv4.port);
 
 			listleft-=PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 			break;
 			}
+		PICA_nodeaddr_save("nodes.sqlite", &na);//CONF filename
 		}
 	}
 
