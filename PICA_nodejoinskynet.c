@@ -4,6 +4,7 @@
 #include "PICA_proto.h"
 #include "PICA_msgproc.h"
 #include "PICA_common.h"
+#include "PICA_nodeconfig.h"
 #include <time.h>
 #include <sys/time.h>
 
@@ -134,7 +135,7 @@ return 0;
 struct PICA_proto_msg *mp;
 mp=nodelink_wbuf_push(nlp,PICA_PROTO_NEWNODE_IPV4,PICA_PROTO_NEWNODE_IPV4_SIZE);
 *((in_addr_t*)(mp->tail))=inet_addr(my_addr);//CONF TEMP
-*((uint16_t*)(mp->tail+4))=htons(PICA_COMM_PORT); 
+*((uint16_t*)(mp->tail+4))=(nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT));//CONF; 
 }
 
 static void send_nodelistreq(struct nodelink *nlp)

@@ -449,6 +449,7 @@ return 1;
 unsigned int procmsg_NEWNODE(unsigned char* buf,unsigned int size,void* ptr)
 {
 struct nodelink *n=(struct nodelink *)ptr;
+struct PICA_nodeaddr na;
 
 switch (buf[0])
 	{
@@ -456,10 +457,14 @@ switch (buf[0])
 	printf("NEWNODE_IPV4: ip %.16s port %hu\n",inet_ntoa(*(struct in_addr*)(buf+2)),ntohs(*(uint16_t*)(buf+6)));//debug
 	{
 	struct PICA_nodeaddr_ipv4 na_ipv4;
-
+	
 	na_ipv4.magick=PICA_PROTO_NEWNODE_IPV4;
 	na_ipv4.addr=*(in_addr_t*)(buf+2);
 	na_ipv4.port=*(in_port_t*)(buf+6);
+	
+	sprintf(na.addr,"%.16s",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
+	na.port = na_ipv4.port;
+	
 	//int nodelink_attach_nodeaddr(struct nodelink *nl, unsigned int addr_type, void* nodeaddr, unsigned int nodeaddr_size)
 	nodelink_attach_nodeaddr(n,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
 	}
@@ -472,7 +477,7 @@ switch (buf[0])
 	break;
 	}
 
-
+PICA_nodeaddr_save(nodecfg.nodes_db_file, &na);//CONF filename
 
 return 1;
 }
@@ -1847,7 +1852,8 @@ while(nl)
 			
 		if (ret<=0)
 			{
-			perror("n2n_read recv:");//debug
+			if (ret < 0)
+				perror("n2n_read recv:");//debug
 			kill_ptr=nl;
 			}
 		else
