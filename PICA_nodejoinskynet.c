@@ -153,6 +153,8 @@ struct newconn nc;
 clock_t tmst,t;
 int ret;
 
+printf("filename = %s, my_addr = %s \n", addrlistfilename, my_addr);//debug
+
 ret=PICA_nodeaddr_list_load(addrlistfilename,&addrlist_h);//MEM
 if (ret<=0)
 	return ret;

@@ -13,6 +13,7 @@
 #include "PICA_nodeaddrlist.h"
 #include "PICA_common.h"
 #include "PICA_nodejoinskynet.h"
+#include "PICA_nodeconfig.h"
 
 #ifdef NO_RAND_DEV
 #include "PICA_rand_seed.h"
@@ -505,7 +506,7 @@ puts("NODELISTREQ");//debug
 //собственный адрес узла
 nl_buf[nl_size]=PICA_PROTO_NEWNODE_IPV4;
 *((in_addr_t*)(nl_buf+nl_size+1))=inet_addr(my_addr);
-*((uint16_t*)(nl_buf+nl_size+5))=htons(PICA_COMM_PORT);
+*((uint16_t*)(nl_buf+nl_size+5))=(nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT));//CONF
 nl_size+=PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 }
 
@@ -611,7 +612,7 @@ while(listleft)
 			listleft-=PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 			break;
 			}
-		PICA_nodeaddr_save("nodes.sqlite", &na);//CONF filename
+		PICA_nodeaddr_save(nodecfg.nodes_db_file, &na);//CONF filename
 		}
 	}
 
@@ -1051,7 +1052,7 @@ memset(&sd,0,sizeof(sd));
 
 sd.sin_family=AF_INET;
 sd.sin_addr.s_addr=INADDR_ANY;//CONF
-sd.sin_port=htons(PICA_COMM_PORT);//CONF
+sd.sin_port = (nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT));//CONF
 
 bind(listen_comm_sck,(struct sockaddr*)&sd,sizeof(sd));
 listen(listen_comm_sck,20);
@@ -2256,15 +2257,21 @@ int main(int argc,char** argv)
 {
 printf("PicaPica node started\n");//debug
 
+PICA_nodeconfig_load(argv[1]);
+
 if (!PICA_node_init())
 	return -1;
 
 //if (PICA_node_joinskynet("nodelist")<=0)//CONF имя файла
 	/*return -1*/;//вывести предупреждение, что ни к одному другому узлу подключиться не удалось
 
-PICA_node_joinskynet("nodes.sqlite",argv[1]);//CONF-CONF имя файла с адресами узлов, свой адрес
+PICA_node_joinskynet(nodecfg.nodes_db_file, nodecfg.announced_addr);//CONF-CONF имя файла с адресами узлов, свой адрес
 
-my_addr=argv[1];//TEMP FIXME 
+printf("nodecfg.announced_addr =%s\n",nodecfg.announced_addr);//debug
+printf("nodecfg.listen_port =%s\n",nodecfg.listen_port);//debug
+printf("nodecfg.nodes_db_file =%s\n",nodecfg.nodes_db_file);//debug
+
+my_addr = nodecfg.announced_addr;//TEMP FIXME 
 
 return node_loop();
 }
