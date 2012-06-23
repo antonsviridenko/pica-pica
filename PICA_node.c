@@ -463,7 +463,7 @@ switch (buf[0])
 	na_ipv4.port=*(in_port_t*)(buf+6);
 	
 	sprintf(na.addr,"%.16s",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-	na.port = na_ipv4.port;
+	na.port = ntohs(na_ipv4.port);
 	
 	//int nodelink_attach_nodeaddr(struct nodelink *nl, unsigned int addr_type, void* nodeaddr, unsigned int nodeaddr_size)
 	nodelink_attach_nodeaddr(n,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
