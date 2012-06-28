@@ -6,6 +6,8 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#include <unistd.h>
+#include <getopt.h>
 
 #include "PICA_node.h"
 #include "PICA_proto.h"
@@ -2259,11 +2261,27 @@ while(1);////<<<<<<<<<<
 return 0;
 }
 
+void process_cmdline(int argc,char** argv)
+{
+int opt;
+while((opt = getopt(argc, argv, "f:hv")) != -1)
+	{
+	switch(opt)
+		{
+		case 'f':
+		nodecfg.config_file = strdup(optarg);
+		break;
+		}
+	}
+}
+
 int main(int argc,char** argv)
 {
 printf("PicaPica node started\n");//debug
 
-PICA_nodeconfig_load(argv[1]);
+process_cmdline(argc, argv);
+
+PICA_nodeconfig_load(nodecfg.config_file ? nodecfg.config_file : "/etc/pica-node.ini");
 
 if (!PICA_node_init())
 	return -1;
