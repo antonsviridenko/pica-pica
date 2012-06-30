@@ -8,6 +8,7 @@ char			*announced_addr;
 char 			*listen_port; 
 char 			*nodes_db_file;
 char			*config_file;
+char			*CA_cert_file;
 };
 
 extern struct nodeconfig nodecfg;

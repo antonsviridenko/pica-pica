@@ -20,6 +20,7 @@ if (!d)
 nodecfg.announced_addr = strdup(iniparser_getstring(d, "pica-node:announced_addr", NULL));
 nodecfg.listen_port = strdup(iniparser_getstring(d, "pica-node:listen_port", NULL));
 nodecfg.nodes_db_file = strdup(iniparser_getstring(d, "pica-node:nodes_db_file", NULL));
+nodecfg.CA_cert_file = strdup(iniparser_getstring(d, "pica-node:CA_cert_file", NULL));
 
 iniparser_freedict(d);
 

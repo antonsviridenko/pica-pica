@@ -1035,6 +1035,7 @@ switch(ccl->state)
 int PICA_node_init()
 {
 struct sockaddr_in sd;
+int ret;
 
 SSL_load_error_strings();
 SSL_library_init(); 
@@ -1082,6 +1083,13 @@ ctx=SSL_CTX_new(TLSv1_method());
 
 if (!ctx)
 ;//ERR_CHECK
+
+
+ret = SSL_CTX_load_verify_locations(ctx, nodecfg.CA_cert_file, 0);
+
+;//ERR_CHECK
+
+SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
 
 return 1;
 }
