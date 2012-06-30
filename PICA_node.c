@@ -1039,12 +1039,6 @@ struct sockaddr_in sd;
 SSL_load_error_strings();
 SSL_library_init(); 
 
-puts("This product includes software developed by the OpenSSL Project\n\
-for use in the OpenSSL Toolkit (http://www.openssl.org/\n");
-puts("This product includes cryptographic software written by\n\
-Eric Young (eay@cryptsoft.com)\n");
-puts(SSLeay_version(SSLEAY_VERSION));
-
 
 #ifdef WIN32
 WSADATA wsd;
@@ -2261,15 +2255,55 @@ while(1);////<<<<<<<<<<
 return 0;
 }
 
+void print_usage()
+{
+puts("Usage: pica-node [-f config-file]\n\
+\n\
+Options:\n\
+	-f 	configuration file\n\
+	-h	show this text\n\
+	-v	verbose\n\
+	-V	print version info\n");
+}
+
+void print_version()
+{
+puts("Pica Pica Node v0.1 \n(c) 2012 Anton Sviridenko\n");
+
+////----include this only if OpenSSL is statically linked
+puts("This product includes software developed by the OpenSSL Project\n\
+for use in the OpenSSL Toolkit (http://www.openssl.org/)\n");
+puts("This product includes cryptographic software written by\n\
+Eric Young (eay@cryptsoft.com)\n");
+puts(SSLeay_version(SSLEAY_VERSION));
+////---
+
+
+puts("\nThis product includes iniParser\n\
+Copyright (c) 2000-2012 by Nicolas Devillard.\n\
+MIT License");
+
+}
+
 void process_cmdline(int argc,char** argv)
 {
 int opt;
-while((opt = getopt(argc, argv, "f:hv")) != -1)
+while((opt = getopt(argc, argv, "f:hvV")) != -1)
 	{
 	switch(opt)
 		{
 		case 'f':
 		nodecfg.config_file = strdup(optarg);
+		break;
+		case 'h':
+		print_usage();
+		exit(0);
+		break;
+		case 'v':
+		break;
+		case 'V':
+		print_version();
+		exit(0);
 		break;
 		}
 	}
@@ -2277,7 +2311,6 @@ while((opt = getopt(argc, argv, "f:hv")) != -1)
 
 int main(int argc,char** argv)
 {
-printf("PicaPica node started\n");//debug
 
 process_cmdline(argc, argv);
 
