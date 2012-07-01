@@ -16,6 +16,7 @@
 #include "PICA_common.h"
 #include "PICA_nodejoinskynet.h"
 #include "PICA_nodeconfig.h"
+#include "PICA_log.h"
 
 #ifdef NO_RAND_DEV
 #include "PICA_rand_seed.h"
@@ -1048,7 +1049,9 @@ WSAStartup(MAKEWORD(2,2),&wsd);
 
 //CONF -AF_INET6 ????
 listen_comm_sck=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-//ERR_CHECK
+
+if (listen_comm_sck == -1)
+	PICA_fatal("unable to get socket - %s", strerror(errno));
 
 memset(&sd,0,sizeof(sd));
 
@@ -1056,9 +1059,15 @@ sd.sin_family=AF_INET;
 sd.sin_addr.s_addr=INADDR_ANY;//CONF
 sd.sin_port = (nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT));//CONF
 
-bind(listen_comm_sck,(struct sockaddr*)&sd,sizeof(sd));
-listen(listen_comm_sck,20);
-//ERR_CHECK
+ret = bind(listen_comm_sck,(struct sockaddr*)&sd,sizeof(sd));
+
+if (ret == -1)
+	PICA_fatal("unable to bind socket - %s", strerror(errno));
+
+
+ret = listen(listen_comm_sck,20);
+if (ret == -1)
+	PICA_fatal("unable to listen socket - %s", strerror(errno));
 
 {
 int ret_comm;
@@ -1072,22 +1081,24 @@ ret_comm=ioctl(listen_comm_sck,FIONBIO,(int*)&arg);
 // ret_data=ioctl(listen_data_sck,FIONBIO,(int*)&arg);
 // ret_data=ioctl(listen_node_sck,FIONBIO,(int*)&arg);
 #endif
-printf("ioctl ret_comm=%i\n",ret_comm);//debug
+if (ret_comm == -1)
+	PICA_fatal("unable to set non-blocking mode on socket - %s", strerror(errno));
 }
 
-#ifdef NO_RAND_DEV  
-PICA_rand_seed();
-#endif
+//#ifdef NO_RAND_DEV  
+//PICA_rand_seed();
+//#endif
 
-ctx=SSL_CTX_new(TLSv1_method());
+ctx = SSL_CTX_new(TLSv1_method());
 
 if (!ctx)
-;//ERR_CHECK
+	PICA_fatal("unable to create SSL_CTX object");
 
 
 ret = SSL_CTX_load_verify_locations(ctx, nodecfg.CA_cert_file, 0);
 
-;//ERR_CHECK
+if (!ret)
+	PICA_fatal("call to SSL_CTX_load_verify_locations failed(). Check if %s exists and is accesible", nodecfg.CA_cert_file);
 
 SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
 
