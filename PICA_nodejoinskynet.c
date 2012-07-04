@@ -5,6 +5,7 @@
 #include "PICA_msgproc.h"
 #include "PICA_common.h"
 #include "PICA_nodeconfig.h"
+#include "PICA_log.h"
 #include <time.h>
 #include <sys/time.h>
 
@@ -120,11 +121,11 @@ else
 	{
 	if (proto_version.c[0]> PICA_PROTO_VER_HIGH ||  (proto_version.c[1]> PICA_PROTO_VER_LOW && proto_version.c[0]== PICA_PROTO_VER_HIGH))
 		{
-		puts("make update of node software");//debug
+		PICA_info("make update of node software - peer node has newer protocol version");
 		}
 	else
 		{//peer node has older software version
-		puts("peer node has older protocol version");//debug
+		PICA_info("peer node has older protocol version");
 		}
 	}
 return 0;
@@ -154,7 +155,6 @@ struct newconn nc;
 clock_t tmst,t;
 int ret;
 
-printf("filename = %s, my_addr = %s \n", addrlistfilename, my_addr);//debug
 
 ret=PICA_nodeaddr_list_load(addrlistfilename,&addrlist_h);//MEM
 if (ret<=0)

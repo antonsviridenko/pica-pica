@@ -1,8 +1,10 @@
-#include "PICA_nodeaddrlist.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sqlite3.h>
+#include "PICA_nodeaddrlist.h"
+#include "PICA_log.h"
+
 
 struct cb_param
 {
@@ -23,7 +25,7 @@ na = (struct PICA_nodeaddr *)malloc(sizeof(struct PICA_nodeaddr));
 if (!na)
 	return 1;
 
-printf("NODE: addr: %s port %s\n", argv[0], argv[1]);//debug
+PICA_debug1("node address loaded: addr: %s port %s\n", argv[0], argv[1]);//debug
 
 strncpy(na->addr, argv[0], 255);
 na->addr[255] = '\0';
@@ -55,7 +57,7 @@ ret = sqlite3_open(dbfilename, &db);
 
 if (ret != SQLITE_OK)
 	{
-	fprintf(stderr, "Can't open nodelist database: %s\n", sqlite3_errmsg(db));
+	PICA_error( "Can't open nodelist database: %s\n", sqlite3_errmsg(db));
 	sqlite3_close(db);
 	return -1;
 	}
@@ -64,7 +66,7 @@ ret = sqlite3_exec(db, query, nodeaddr_load_sqlite_cb, &p, &zErrMsg);
 
 if( ret != SQLITE_OK )
 	{
-	fprintf(stderr, "SQL error: %s\n", zErrMsg);
+	PICA_error("SQL error: %s\n", zErrMsg);
 	sqlite3_free(zErrMsg);
 	}
 
@@ -85,7 +87,7 @@ ret = sqlite3_open(dbfilename, &db);
 
 if (ret != SQLITE_OK)
 	{
-	fprintf(stderr, "Can't open nodelist database: %s\n", sqlite3_errmsg(db));
+	PICA_error("Can't open nodelist database: %s\n", sqlite3_errmsg(db));
 	sqlite3_close(db);
 	return -1;
 	}
@@ -94,7 +96,7 @@ ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 
 if (ret != SQLITE_OK)
 	{
-	fprintf(stderr, "Can't prepare SQLite statement: %s\n", sqlite3_errmsg(db));
+	PICA_error("Can't prepare SQLite statement: %s\n", sqlite3_errmsg(db));
 	sqlite3_close(db);
 	return -1;
 	}
@@ -103,7 +105,7 @@ ret = sqlite3_bind_text(stmt, 1, naddr->addr, -1, SQLITE_STATIC);
 
 if (ret != SQLITE_OK)
 	{
-	fprintf(stderr, "Can't bind address value: %s\n", sqlite3_errmsg(db));
+	PICA_error("Can't bind address value: %s\n", sqlite3_errmsg(db));
 	sqlite3_finalize(stmt);
 	sqlite3_close(db);
 	return -1;
@@ -113,7 +115,7 @@ ret = sqlite3_bind_int(stmt, 2, naddr->port);
 
 if (ret != SQLITE_OK)
 	{
-	fprintf(stderr, "Can't bind port value: %s\n", sqlite3_errmsg(db));
+	PICA_error("Can't bind port value: %s\n", sqlite3_errmsg(db));
 	sqlite3_finalize(stmt);
 	sqlite3_close(db);
 	return -1;
@@ -123,7 +125,7 @@ ret = sqlite3_step(stmt);
 
 if (ret !=SQLITE_DONE)
 {
-	fprintf(stderr, "Can't execute query: %s\n", sqlite3_errmsg(db));
+	PICA_error( "Can't execute query: %s\n", sqlite3_errmsg(db));
 	sqlite3_finalize(stmt);
 	sqlite3_close(db);
 	return -1;

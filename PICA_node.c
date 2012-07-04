@@ -2328,6 +2328,8 @@ MIT License");
 void process_cmdline(int argc,char** argv)
 {
 int opt;
+int verbosity = 0;
+
 while((opt = getopt(argc, argv, "f:hvV")) != -1)
 	{
 	switch(opt)
@@ -2335,18 +2337,33 @@ while((opt = getopt(argc, argv, "f:hvV")) != -1)
 		case 'f':
 		nodecfg.config_file = strdup(optarg);
 		break;
+		
 		case 'h':
 		print_usage();
 		exit(0);
 		break;
+		
 		case 'v':
+		verbosity++;
+		 
 		break;
+		
 		case 'V':
 		print_version();
 		exit(0);
 		break;
+		
+		default:
+		PICA_error("unknown option - %c", optopt);
+		print_usage();
+		exit(-1);
 		}
 	}
+
+if (verbosity > 3)
+	verbosity = 3;
+
+PICA_set_loglevel(PICA_LOG_INFO + verbosity);
 }
 
 int main(int argc,char** argv)
@@ -2354,7 +2371,14 @@ int main(int argc,char** argv)
 
 process_cmdline(argc, argv);
 
-PICA_nodeconfig_load(nodecfg.config_file ? nodecfg.config_file : "/etc/pica-node.ini");
+nodecfg.config_file = (nodecfg.config_file ? nodecfg.config_file : "/etc/pica-node.ini");
+
+PICA_nodeconfig_load(nodecfg.config_file);
+
+PICA_debug1("nodecfg.config_file = %s", nodecfg.config_file);
+PICA_debug1("nodecfg.announced_addr = %s",nodecfg.announced_addr);
+PICA_debug1("nodecfg.listen_port = %s",nodecfg.listen_port);
+PICA_debug1("nodecfg.nodes_db_file = %s",nodecfg.nodes_db_file);
 
 if (!PICA_node_init())
 	return -1;
@@ -2363,10 +2387,6 @@ if (!PICA_node_init())
 	/*return -1*/;//вывести предупреждение, что ни к одному другому узлу подключиться не удалось
 
 PICA_node_joinskynet(nodecfg.nodes_db_file, nodecfg.announced_addr);//CONF-CONF имя файла с адресами узлов, свой адрес
-
-printf("nodecfg.announced_addr =%s\n",nodecfg.announced_addr);//debug
-printf("nodecfg.listen_port =%s\n",nodecfg.listen_port);//debug
-printf("nodecfg.nodes_db_file =%s\n",nodecfg.nodes_db_file);//debug
 
 my_addr = nodecfg.announced_addr;//TEMP FIXME 
 

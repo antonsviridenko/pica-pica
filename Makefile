@@ -7,16 +7,16 @@ all: pica-node;
 pica-node: $(OBJS)
 	gcc   $(OBJS) $(LIBS)  -o pica-node # добавить CFLAGS и все такое
 
-PICA_node.o: PICA_node.c PICA_node.h PICA_msgproc.h PICA_nodeaddrlist.h PICA_nodejoinskynet.h PICA_nodeconfig.h
+PICA_node.o: PICA_node.c PICA_node.h PICA_msgproc.h PICA_nodeaddrlist.h PICA_nodejoinskynet.h PICA_nodeconfig.h PICA_common.h PICA_proto.h PICA_log.h
 	gcc $(CFLAGS) -c PICA_node.c
 
 PICA_msgproc.o: PICA_msgproc.c PICA_msgproc.h
 	gcc $(CFLAGS) -c PICA_msgproc.c
 
-PICA_nodeaddrlist.o: PICA_nodeaddrlist.c PICA_nodeaddrlist.h
+PICA_nodeaddrlist.o: PICA_nodeaddrlist.c PICA_nodeaddrlist.h PICA_log.h
 	gcc $(CFLAGS) -c PICA_nodeaddrlist.c
 
-PICA_nodejoinskynet.o: PICA_nodejoinskynet.c PICA_nodejoinskynet.h PICA_nodeaddrlist.h
+PICA_nodejoinskynet.o: PICA_nodejoinskynet.c PICA_nodejoinskynet.h PICA_nodeaddrlist.h PICA_common.h PICA_proto.h PICA_msgproc.h PICA_log.h
 	gcc $(CFLAGS) -c PICA_nodejoinskynet.c
 
 PICA_nodeconfig.o: PICA_nodeconfig.c PICA_nodeconfig.h iniparser/src/iniparser.h iniparser/src/dictionary.h
