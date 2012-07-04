@@ -142,6 +142,8 @@ unsigned int procmsg_INITREQ(unsigned char* buf,unsigned int size,void* ptr)
 struct newconn *nc=(struct newconn*)ptr;
 struct PICA_proto_msg *mp;
 
+PICA_debug1("received INITREQ");
+
 if (buf[2]==PICA_PROTO_VER_HIGH && buf[3]==PICA_PROTO_VER_LOW)
 	{
 	struct client *c;
@@ -158,7 +160,6 @@ if (buf[2]==PICA_PROTO_VER_HIGH && buf[3]==PICA_PROTO_VER_LOW)
 		}
 	
 	c->state=PICA_CLSTATE_SENDINGRESP;
-	printf("got PICA_PROTO_INITREQ from client\n");//debug
 	}///////---------<<<<<<<<<<< new client
 else
 	{
@@ -177,7 +178,7 @@ struct newconn *nc=(struct newconn*)ptr;
 unsigned int caller_id,callee_id;
 struct cclink *link;
 
-puts("received CONNID");//debug
+PICA_debug1("received CONNID");
 
 caller_id=*((unsigned int*)(buf+2));
 callee_id=*((unsigned int*)(buf+6));
@@ -253,6 +254,8 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf,unsigned int size,void* ptr)
 struct newconn *nc=(struct newconn*)ptr;
 struct PICA_proto_msg *mp;
 
+PICA_debug1("received NODECONNREQ");
+
 if (buf[2]==PICA_PROTO_VER_HIGH &&
 	buf[3]==PICA_PROTO_VER_LOW)
 	{
@@ -308,7 +311,7 @@ struct client *i,*o;//i - указатель на вызывающего кли�
 unsigned int callee_id;
 struct PICA_proto_msg *mp;
 
-puts("procmsg_CONNREQOUTGOING");//debug
+PICA_debug1("received CONNREQOUTG");
 
 i=(struct client *)ptr;
 
@@ -355,7 +358,7 @@ struct client *caller,*callee;
 struct cclink *link;
 unsigned int caller_id;
 
-puts("procmsg_CONNALLOW");//debug
+PICA_debug1("received CONALLOW");
 
 callee=(struct client *)ptr;
 caller_id=*(unsigned int*)(buf+2);
@@ -388,7 +391,7 @@ struct cclink *link;
 unsigned int caller_id;
 struct PICA_proto_msg *mp;
 
-puts("procmsg_procmsg_CONNDENY");//debug
+PICA_debug1("received CONNDENY");
 
 callee=(struct client *)ptr;
 caller_id=*(unsigned int*)(buf+2);
@@ -432,6 +435,9 @@ return 1;
 
 unsigned int procmsg_NODERESP(unsigned char* buf,unsigned int size,void* ptr)
 {
+
+PICA_debug1("received NODERESP");
+
 switch(buf[0])
 	{
 	case PICA_PROTO_INITRESPOK:
@@ -453,6 +459,8 @@ unsigned int procmsg_NEWNODE(unsigned char* buf,unsigned int size,void* ptr)
 {
 struct nodelink *n=(struct nodelink *)ptr;
 struct PICA_nodeaddr na;
+
+PICA_debug1("received NEWNODE");
 
 switch (buf[0])
 	{
@@ -493,6 +501,8 @@ unsigned int nl_size=0;
 struct nodelink *n=0;
 struct client *c=0;
 
+PICA_debug1("received NODELISTREQ");
+
 switch(buf[0])
 	{
 	case PICA_PROTO_CLNODELISTREQ:
@@ -508,7 +518,6 @@ unsigned char *nl_buf=malloc(65536);
 if (!nl_buf)
     return 0;//ERR 
 
-puts("NODELISTREQ");//debug
 
 {//TEMP FIXME CONF
 //собственный адрес узла
@@ -563,12 +572,12 @@ unsigned int procmsg_NODELIST(unsigned char* buf,unsigned int size,void* ptr)
 {
 struct PICA_nodeaddr_ipv4 na_ipv4;
 
+PICA_debug1("received NODELIST");
+
 struct nodelink *n=(struct nodelink *)ptr;
 unsigned int listsize=size-2-PICA_MSG_VARSIZE_INT16;
 unsigned int listleft=listsize;
 
-puts("NODELIST");//debug
-printf("NODELIST_SIZE:%u\n",listsize);
 
 while(listleft)
 	{
@@ -634,6 +643,8 @@ struct nodelink *n=(struct nodelink *)ptr;
 unsigned int callee_id=*(unsigned int*)(buf+2);
 struct PICA_proto_msg *mp;
 
+PICA_debug1("received N2NFOUND");
+
 while(cc=cclink_list_findwaitsearch(callee_id))
 	{
 	cclink_attach_remotecle_node(cc,n);
@@ -653,6 +664,8 @@ unsigned int callee_id=*(unsigned int*)(buf+2);
 struct PICA_proto_msg *mp;
 struct client *callee;
 
+PICA_debug1("received SEARCH");
+
 if (callee=client_tree_search(callee_id))
 	{
 	if(mp=nodelink_wbuf_push(n,PICA_PROTO_N2NFOUND,PICA_PROTO_N2NFOUND_SIZE))
@@ -669,6 +682,8 @@ struct nodelink *n=(struct nodelink *)ptr;
 unsigned int caller_id,callee_id;
 struct PICA_proto_msg *mp;
 struct client *callee;
+
+PICA_debug1("received N2NCONNREQOUTG");
 
 caller_id=*(unsigned int*)(buf+2);
 callee_id=*(unsigned int*)(buf+6);
@@ -699,6 +714,8 @@ unsigned int caller_id,callee_id;
 struct PICA_proto_msg *mp;
 struct cclink *cc;
 
+PICA_debug1("received N2NALLOW");
+
 caller_id=*(unsigned int*)(buf+2);
 callee_id=*(unsigned int*)(buf+6);
 
@@ -722,6 +739,8 @@ struct nodelink *n=(struct nodelink *)ptr;
 unsigned int caller_id,callee_id;
 struct PICA_proto_msg *mp;
 struct cclink *cc;
+
+PICA_debug1("received N2NNOTFOUND");
 
 caller_id=*(unsigned int*)(buf+2);
 callee_id=*(unsigned int*)(buf+6);
@@ -747,6 +766,8 @@ struct PICA_proto_msg *mp;
 unsigned int sender_id,receiver_id;
 struct cclink *cc;
 unsigned int len,datalen;
+
+PICA_debug1("received N2NMSG");
 
 len=*(unsigned short*)(buf+2);
 sender_id=*(unsigned int*)(buf+4);
