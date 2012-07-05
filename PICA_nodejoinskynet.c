@@ -152,7 +152,6 @@ int PICA_node_joinskynet(char* addrlistfilename,const char *my_addr)
 struct PICA_nodeaddr *nap,*addrlist_h=0;
 struct nodelink *nlp;
 struct newconn nc;
-clock_t tmst,t;
 int ret;
 
 

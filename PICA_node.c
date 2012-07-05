@@ -153,7 +153,7 @@ if (buf[2]==PICA_PROTO_VER_HIGH && buf[3]==PICA_PROTO_VER_LOW)
 	
 	newconn_free(nc);
 
-	if (mp=client_wbuf_push(c,PICA_PROTO_INITRESPOK,PICA_PROTO_INITRESPOK_SIZE))
+	if ((mp = client_wbuf_push(c,PICA_PROTO_INITRESPOK,PICA_PROTO_INITRESPOK_SIZE)))
 		{
 		mp->tail[0]='O';
 		mp->tail[1]='K';
@@ -217,7 +217,7 @@ if (nc->addr.sin_addr.s_addr!=c->addr.sin_addr.s_addr)
 
 if (link->state==PICA_CCLINK_LOCAL_WAITCONNCLE)
 	{
-	if(mp=client_wbuf_push(link->p1,PICA_PROTO_FOUND,PICA_PROTO_FOUND_SIZE))
+	if((mp = client_wbuf_push(link->p1,PICA_PROTO_FOUND,PICA_PROTO_FOUND_SIZE)))
 		{
 		*((unsigned int*)mp->tail)=callee_id;
 		}
@@ -231,7 +231,7 @@ if (link->state==PICA_CCLINK_LOCAL_WAITCONNCLE)
 
 if (link->state==PICA_CCLINK_N2NCLE_WAITCONNCLE)
 	{
-	if(mp=nodelink_wbuf_push(link->caller_node,PICA_PROTO_N2NALLOW,PICA_PROTO_N2NALLOW_SIZE))
+	if((mp = nodelink_wbuf_push(link->caller_node,PICA_PROTO_N2NALLOW,PICA_PROTO_N2NALLOW_SIZE)))
 		{
 		*((unsigned int*)mp->tail)=caller_id;
 		*((unsigned int*)(mp->tail+4))=callee_id;
@@ -267,7 +267,7 @@ if (buf[2]==PICA_PROTO_VER_HIGH &&
 	if (!nl)
 		return 0;
 
-	if (mp=nodelink_wbuf_push(nl,PICA_PROTO_INITRESPOK,PICA_PROTO_INITRESPOK_SIZE))
+	if ((mp = nodelink_wbuf_push(nl,PICA_PROTO_INITRESPOK,PICA_PROTO_INITRESPOK_SIZE)))
 		{
 		mp->tail[0]='O';
 		mp->tail[1]='K';
@@ -317,7 +317,7 @@ i=(struct client *)ptr;
 
 callee_id=*(unsigned int*)(buf+2);
 
-if (o=client_tree_search(callee_id))
+if ((o = client_tree_search(callee_id)))
 	{
 	#warning "duplicated connections" // сделать проверку на наличие уже имеющегося соединения между клиентами
 	// и если оно есть, то разрывать его, либо... ???? надо подумать
@@ -325,7 +325,7 @@ if (o=client_tree_search(callee_id))
 	#warning "self" // а еще - если клиент вызывает сам себя?
 
 	//отправить o _CONNREQINC
-	if (mp=client_wbuf_push(o,PICA_PROTO_CONNREQINC,PICA_PROTO_CONNREQINC_SIZE))
+	if ((mp = client_wbuf_push(o,PICA_PROTO_CONNREQINC,PICA_PROTO_CONNREQINC_SIZE)))
 		{
 		*((unsigned int*)mp->tail)=i->id;
 		cclink_list_addlocal(i,o);
@@ -343,7 +343,7 @@ if (cclink_list_findwaitsearch(callee_id)/*search request for this id is already
 	}
 	
 //отправить i _NOTFOUND
-if (mp=client_wbuf_push(i,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE))
+if ((mp = client_wbuf_push(i,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE)))
 	{
 	*((unsigned int*)mp->tail)=callee_id;
 	puts("sending NOTFOUND... put to senq q...");//debug
@@ -354,7 +354,7 @@ return 1;
 
 unsigned int procmsg_CONNALLOW(unsigned char* buf,unsigned int size,void* ptr)
 {
-struct client *caller,*callee;
+struct client *callee;
 struct cclink *link;
 unsigned int caller_id;
 
@@ -362,12 +362,6 @@ PICA_debug1("received CONALLOW");
 
 callee=(struct client *)ptr;
 caller_id=*(unsigned int*)(buf+2);
-
-puts("procmsg_CONNALLOW_");//debug
-printf("ptr=%X\n",ptr);//debug
-
-puts("procmsg_CONNALLOW__");//debug
-
 
 link=cclink_list_search(caller_id,callee->id);
 
@@ -413,15 +407,15 @@ if (link->state!=PICA_CCLINK_LOCAL_WAITREP &&
 if (link->state==PICA_CCLINK_LOCAL_WAITREP)
 	{
 	//отправить caller _NOTFOUND
-	if (mp=client_wbuf_push(caller,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE))
+	if ((mp = client_wbuf_push(caller,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE)))
 		{
-		*((unsigned int*)mp->tail)=callee->id;
+		*((unsigned int*)mp->tail) = callee->id;
 		}
 	}
 else if (link->state==PICA_CCLINK_N2NCLE_WAITREP)
 	{
 	//отправить caller N2NNOTFOUND
-	if (mp=nodelink_wbuf_push(link->caller_node,PICA_PROTO_N2NNOTFOUND,PICA_PROTO_N2NNOTFOUND_SIZE))
+	if ((mp = nodelink_wbuf_push(link->caller_node,PICA_PROTO_N2NNOTFOUND,PICA_PROTO_N2NNOTFOUND_SIZE)))
 		{
 		*((unsigned int*)mp->tail)=caller_id;
 		*( ((unsigned int*)mp->tail)+1)=callee->id;
@@ -500,6 +494,7 @@ struct nodelink *nlp;
 unsigned int nl_size=0;
 struct nodelink *n=0;
 struct client *c=0;
+unsigned char *nl_buf = 0;
 
 PICA_debug1("received NODELISTREQ");
 
@@ -513,7 +508,7 @@ switch(buf[0])
 	break;
 	}
 
-unsigned char *nl_buf=malloc(65536);
+nl_buf = (unsigned char*)malloc(65536);
 
 if (!nl_buf)
     return 0;//ERR 
@@ -572,12 +567,11 @@ unsigned int procmsg_NODELIST(unsigned char* buf,unsigned int size,void* ptr)
 {
 struct PICA_nodeaddr_ipv4 na_ipv4;
 
-PICA_debug1("received NODELIST");
-
 struct nodelink *n=(struct nodelink *)ptr;
 unsigned int listsize=size-2-PICA_MSG_VARSIZE_INT16;
 unsigned int listleft=listsize;
 
+PICA_debug1("received NODELIST");
 
 while(listleft)
 	{
@@ -645,10 +639,10 @@ struct PICA_proto_msg *mp;
 
 PICA_debug1("received N2NFOUND");
 
-while(cc=cclink_list_findwaitsearch(callee_id))
+while((cc = cclink_list_findwaitsearch(callee_id)))
 	{
 	cclink_attach_remotecle_node(cc,n);
-	if(mp=nodelink_wbuf_push(n,PICA_PROTO_N2NCONNREQOUTG,PICA_PROTO_N2NCONNREQOUTG_SIZE))
+	if((mp = nodelink_wbuf_push(n,PICA_PROTO_N2NCONNREQOUTG,PICA_PROTO_N2NCONNREQOUTG_SIZE)))
 		{
 		*((unsigned int*)mp->tail) = cc->caller_id;
 		*((unsigned int*)(mp->tail+4)) = callee_id;
@@ -666,9 +660,9 @@ struct client *callee;
 
 PICA_debug1("received SEARCH");
 
-if (callee=client_tree_search(callee_id))
+if ((callee = client_tree_search(callee_id)))
 	{
-	if(mp=nodelink_wbuf_push(n,PICA_PROTO_N2NFOUND,PICA_PROTO_N2NFOUND_SIZE))
+	if ((mp = nodelink_wbuf_push(n,PICA_PROTO_N2NFOUND,PICA_PROTO_N2NFOUND_SIZE)))
 		{
 		*((unsigned int*)mp->tail) = callee_id;
 		}
@@ -688,9 +682,9 @@ PICA_debug1("received N2NCONNREQOUTG");
 caller_id=*(unsigned int*)(buf+2);
 callee_id=*(unsigned int*)(buf+6);
 
-if (callee=client_tree_search(callee_id))
+if ((callee = client_tree_search(callee_id)))
 	{
-	if (mp=client_wbuf_push(callee,PICA_PROTO_CONNREQINC,PICA_PROTO_CONNREQINC_SIZE))
+	if ((mp = client_wbuf_push(callee,PICA_PROTO_CONNREQINC,PICA_PROTO_CONNREQINC_SIZE)))
 		{
 		*((unsigned int*)mp->tail)=caller_id;
 		cclink_list_addn2ncle(caller_id, n, callee);
@@ -698,7 +692,7 @@ if (callee=client_tree_search(callee_id))
 	}
 else
 	{
-	if(mp=nodelink_wbuf_push(n,PICA_PROTO_N2NNOTFOUND,PICA_PROTO_N2NNOTFOUND_SIZE))
+	if ((mp = nodelink_wbuf_push(n,PICA_PROTO_N2NNOTFOUND,PICA_PROTO_N2NNOTFOUND_SIZE)))
 		{
 		*((unsigned int*)mp->tail) = caller_id;
 		*((unsigned int*)(mp->tail+4)) = callee_id;
@@ -719,13 +713,13 @@ PICA_debug1("received N2NALLOW");
 caller_id=*(unsigned int*)(buf+2);
 callee_id=*(unsigned int*)(buf+6);
 
-cc=cclink_list_search(caller_id,callee_id);
+cc = cclink_list_search(caller_id,callee_id);
 
 if (cc)
 	{
-	if (mp=client_wbuf_push(cc->p1,PICA_PROTO_FOUND,PICA_PROTO_FOUND_SIZE))
+	if ((mp = client_wbuf_push(cc->p1,PICA_PROTO_FOUND,PICA_PROTO_FOUND_SIZE)))
 		{
-		*((unsigned int*)mp->tail)=callee_id;
+		*((unsigned int*)mp->tail) = callee_id;
 	
 		cclink_setwaitconn(cc);
 		}
@@ -749,7 +743,7 @@ cc=cclink_list_search(caller_id,callee_id);
 
 if (cc)
 	{
-	if (mp=client_wbuf_push(cc->p1,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE))
+	if ((mp = client_wbuf_push(cc->p1,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE)))
 		{
 		*((unsigned int*)mp->tail)=callee_id;
 		}
@@ -807,7 +801,7 @@ if (cc && cc->state==PICA_CCLINK_N2NCLR_ACTIVE)
 	return 1;
 	}
 
-if(mp=nodelink_wbuf_push(n,PICA_PROTO_N2NNOTFOUND,PICA_PROTO_N2NNOTFOUND_SIZE))
+if ((mp = nodelink_wbuf_push(n,PICA_PROTO_N2NNOTFOUND,PICA_PROTO_N2NNOTFOUND_SIZE)))
 	{
 	*((unsigned int*)mp->tail) = sender_id;
 	*((unsigned int*)(mp->tail+4)) = receiver_id;
@@ -1284,7 +1278,7 @@ if (!c)
 	return;
 	}
 
-printf("%p: %u LEFT: %p, RIGHT: %p\n", c, c->id, c->left, c->right);
+printf("%p: %u LEFT: %p, RIGHT: %p\n", (void*)c, c->id, (void*)c->left, (void*)c->right);
 
 if (c->left)
 	client_tree_print(c->left);
@@ -1384,13 +1378,12 @@ SSL_set_fd(ci->ssl_comm,ci->sck_comm);
 
 //ci->state=PICA_CLSTATE_SENDINGRESP;
 
-printf("client_list_addnew: returning %X\n",ci);//debug
+
 return ci;
 }
 
 void client_list_delete(struct client* ci)
 {
-printf("client_list_delete: ci=%X\n",ci);//debug
 
 SSL_free(ci->ssl_comm);
 //удаление из списка
@@ -1468,7 +1461,6 @@ if (!nl->r_buf)
 	}
 nl->buflen_r=DEFAULT_BUF_SIZE;
 
-printf("nodelink_list_addnew: returning %X\n",nl);//debug
 nodelink_list_count++;
 return nl;
 }
@@ -1716,24 +1708,22 @@ void process_listen_read(fd_set *readfds)
 struct newconn *nc;
 SOCKET s;
 struct sockaddr_in addr;
-int addrsize=sizeof(struct sockaddr_in);
+int addrsize = sizeof(struct sockaddr_in);
 if (FD_ISSET(listen_comm_sck,readfds))
 	{
 	puts("accept");//debug
-	s=accept(listen_comm_sck,(struct sockaddr*)&addr,&addrsize);
+	s = accept(listen_comm_sck,(struct sockaddr*)&addr,&addrsize);
 
-	if (s>0)
+	if (s >= 0)
 		{
-		nc=newconn_add(newconns,&newconns_pos);
+		nc = newconn_add(newconns,&newconns_pos);
 		
-		nc->sck=s;		
-		nc->addr=addr;
+		nc->sck = s;		
+		nc->addr = addr;
 		printf("accepted connection\n");//debug
 		}
 	else
 		{
-		newconn_free(nc);
-		 
 		perror("accept:");//debug
 		printf("accept error!\n");//debug
 		//ERR_CHECK
