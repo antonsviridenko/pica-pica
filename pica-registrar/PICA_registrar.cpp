@@ -11,13 +11,21 @@
 #include <sys/errno.h>
 
 #include <cstring>
+#include <cstdlib>
 #include <map>
 
 using namespace std;
 
 #define PICA_REGISTRAR_PORT 2299
 #define READ_BUF_SIZE 4096
+#define WRITE_BUF_SIZE 8192
+
 char read_buf[READ_BUF_SIZE];
+
+char write_buf[WRITE_BUF_SIZE];
+
+
+unsigned int current_id = 30 000;
 
 int main(int argc, char *argv[])
 {
@@ -67,7 +75,7 @@ while (1)
 			continue;
 		
 		{
-		FILE *csr_temp;
+		FILE *csr_temp, *cert;
 		
 		std::string filename = (string("/tmp/CSR-") + inet_ntoa(sc.sin_addr) );
 		
@@ -91,7 +99,27 @@ while (1)
 		
 		fclose(csr_temp);
 		
-		//system(openssl ca)
+		std::string cert_filename = atoi(current_id) + ".pem";
+		
+		std::string sign_command = "openssl ca -config ca_config.txt  -utf8 -subj /CN=" + atoi(current_id) + "\\#tester -batch -notext -out " + cert_filename + " -in " + csr_temp;
+		
+		puts(sign_command.c_str);//debug
+		
+		system(sign_command.c_str);
+		
+		cert = fopen(cert_filename, "r");
+		
+		if (!cert)
+			{
+			 perror("fopen");
+			 remove(filename.c_str);
+			 remove(cert_filename);
+			 continue;
+			}
+		
+		//send
+		
+		current_id++;
 		
 		remove(filename.c_str);
 		}
