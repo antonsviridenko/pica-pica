@@ -89,6 +89,9 @@ void cclink_list_addn2ncle(unsigned int caller_id, struct nodelink *caller_node,
 void cclink_activate(struct cclink *ccl,SOCKET s);
 void cclink_attach_remotecle_node(struct cclink *ccl, struct nodelink *callee_node);
 
+void cclink_list_delete_by_client(struct client *cl);
+void cclink_list_delete_by_nodelink(struct nodelink *node);
+
 struct client* client_tree_search(unsigned int id);//
 struct client *client_list_addnew(struct newconn *nc);
 struct PICA_proto_msg* client_wbuf_push(struct client *c,unsigned int msgid,unsigned int size);
@@ -840,6 +843,7 @@ return 0;
 
 void cclink_list_delete(struct cclink *l) 
 {
+PICA_debug1("cclink_list_delete(%p)", (void*)l);
 //удаление из глобального списка 
 if (l->prev)
 	l->prev->next=l->next;
@@ -874,6 +878,48 @@ if (l->buf_p2p1)
 
 free(l);
 cclink_list_count--;
+}
+
+void cclink_list_delete_by_client(struct client *cl)
+{
+struct cclink *kill_ptr = 0, *l = cclink_list_head;
+PICA_debug1("cclink_list_delete_by_client(%p)", (void*)cl);
+
+while(l)
+	{
+	if (l->p1 == cl || l->p2 == cl)
+		kill_ptr = l;
+	
+	l = l->next;
+
+	if (kill_ptr)
+		{
+		 cclink_list_delete(kill_ptr);
+		 kill_ptr = 0;
+		}
+	}
+
+}
+
+void cclink_list_delete_by_nodelink(struct nodelink *node)
+{
+struct cclink *kill_ptr = 0, *l = cclink_list_head;
+
+PICA_debug1("cclink_list_delete_by_nodelink(%p)", (void*)node);
+
+while(l)
+	{
+	if (l->caller_node == node || l->callee_node == node)
+		kill_ptr = l;
+	
+	l = l->next;
+
+	if (kill_ptr)
+		{
+		 cclink_list_delete(kill_ptr);
+		 kill_ptr = 0;
+		}
+	}
 }
 
 
@@ -1384,7 +1430,7 @@ return ci;
 
 void client_list_delete(struct client* ci)
 {
-
+PICA_debug1("client_list_delete(%p)", (void*)ci);
 SSL_free(ci->ssl_comm);
 //удаление из списка
 if (ci->prev)
@@ -1404,6 +1450,7 @@ if (client_tree_search(ci->id) == ci)
 	client_tree_print(client_tree_root);//debug
 	}
 
+cclink_list_delete_by_client(ci);
 
 CLOSE(ci->sck_comm);
 
@@ -1467,6 +1514,8 @@ return nl;
 
 void nodelink_list_delete(struct nodelink *n)
 {
+PICA_debug1("nodelink_list_delete(%p)", (void*)n);
+    
 if (n->r_buf)
 	free(n->r_buf);
 
@@ -1487,6 +1536,8 @@ if (n->next)
 	n->next->prev=n->prev;
 else
 	nodelink_list_end=n->prev;
+
+cclink_list_delete_by_nodelink(n);
 
 nodelink_list_count--;
 free(n);
