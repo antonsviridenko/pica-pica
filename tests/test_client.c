@@ -102,9 +102,9 @@ int main(int argc,char** argv)
 int ret;
 unsigned int peer_id;
 
-if (argc<3)
+if (argc<4)
 	{
-	puts("usage: test_client      address  cert_filename  [peer id]");
+	puts("usage: test_client      address port  cert_filename  [peer id]");
 	return 0;
 	}
 
@@ -125,7 +125,7 @@ PICA_client_init(&cbs);
 printf("making connection...\n");
 
 //PICA_new_connection(const char *nodeaddr, unsigned int port, const char *CA_file, const char *cert_file, const char *pkey_file, const char* password, struct PICA_conninfo **ci)
-ret=PICA_new_connection(argv[1], 51914,"trusted_CA.pem",argv[2],argv[2],NULL,&c);
+ret=PICA_new_connection(argv[1], atoi(argv[2]), "trusted_CA.pem", argv[3],argv[3],NULL,&c);
 
 ERR_print_errors_fp(stdout);
 
@@ -137,9 +137,9 @@ printf("PICA_new_connection: ret=%i\n",ret);
 return 1;
 }
 
-if (argc==4)
+if (argc==5)
 	{
-	peer_id=atoi(argv[3]);
+	peer_id=atoi(argv[4]);
 	printf("Creating channel to %u...\n",peer_id);
 	
 	ret=PICA_create_channel(c,peer_id,&chn);
