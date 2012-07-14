@@ -29,7 +29,7 @@ PICA_client_init(&cbs);
 
 nodelink = NULL;
 
-connect(this, SIGNAL(PeerCertificateReceived(quint32,QString,bool*)), this, SLOT(verify_peer_cert(quint32,QString,bool*)),Qt::BlockingQueuedConnection);
+connect(this, SIGNAL(PeerCertificateReceived(quint32,QString,bool*)), this, SLOT(verify_peer_cert(quint32,QString,bool*)),Qt::DirectConnection);
 
 }
 
