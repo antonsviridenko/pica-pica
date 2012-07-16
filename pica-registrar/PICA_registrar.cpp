@@ -27,9 +27,61 @@ char write_buf[WRITE_BUF_SIZE];
 
 unsigned int current_id = 30 000;
 
+int read_CSR(int client_socket, int *bytes_read)
+{
+int pos = 0;
+int disconnect_flag = 0;
+		 do 
+			{
+			 ret = recv(client_socket, read_buf + pos, READ_BUF_SIZE - 1 - pos, 0);
+			 
+			 if (ret > 0)
+				pos += ret;
+			 else
+			 	{
+				disconnect_flag = 1;
+			 	if (ret < 0)
+					perror("recv");
+			 	}
+			 read_buf[pos + 1] = '\0';
+			 
+			 *bytes_read = pos;
+			}
+		while(pos < READ_BUF_SIZE && !disconnect_flag && !std::strstr(read_buf, "-----END CERTIFICATE REQUEST-----"));
+
+return disconnect_flag;
+}
+
+int store_CSR(std::string csr_filename, int csr_size)
+{
+FILE *csr_temp;
+
+csr_temp = fopen(csr_filename.c_str, "w");
+
+if (!csr_temp)
+	{
+	perror("fopen");
+	return 1;
+	}
+
+ret = fwrite(read_buf, csr_size, 1, csr_temp);
+
+if (ret != 1)
+{
+	perror("fwrite");
+	fclose(csr_temp);
+	remove(csr_filename.c_str);
+	return 1;
+}
+
+fclose(csr_temp);
+
+return 0;
+}
+
 int main(int argc, char *argv[])
 {
-int socket, client_socket, ret, pos, disconnect_flag;
+int socket, client_socket, ret, pos, disconnect_flag, bytes_read, cert_size;
 struct sockaddr_in sd, sc;
 
 
@@ -53,51 +105,19 @@ while (1)
 
 	if (client_socket >= 0)
 		{
-		 pos = 0;
-		 disconnect_flag = 0;
-		 do 
-			{
-			 ret = recv(client_socket, read_buf + pos, READ_BUF_SIZE - 1 - pos, 0);
-			 
-			 if (ret > 0)
-				pos += ret;
-			 else
-			 	{
-				disconnect_flag = 1;
-			 	if (ret < 0)
-					perror("recv");
-			 	}
-			 read_buf[pos + 1] = '\0';
-			}
-		while(pos < READ_BUF_SIZE && !disconnect_flag && !std::strstr(read_buf, "-----END CERTIFICATE REQUEST-----"));
+		
+		disconnect_flag = read_CSR(client_socket, &bytes_read);
 		
 		if (disconnect_flag)
 			continue;
 		
 		{
-		FILE *csr_temp, *cert;
+		FILE *cert;
 		
 		std::string filename = (string("/tmp/CSR-") + inet_ntoa(sc.sin_addr) );
 		
-		csr_temp = fopen(filename.c_str, "w");
-		
-		if (!csr_temp)
-			{
-			perror("fopen");
+		if (store_CSR(filename, bytes_read))
 			continue;
-			}
-		
-		ret = fwrite(read_buf, pos, 1, csr_temp);
-		
-		if (ret != 1)
-		{
-			perror("fwrite");
-			fclose(csr_temp);
-			remove(filename.c_str);
-			continue;
-		}
-		
-		fclose(csr_temp);
 		
 		std::string cert_filename = atoi(current_id) + ".pem";
 		
@@ -106,6 +126,15 @@ while (1)
 		puts(sign_command.c_str);//debug
 		
 		system(sign_command.c_str);
+		
+		//get file size
+			{
+			struct stat st;
+			if (stat(cert_filename.c_str(), &st))
+				continue;
+			
+			cert_size = st.st_size;
+			}
 		
 		cert = fopen(cert_filename, "r");
 		
@@ -118,6 +147,7 @@ while (1)
 			}
 		
 		//send
+		
 		
 		current_id++;
 		
