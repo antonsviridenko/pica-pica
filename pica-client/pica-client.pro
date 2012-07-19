@@ -28,7 +28,8 @@ SOURCES += main.cpp\
     picasystray.cpp \
     picaactioncenter.cpp \
     dialogs/viewcertdialog.cpp \
-    dialogs/forgedcertdialog.cpp
+    dialogs/forgedcertdialog.cpp \
+    dialogs/registeraccountdialog.cpp
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -50,7 +51,8 @@ HEADERS  += mainwindow.h \
     dialogs/viewcertdialog.h \
     dialogs/forgedcertdialog.h \
     ../PICA_common.h \
-    ../PICA_proto.h
+    ../PICA_proto.h \
+    dialogs/registeraccountdialog.h
 
 
 DEFINES = PICA_MULTITHREADED

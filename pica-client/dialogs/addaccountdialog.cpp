@@ -53,7 +53,7 @@ AddAccountDialog::AddAccountDialog(QWidget *parent) :
     connect(bt_browse_cert,SIGNAL(clicked()),this,SLOT(browse_cert()));
     connect(bt_browse_pkey,SIGNAL(clicked()),this,SLOT(browse_pkey()));
 
-
+    setLayout(grid);
 }
 
 void AddAccountDialog::OK()

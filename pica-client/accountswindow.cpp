@@ -3,6 +3,7 @@
 #include "mainwindow.h"
 #include "globals.h"
 #include "dialogs/addaccountdialog.h"
+#include "dialogs/registeraccountdialog.h"
 #include "../PICA_client.h"
 #include "skynet.h"
 #include <QRegExp>
@@ -107,7 +108,8 @@ void AccountsWindow::login_click()
 
 void AccountsWindow::register_click()
 {
-
+    RegisterAccountDialog d;
+    d.exec();
 }
 
 void AccountsWindow::add_click()
