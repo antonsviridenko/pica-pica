@@ -24,6 +24,7 @@ private:
     QList<Accounts::AccountRecord> L;
 
     void LoadAccounts();
+    void CreateAccount(QString CertFilename, QString PkeyFilename, bool copyfiles);
 
     void closeEvent(QCloseEvent *);
 

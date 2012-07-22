@@ -1,7 +1,6 @@
 #include "viewcertdialog.h"
+#include "openssltool.h"
 #include <QVBoxLayout>
-#include <QProcess>
-
 #include <QMessageBox>
 
 #include <unistd.h>
@@ -42,24 +41,7 @@ ViewCertDialog::ViewCertDialog(QWidget *parent) :
 
 void ViewCertDialog::SetCert(QString cert_pem)
 {
-    QProcess openssl(this);
-    qint64 ret;
-    char *data;
-    QByteArray ba;
-
-    openssl.start("openssl", QStringList()<<"x509"<<"-noout"<<"-text"<<"-nameopt"<<"multiline,-esc_msb,utf8");
-
-    if (!openssl.waitForStarted())
-        return;
-
-    ba = cert_pem.toAscii();
-    ret = openssl.write(data = (char*)ba.constData());
-    openssl.closeWriteChannel();
-
-    if (!openssl.waitForFinished())
-        return;
-
-    cert_text->setPlainText(QString::fromUtf8(openssl.readAllStandardOutput().constData()));
+    cert_text->setPlainText(OpenSSLTool::CertTextFromString(cert_pem));
 }
 
 void ViewCertDialog::OK()

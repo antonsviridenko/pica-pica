@@ -3,6 +3,7 @@
 #include <QMutex>
 //#include "dialogs/viewcertdialog.h"
 #include "contacts.h"
+#include "openssltool.h"
 //#include <QMessageBox> //debug
 //#include "dialogs/forgedcertdialog.h"
 #include <QDebug>
@@ -98,30 +99,8 @@ void SkyNet::verify_peer_cert(quint32 peer_id, QString cert_pem, bool *verified)
     {
         cnt.SetContactCert(peer_id, cert_pem);
 
-        // -- move to OpenSSL class
-        QProcess openssl;
+        QString name = OpenSSLTool::NameFromCertString(cert_pem);
 
-        openssl.start("openssl",QStringList()<<"x509"<<"-subject"<<"-nameopt"<<"oneline,-esc_msb,utf8"<<"-noout");
-        if (!openssl.waitForStarted())
-            return;
-
-        openssl.write(cert_pem.toAscii());
-
-        if (!openssl.waitForFinished())
-            return;
-
-        QByteArray result = openssl.readAll();
-        QRegExp rx("CN = [0-9]+\\#([^\\s\\#]+)");
-
-
-        QString name=QString::fromUtf8( result.constData());
-
-        if (name.contains(rx))
-        {
-        name=rx.cap(1);
-        }
-
-        //
         cnt.SetContactName(peer_id, name);
     }
     else

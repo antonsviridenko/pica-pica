@@ -6,7 +6,7 @@
 #include "dialogs/registeraccountdialog.h"
 #include "../PICA_client.h"
 #include "skynet.h"
-#include <QRegExp>
+#include "openssltool.h"
 #include <QMessageBox>
 #include <QApplication>
 
@@ -106,49 +106,18 @@ void AccountsWindow::login_click()
 
 }
 
-void AccountsWindow::register_click()
+void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, bool copyfiles)
 {
-    RegisterAccountDialog d;
-    d.exec();
-}
-
-void AccountsWindow::add_click()
-{
-    AddAccountDialog d;
-    d.exec();
-
-    if (d.result())
-    {
     quint32 id;
 
-    PICA_get_id_from_cert(d.GetCertFilename().toUtf8().constData(),&id);
+    PICA_get_id_from_cert(CertFilename.toUtf8().constData(),&id);
 
-    //
-    QProcess openssl;
+    QString name = OpenSSLTool::NameFromCertFile(CertFilename);
 
-    openssl.start("openssl",QStringList()<<"x509"<<"-in"<<d.GetCertFilename()<<"-subject"<<"-nameopt"<<"oneline,-esc_msb,utf8"<<"-noout");
-    if (!openssl.waitForStarted())
-        return;
-
-    if (!openssl.waitForFinished())
-        return;
-
-    QByteArray result = openssl.readAll();
-    QRegExp rx("CN = [0-9]+\\#([^\\s\\#]+)");
-
-
-    QString name=QString::fromUtf8( result.constData());
-
-    if (name.contains(rx))
-    {
-    name=rx.cap(1);
-    }
-
-    //
     Accounts::AccountRecord rec;
     QString certfilename,pkeyfilename;
 
-    if (d.isCopyFilesChecked())
+    if (copyfiles)
     {
         QDir dir(config_dir);
         dir.mkdir(QString::number(id));
@@ -157,13 +126,13 @@ void AccountsWindow::add_click()
         certfilename=dir.absolutePath()+"/"+QString::number(id)+"_cert.pem";
         pkeyfilename=dir.absolutePath()+"/"+QString::number(id)+"_pkey.pem";
 
-        QFile::copy(d.GetCertFilename(),certfilename);
-        QFile::copy(d.GetPkeyFilename(),pkeyfilename);
+        QFile::copy(CertFilename,certfilename);
+        QFile::copy(PkeyFilename,pkeyfilename);
     }
     else
     {
-        certfilename = d.GetCertFilename();
-        pkeyfilename = d.GetPkeyFilename();
+        certfilename = CertFilename;
+        pkeyfilename = PkeyFilename;
     }
 
     rec.id=id;
@@ -181,6 +150,30 @@ void AccountsWindow::add_click()
         mbx.exec();
     }
     LoadAccounts();
+}
+
+void AccountsWindow::register_click()
+{
+    RegisterAccountDialog d;
+    d.exec();
+
+    if (d.result())
+    {
+        CreateAccount(d.GetCertFilename(), d.GetPkeyFilename(), true);
+
+        QFile::remove(d.GetCertFilename());
+        QFile::remove(d.GetPkeyFilename());
+    }
+}
+
+void AccountsWindow::add_click()
+{
+    AddAccountDialog d;
+    d.exec();
+
+    if (d.result())
+    {
+        CreateAccount(d.GetCertFilename(), d.GetPkeyFilename(), d.isCopyFilesChecked());
     }
 }
 

@@ -4,7 +4,7 @@
 #
 #-------------------------------------------------
 
-QT       += core gui sql
+QT       += core gui sql network
 
 TARGET = pica-client
 TEMPLATE = app
@@ -29,7 +29,8 @@ SOURCES += main.cpp\
     picaactioncenter.cpp \
     dialogs/viewcertdialog.cpp \
     dialogs/forgedcertdialog.cpp \
-    dialogs/registeraccountdialog.cpp
+    dialogs/registeraccountdialog.cpp \
+    openssltool.cpp
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -52,7 +53,8 @@ HEADERS  += mainwindow.h \
     dialogs/forgedcertdialog.h \
     ../PICA_common.h \
     ../PICA_proto.h \
-    dialogs/registeraccountdialog.h
+    dialogs/registeraccountdialog.h \
+    openssltool.h
 
 
 DEFINES = PICA_MULTITHREADED
