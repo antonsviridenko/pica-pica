@@ -10,7 +10,7 @@
 #include <unistd.h>
 #include <sys/errno.h>
 #include <sys/stat.h>
-
+#include <time.h>
 
 #include <cstring>
 #include <cstdlib>
@@ -24,9 +24,19 @@ using namespace std;
 #define READ_BUF_SIZE 4096
 #define WRITE_BUF_SIZE 8192
 
+#define BAN_THRESHOLD_SECS 60
+
 char read_buf[READ_BUF_SIZE];
 
 char write_buf[WRITE_BUF_SIZE];
+
+struct ban_info
+{
+    unsigned int reg_count;
+    time_t last_reg;
+};
+
+static std::map<in_addr_t, struct ban_info> banmap;
 
 
 unsigned int current_id = 30000;
@@ -135,6 +145,35 @@ if (bs < cert_size)
 return 0;
 }
 
+//check if we should ban this IP
+int IP_ban(struct sockaddr_in *a)
+{
+    time_t time_now =time(NULL);
+    
+    if (banmap[a->sin_addr.s_addr].reg_count >=3 && (time_now - banmap[a->sin_addr.s_addr].last_reg ) < BAN_THRESHOLD_SECS)
+    {
+	banmap[a->sin_addr.s_addr].reg_count++;
+	printf("IP %.16s temporarily banned\n", inet_ntoa(a->sin_addr));
+	return 1;
+    }
+
+return 0;
+}
+
+//add successfully registered client to ban info
+void baninfo_update(struct sockaddr_in *a)
+{
+    time_t time_now =time(NULL);
+    
+    if ((time_now - banmap[a->sin_addr.s_addr].last_reg ) > BAN_THRESHOLD_SECS)
+	banmap[a->sin_addr.s_addr].reg_count = 0;
+    
+    
+    banmap[a->sin_addr.s_addr].reg_count++;
+    
+    banmap[a->sin_addr.s_addr].last_reg = time_now;
+}
+
 int main(int argc, char *argv[])
 {
 int s, client_socket, ret, pos, disconnect_flag, bytes_read, cert_size;
@@ -163,6 +202,12 @@ while (1)
 
 	if (client_socket >= 0)
 		{
+		    
+		if (IP_ban(&sc))
+			{
+			close(client_socket);
+			continue;
+			}
 		
 		disconnect_flag = read_CSR(client_socket, &bytes_read);
 		
@@ -202,6 +247,8 @@ while (1)
 		
 		
 		current_id++;
+		baninfo_update(&sc);
+		
 		
 		freeres_1:
 		remove(cert_filename.c_str());
