@@ -11,6 +11,7 @@
 #include <sys/errno.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <signal.h>
 
 #include <cstring>
 #include <cstdlib>
@@ -192,9 +193,12 @@ ret = bind(s,(struct sockaddr*)&sd,sizeof(sd));
 
 ret = listen(s, 60);
 
+signal(SIGCHLD, SIG_IGN);
+
 while (1)
 	{
 	 socklen_t sockaddr_size = sizeof(sc);
+	 pid_t pid;
 	    
 	memset(&sc, 0, sizeof(sc));
 
@@ -208,17 +212,33 @@ while (1)
 			close(client_socket);
 			continue;
 			}
+			
 		
+		pid = fork();
+		
+		if (pid > 0)
+		{
+		    	current_id++;
+			baninfo_update(&sc);
+		    	continue;
+		}
+		
+		if (pid == -1)
+		{
+		    perror("fork() failed");
+		    continue;
+		}
+		//now we are in the child process		
+		
+	
 		disconnect_flag = read_CSR(client_socket, &bytes_read);
 		
 		if (disconnect_flag)
 			{
 			shutdown(client_socket, SHUT_RDWR);
 			close(client_socket);
-		    	continue;
+		    	exit(1);
 			}
-		
-		
 		
 		
 		std::string filename = (string("/tmp/CSR-") + inet_ntoa(sc.sin_addr) );
@@ -227,8 +247,61 @@ while (1)
 			{
 			shutdown(client_socket, SHUT_RDWR);
 			close(client_socket);
-		    	continue;
+		    	exit(1);
 			}
+			
+		//prepare ca environment
+		std::string ca_dir;
+		{
+		    char pidstr[16];
+		    sprintf(pidstr, "%u", getpid());
+		    FILE *f;
+		    
+		    ca_dir = (string)"/tmp/ca_dir." + pidstr;
+		    if (-1 == mkdir(ca_dir.c_str(), S_IRUSR | S_IWUSR | S_IXUSR))  
+		    {
+		       	perror("mkdir() failed");
+			close(client_socket);
+			remove(filename.c_str());
+			exit(1);
+		    }
+		    
+		    if (-1 == chdir(ca_dir.c_str()))
+		    {
+		       	perror("chdir() failed");
+			close(client_socket);
+			remove(filename.c_str());
+			rmdir(ca_dir.c_str());
+			exit(1);
+		    }
+		    
+		    f = fopen((ca_dir + '/' + "serial").c_str(), "w");
+		    
+		    if (!f)
+		    {
+			perror("unable to create serial file");
+			close(client_socket);
+			remove(filename.c_str());
+			rmdir(ca_dir.c_str());
+			exit(1);
+		    }
+		    
+		    fprintf(f, "%X", current_id);
+		    fclose(f);
+		    
+		    f = fopen((ca_dir + '/' + "database").c_str(), "w");
+		    
+		    if (!f)
+		    {
+			perror("unable to create database file");
+			close(client_socket);
+			remove(filename.c_str());
+			rmdir(ca_dir.c_str());
+			exit(1);
+		    }
+		    
+		    fclose(f);		    
+		}
 		
 		char current_id_str[256];
 		
@@ -236,7 +309,7 @@ while (1)
 		
 		std::string cert_filename = (string)(current_id_str) + ".pem";
 		
-		std::string sign_command = (string)"openssl ca -config ca_config.txt  -utf8 -subj /CN=" + current_id_str + "\\#tester -batch -notext -out " + cert_filename + " -in " + filename;
+		std::string sign_command = (string)"openssl ca -config /home/root_jr/temp/catest/ca_config.txt  -utf8 -subj /CN=" + current_id_str + "\\#tester -batch -notext -out " + cert_filename + " -in " + filename;
 		
 		puts(sign_command.c_str());//debug
 		
@@ -244,10 +317,6 @@ while (1)
 		
 		if (send_cert(client_socket, cert_filename))
 		    goto freeres_1;
-		
-		
-		current_id++;
-		baninfo_update(&sc);
 		
 		
 		freeres_1:
@@ -260,7 +329,7 @@ while (1)
 		shutdown(client_socket, SHUT_RDWR);
 		close(client_socket);
 		
-		
+		exit(0);//exiting from the child process
 		}
 	else
 		perror("accept");
