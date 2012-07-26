@@ -96,9 +96,10 @@ void RegisterAccountDialog::stageConnect(int retval,QProcess::ExitStatus)
 
     lbStatus->setText(tr("3) Connecting to server..."));
 
-    sock.connectToHost(registrar_hosts[(registrar_index++)%(sizeof(registrar_hosts)/sizeof(char*))], 2299);
-
     connect(&sock, SIGNAL(connected()), this, SLOT(stageGetCert()));
+    connect(&sock, SIGNAL(error(QAbstractSocket::SocketError)), this, SLOT(showError()));
+
+    sock.connectToHost(registrar_hosts[(registrar_index++)%(sizeof(registrar_hosts)/sizeof(char*))], 2299);
 }
 
 void RegisterAccountDialog::stageGetCert()
@@ -124,6 +125,8 @@ void RegisterAccountDialog::stageReadCert()
 
     if (cert_buf.contains("-----END CERTIFICATE-----") || cert_buf.contains("-----END X509 CERTIFICATE-----"))
     {
+        disconnect(&sock, SIGNAL(error(QAbstractSocket::SocketError)), 0, 0);
+
         QFile cert(config_dir + QDir::separator() + "cert.pem");
         cert.open(QIODevice::WriteOnly | QIODevice::Truncate);
         cert.write(cert_buf.data(),cert_buf.size());
@@ -146,4 +149,11 @@ QString RegisterAccountDialog::GetCertFilename()
 QString RegisterAccountDialog::GetPkeyFilename()
 {
     return PkeyFilename_;
+}
+
+void RegisterAccountDialog::showError()
+{
+  QMessageBox mbx;
+  mbx.setText(sock.errorString());
+  mbx.exec();
 }

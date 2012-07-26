@@ -41,6 +41,7 @@ public slots:
     void stageConnect(int,QProcess::ExitStatus);
     void stageGetCert();
     void stageReadCert();
+    void showError();
 };
 
 #endif // REGISTERACCOUNTDIALOG_H
