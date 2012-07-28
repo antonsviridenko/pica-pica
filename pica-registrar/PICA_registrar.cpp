@@ -177,11 +177,92 @@ void baninfo_update(struct sockaddr_in *a)
     banmap[a->sin_addr.s_addr].last_reg = time_now;
 }
 
+int readCSRname(string csr_filename, char *namebuf)
+{
+char pbuf[512];
+unsigned int bytes_read;
+FILE *p;
+int ret = 1;
+char *ptr1, *ptr2;
+
+p = popen(("openssl req -subject -nameopt oneline,-esc_msb,utf8 -noout -in " + csr_filename) .c_str(), "r");
+if (!p)
+    return 1;
+
+bytes_read = fread(pbuf, 1, 511, p);
+
+if (bytes_read < 15)
+    goto retn;
+
+pbuf[bytes_read] = '\0';
+
+puts(pbuf);//debug
+
+ptr1 = strstr(pbuf, "CN = ");
+
+if (!ptr1)
+    goto retn;
+
+puts("1");//debug
+
+ptr2 = ptr1+ 5;//skip "CN = "
+
+ptr1 = strchr(ptr2, '\n');
+
+if (!ptr1)
+    goto retn;
+
+puts("3");//debug
+
+*ptr1 = '\0';
+
+
+ptr1 = ptr2;
+
+while(*ptr1)
+{
+    switch(*ptr1)
+    {
+	case '#':
+	case '$':
+	case '&':
+	case '\"':
+	case '\'':
+	case '=':
+	case '(':
+	case ')':
+	case '\\':
+	case '/':
+	case '|':
+	case '`':
+	case '!':
+	case '<':
+	case '>':
+	case '{':
+	case '}':
+	case '[':
+	case ']':
+	    goto retn;
+    }    
+    ptr1++;
+}
+
+strncpy(namebuf, ptr2, 52);
+
+printf("name is %s\n", namebuf);//debug
+
+ret = 0;
+
+retn:
+pclose(p);
+return ret;
+}
 
 int main(int argc, char *argv[])
 {
 int s, client_socket, ret, pos, disconnect_flag, bytes_read, cert_size;
 struct sockaddr_in sd, sc;
+char namebuf[64];
 
 
 s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -254,6 +335,16 @@ while (1)
 		    	exit(1);
 			}
 			
+		//get name from CSR
+		memset(namebuf, 0, 64);
+		
+		if (readCSRname(filename, namebuf))
+		{
+		    printf("invalid name!!!");
+		    close(client_socket);
+		    exit(1);
+		}
+			
 		//prepare ca environment
 		std::string ca_dir;
 		{
@@ -313,7 +404,7 @@ while (1)
 		
 		std::string cert_filename = (string)(current_id_str) + ".pem";
 		
-		std::string sign_command = (string)"openssl ca -config /home/root_jr/temp/catest/ca_config.txt  -utf8 -subj /CN=" + current_id_str + "\\#tester -batch -notext -out " + cert_filename + " -in " + filename;
+		std::string sign_command = (string)"openssl ca -config /home/root_jr/temp/catest/ca_config.txt  -subj \"/CN=" + current_id_str + "#" + namebuf +  "\" -utf8 -batch -notext -out " + cert_filename + " -in " + filename;
 		
 		puts(sign_command.c_str());//debug
 		
