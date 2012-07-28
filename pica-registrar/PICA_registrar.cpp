@@ -27,6 +27,8 @@ using namespace std;
 
 #define BAN_THRESHOLD_SECS 60
 
+#define CHILD_TIMEOUT 10
+
 char read_buf[READ_BUF_SIZE];
 
 char write_buf[WRITE_BUF_SIZE];
@@ -175,6 +177,7 @@ void baninfo_update(struct sockaddr_in *a)
     banmap[a->sin_addr.s_addr].last_reg = time_now;
 }
 
+
 int main(int argc, char *argv[])
 {
 int s, client_socket, ret, pos, disconnect_flag, bytes_read, cert_size;
@@ -220,6 +223,7 @@ while (1)
 		{
 		    	current_id++;
 			baninfo_update(&sc);
+			close(client_socket);
 		    	continue;
 		}
 		
@@ -229,7 +233,7 @@ while (1)
 		    continue;
 		}
 		//now we are in the child process		
-		
+		alarm(CHILD_TIMEOUT);
 	
 		disconnect_flag = read_CSR(client_socket, &bytes_read);
 		
@@ -320,6 +324,8 @@ while (1)
 		
 		
 		freeres_1:
+		chdir("/");
+		system(((string)"rm -rf " + ca_dir).c_str());
 		remove(cert_filename.c_str());
 		
 		freeres_2:
