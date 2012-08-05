@@ -1,0 +1,50 @@
+ 
+.TH pica-node 8   
+.SH NAME
+pica-node \- start the node for Pica Pica Messenger distributed network
+.SH SYNOPSIS
+.B pica-node
+[\-f configuration file] [\-v | \-vv | \-vvv] 
+.SH DESCRIPTION
+Pica Pica node serves Pica Pica distributed network. It authenticates users,
+provides info about other existing nodes and online users, routes encrypted
+connections between users.
+.PP
+.B pica-node
+listens for TCP connections from clients and other nodes. On startup it loads
+nodelist database and tries to connect to each node listed there. At least one
+node should be alive for successful join to Pica Pica distributed network.
+.B
+
+.SH OPTIONS
+.TP
+\-h
+display help
+.TP
+\-f 
+.I config_file_name
+
+Specifies the name of the configuration file. The default is /etc/pica-node.conf
+.TP
+\-v
+Verbose mode. This is helpful in debugging problems.  Multiple -v options 
+increase the verbosity.  The maximum is 3.
+.SH FILES
+.TP
+.I /etc/pica-node.conf
+Configuration file. See 
+.BR pica-node.conf (5)
+for details
+.TP
+.I /var/lib/pica-node/nodelist.db
+Nodelist database. This is SQLite 3 database file.
+.TP
+.I /usr/share/pica-node/CA.pem
+Certificate Authority X509 certificate in .pem format
+.SH AUTHOR
+Anton Sviridenko (anton (at) picapica.im, anton (at) picapica.ge)
+.SH SEE ALSO
+.BR pica-node.conf(5)
+
+.BR http://picapica.im
+

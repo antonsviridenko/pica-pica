@@ -1,0 +1,43 @@
+ 
+.TH pica-node.conf 5   
+.SH NAME
+pica-node.conf \- pica-node configuration file
+.SH SYNOPSIS
+.B /etc/pica-node.conf
+.SH DESCRIPTION
+.BR pica-node (8)
+reads configuration data from 
+.I /etc/pica-node.conf 
+(or the 
+file specified with -f on the command line). The file has .INI file format.
+All options must be contained in 
+.B [pica-node]
+section. The possible options and their meanings are as follows:
+.TP
+.I announced_addr
+Network address that can be used to reach this instance of pica-node. 
+Can be specified in form of DNS name or IPv4 adress. If the computer 
+running pica-node is behind NAT, external public address of NAT machine
+must be specified and port forwarding must be configured.
+.TP
+.I listen_port
+Specifies the port number that 
+.BR pica-node (8)
+listens on.  The default is 2299
+.TP
+.I nodes_db_file
+Specifies the nodes database file. This is the SQLite 3 database. It stores
+info about available nodes (their address, port, last seen online, etc).
+The default is 
+.I /var/lib/pica-node/nodelist.db
+.TP
+.I CA_cert_file
+Specifies the path to CA certificate in .pem format. The default is 
+.I /usr/share/pica-node/CA.pem
+.SH AUTHOR
+Anton Sviridenko (anton (at) picapica.im, anton (at) picapica.ge)
+.SH SEE ALSO
+.BR pica-node (8)
+
+.BR http://picapica.im
+ 

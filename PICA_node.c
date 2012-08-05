@@ -2412,7 +2412,7 @@ int main(int argc,char** argv)
 
 process_cmdline(argc, argv);
 
-nodecfg.config_file = (nodecfg.config_file ? nodecfg.config_file : "/etc/pica-node.ini");
+nodecfg.config_file = (nodecfg.config_file ? nodecfg.config_file : "/etc/pica-node.conf");
 
 PICA_nodeconfig_load(nodecfg.config_file);
 
