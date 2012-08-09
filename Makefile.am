@@ -10,4 +10,8 @@ pica_node_SOURCES = PICA_node.c PICA_msgproc.c PICA_nodeaddrlist.c \
 		
 dist_man_MANS = pica-node.8 pica-node.conf.5
 
+pica_node_CPPFLAGS = -DPICA_PREFIX=\"$(prefix)\"
+
+dist_pkgdata_DATA = CA.pem
+
 
