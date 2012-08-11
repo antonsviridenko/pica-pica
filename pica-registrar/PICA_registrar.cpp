@@ -242,6 +242,7 @@ while(*ptr1)
 	case '}':
 	case '[':
 	case ']':
+	case '+':
 	    goto retn;
     }    
     ptr1++;

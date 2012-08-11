@@ -31,7 +31,7 @@ RegisterAccountDialog::RegisterAccountDialog(QWidget *parent) :
 
     setLayout(layout);
 
-    vld = new QRegExpValidator(QRegExp("[^\\#/=\"\'\\$]+"), this);
+    vld = new QRegExpValidator(QRegExp("[^\\#\\$&\"\'=\\(\\)\\\\/\\|`!<>\\{\\}\\[\\]\\+]+"), this);
     nickname->setValidator(vld);
 
     connect(btOK, SIGNAL(clicked()), this, SLOT(OK()));
