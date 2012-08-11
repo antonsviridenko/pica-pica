@@ -19,6 +19,8 @@
 #include <map>
 #include <string>
 
+#include <mysql.h>
+
 using namespace std;
 
 #define PICA_REGISTRAR_PORT 2299
@@ -97,7 +99,7 @@ fclose(csr_temp);
 return 0;
 }
 
-int send_cert(int client_socket, string cert_filename)
+int send_cert(int client_socket, string cert_filename, int *cert_size_bytes)
 {
 int cert_size, ret, bs;
 FILE *cert;
@@ -109,6 +111,7 @@ if (stat(cert_filename.c_str(), &st))
 			
 cert_size = st.st_size;
 			
+*cert_size_bytes = cert_size;
 		
 cert = fopen(cert_filename.c_str(), "r");
 		
@@ -259,12 +262,104 @@ pclose(p);
 return ret;
 }
 
+void store_in_db(unsigned int id, const char *ip_addr, const char *name, const char *req_pem, int req_size, const char *cert_pem, int cert_size)
+{
+    MYSQL *mysql_h;
+    static char query[] = "insert into registrations \
+ 							(id, t, ip_addr, name, req_pem, cert_pem) \
+ 							values(%u, now(), inet_aton(\"%.16s\"), \'%.64s\', \'%.4096s\', \'%.4096s\')";
+    
+    static char escape_buf[8192];
+    
+    static char query_subst[16384];
+    
+    
+    mysql_h=mysql_init(NULL);
+    
+    if (!mysql_real_connect(mysql_h, 
+					"localhost", 
+			    		"registrar",
+ 					"zbzz3", 
+			    		"pica_registrar",
+			    		0, NULL, 0))
+	{
+	puts(mysql_error(mysql_h));
+	//return;
+	}
+	
+	mysql_real_escape_string(mysql_h, escape_buf, req_pem, req_size);
+	
+	sprintf(query_subst, query, id, ip_addr, name, escape_buf, cert_pem);
+	
+	//puts(query_subst);//debug
+	
+	if (mysql_query(mysql_h, query_subst))
+	{
+	puts(mysql_error(mysql_h));
+	//return;
+	}
+	
+mysql_close(mysql_h);
+}
+
+unsigned int get_next_id_from_db()
+{
+    MYSQL *mysql_h;
+    MYSQL_RES *t_qres;
+    MYSQL_ROW row;
+    unsigned long *lengths;
+    char idstrbuf[16];
+    unsigned int ret = 0;
+    
+    mysql_h=mysql_init(NULL);
+    
+    if (!mysql_real_connect(mysql_h, 
+					"localhost", 
+			    		"registrar",
+ 					"zbzz3", 
+			    		"pica_registrar",
+			    		0, NULL, 0))
+	{
+	puts(mysql_error(mysql_h));
+	return 0;
+	}
+	
+	if (mysql_query(mysql_h,"select max(id)+1 from registrations"))
+	{
+	puts(mysql_error(mysql_h));
+	return 0;
+	}
+	
+	t_qres = mysql_store_result(mysql_h);
+	
+	
+	row = mysql_fetch_row(t_qres);
+	lengths = mysql_fetch_lengths(t_qres);
+	
+	sprintf(idstrbuf, "%.*s",(int)lengths[0], row[0]);
+	puts(idstrbuf);
+	
+	ret = strtol(idstrbuf, 0, 10);
+	
+	mysql_free_result(t_qres);
+	mysql_close(mysql_h);
+	
+	return ret;
+}
+
 int main(int argc, char *argv[])
 {
 int s, client_socket, ret, pos, disconnect_flag, bytes_read, cert_size;
 struct sockaddr_in sd, sc;
 char namebuf[64];
 
+if (mysql_library_init(0,NULL,NULL))
+{
+    	puts("mysql_library_init() failed");
+	return 0;
+}
+
+current_id = get_next_id_from_db();
 
 s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
@@ -382,7 +477,7 @@ while (1)
 			exit(1);
 		    }
 		    
-		    fprintf(f, "%X", current_id);
+		    fprintf(f, "%04X\n", current_id);
 		    fclose(f);
 		    
 		    f = fopen((ca_dir + '/' + "database").c_str(), "w");
@@ -411,9 +506,12 @@ while (1)
 		
 		system(sign_command.c_str());
 		
-		if (send_cert(client_socket, cert_filename))
+		if (send_cert(client_socket, cert_filename, &cert_size))
 		    goto freeres_1;
 		
+		write_buf[cert_size] = '\0';
+		
+		store_in_db(current_id, inet_ntoa(sc.sin_addr), namebuf, read_buf, bytes_read, write_buf, cert_size);
 		
 		freeres_1:
 		chdir("/");
