@@ -2065,7 +2065,7 @@ while(i_ptr)
 			kill_ptr=i_ptr;
 			}
 		ret=get_id_fromsubjstr(DN_str,&i_ptr->id);
-		if (!ret || i_ptr-id == 0)
+		if (!ret || i_ptr->id == 0)
 			{
 			PICA_error("Unable to get client id from certificate, or certificate is invalid");
 			kill_ptr=i_ptr;
