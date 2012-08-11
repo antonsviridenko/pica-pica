@@ -2049,7 +2049,7 @@ while(i_ptr)
 		X509* client_cert;
 		char* DN_str;
 
-		printf("SSL connection using %s\n", SSL_get_cipher(i_ptr->ssl_comm));//debug
+		PICA_info("SSL c2n connection established using %s cipher", SSL_get_cipher(i_ptr->ssl_comm));
 
 		client_cert=SSL_get_peer_certificate (i_ptr->ssl_comm);
 		if (!client_cert)
@@ -2065,9 +2065,9 @@ while(i_ptr)
 			kill_ptr=i_ptr;
 			}
 		ret=get_id_fromsubjstr(DN_str,&i_ptr->id);
-		if (!ret)
+		if (!ret || i_ptr-id == 0)
 			{
-			//ERR_CHECK //ошибка выделения id
+			PICA_error("Unable to get client id from certificate, or certificate is invalid");
 			kill_ptr=i_ptr;
 			}
     printf("user id=%u\n",i_ptr->id);//debug

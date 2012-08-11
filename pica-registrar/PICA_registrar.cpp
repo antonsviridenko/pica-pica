@@ -404,7 +404,7 @@ while (1)
 		
 		std::string cert_filename = (string)(current_id_str) + ".pem";
 		
-		std::string sign_command = (string)"openssl ca -config /home/root_jr/temp/catest/ca_config.txt  -subj \"/CN=" + current_id_str + "#" + namebuf +  "\" -utf8 -batch -notext -out " + cert_filename + " -in " + filename;
+		std::string sign_command = (string)"openssl ca -config /home/root_jr/temp/catest/ca_config.txt -utf8  -subj \"/CN=" + current_id_str + "#" + namebuf +  "\" -batch -notext -out " + cert_filename + " -in " + filename;
 		
 		puts(sign_command.c_str());//debug
 		

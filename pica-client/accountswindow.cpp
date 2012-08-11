@@ -109,8 +109,17 @@ void AccountsWindow::login_click()
 void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, bool copyfiles)
 {
     quint32 id;
+    int ret;
 
-    PICA_get_id_from_cert(CertFilename.toUtf8().constData(),&id);
+    ret = PICA_get_id_from_cert(CertFilename.toUtf8().constData(),&id);
+
+    if (0 == id || 0 == ret)
+    {
+        QMessageBox mbx;
+        mbx.setText("Invalid certificate");
+        mbx.exec();
+        return;
+    }
 
     QString name = OpenSSLTool::NameFromCertFile(CertFilename);
 
