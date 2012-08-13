@@ -14,4 +14,16 @@ pica_node_CPPFLAGS = -DPICA_PREFIX=\"$(prefix)\"
 
 dist_pkgdata_DATA = CA.pem
 
+pkglocalstatedir = $(localstatedir)/pica-node
 
+dist_pkglocalstate_DATA = nodelist.db 
+
+nodelist.db: nodelist_db_create.sql
+	echo "Creating and initializing nodelist database..."
+	sqlite3 $@  "`cat $<`" 
+
+
+EXTRA_DIST = nodelist_db_create.sql \
+			iniparser/LICENSE \
+			LICENSE \
+			README
