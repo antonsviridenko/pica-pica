@@ -53,11 +53,11 @@ const char query[] = "select address, port, inactive_count, last_active  from no
 struct cb_param p = {list_head, &N};
 
 
-ret = sqlite3_open(dbfilename, &db);
+ret = sqlite3_open_v2(dbfilename, &db, SQLITE_OPEN_READWRITE, NULL);
 
 if (ret != SQLITE_OK)
 	{
-	PICA_error( "Can't open nodelist database: %s\n", sqlite3_errmsg(db));
+	PICA_fatal( "Can't open nodelist database (%s): %s\n", dbfilename, sqlite3_errmsg(db));
 	sqlite3_close(db);
 	return -1;
 	}
