@@ -37,9 +37,9 @@ EXTRA_DIST += nodelist_db_create.sql
 endif
 #####################################
 if PICA_CLIENT
-bin_PROGRAMS += pica-client
+bin_PROGRAMS += pica-client/pica-client
 
-pica_client_SOURCES = \
+pica_client_pica_client_SOURCES = \
 pica-client/accounts.cpp \
 pica-client/accounts.h \
 pica-client/accountswindow.cpp \
@@ -87,7 +87,7 @@ PICA_msgproc.c \
 PICA_msgproc.h \
 PICA_common.h PICA_proto.h
 
-nodist_pica_client_SOURCES  = \
+nodist_pica_client_pica_client_SOURCES  = \
 moc_accountswindow.cpp \
 moc_addaccountdialog.cpp \
 moc_askpassword.cpp \
@@ -119,8 +119,8 @@ ui_%.h: pica-client/%.ui
 	uic $(CPPFLAGS) $< -o $@
 
  
-pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) 
-pica_client_LDADD = $(QT_DEPENDENCIES_LIBS)
+pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) 
+pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS)
 
 dist_pkgdata_DATA += pica-client/picapica-icon-fly.png pica-client/picapica-icon-sit.png 
 
