@@ -5,7 +5,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QProcess>
-#include "../PICA_client.h"
+#include "../../PICA_client.h"
 
 AddAccountDialog::AddAccountDialog(QWidget *parent) :
     QDialog(parent)

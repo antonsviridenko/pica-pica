@@ -1,5 +1,5 @@
 #include "registeraccountdialog.h"
-#include "globals.h"
+#include "../globals.h"
 #include <QVBoxLayout>
 #include <QDir>
 #include <QMessageBox>

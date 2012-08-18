@@ -8,7 +8,7 @@
 #include <QRegExpValidator>
 #include <QtNetwork>
 #include <QTcpSocket>
-#include "openssltool.h"
+#include "../openssltool.h"
 
 class RegisterAccountDialog : public QDialog
 {

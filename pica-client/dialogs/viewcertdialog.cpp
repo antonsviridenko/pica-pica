@@ -1,5 +1,5 @@
 #include "viewcertdialog.h"
-#include "openssltool.h"
+#include "../openssltool.h"
 #include <QVBoxLayout>
 #include <QMessageBox>
 

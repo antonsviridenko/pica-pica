@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.68])
-AC_INIT([Pica Pica Node], [0.5], [http://picapica.im/bugzilla/], [pica-node], [http://picapica.im])
+AC_INIT([Pica Pica Messenger], [0.5], [http://picapica.im/bugzilla/], [pica-pica], [http://picapica.im])
 AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 AC_CONFIG_SRCDIR([PICA_node.c])
 
@@ -10,9 +10,37 @@ AC_CONFIG_SRCDIR([PICA_node.c])
 AC_PROG_CC
 AC_PROG_INSTALL
 
-# Checks for libraries.
+# Checks for common libraries, required by both pica-node and pica-client
 AC_CHECK_LIB([crypto], [RAND_add])
 AC_CHECK_LIB([ssl], [SSL_library_init])
+
+
+#checking if pica-node is disabled
+AC_ARG_ENABLE([node],
+    AS_HELP_STRING([--disable-node], [Disable build of pica-node]))
+
+AS_IF([test "x$enable_node" != "xno"], [
+  PICA_NODE_ENABLED=yes
+])
+
+#checking if pica-client is disabled
+AC_ARG_ENABLE([client],
+    AS_HELP_STRING([--disable-client], [Disable build of pica-client]))
+
+AS_IF([test "x$enable_client" != "xno"], [
+  PICA_CLIENT_ENABLED=yes
+])
+
+#at least one program must be enabled
+AS_IF([test "x$PICA_NODE_ENABLED" != "xyes" && test "x$PICA_CLIENT_ENABLED" != "xyes"  ], 
+  AC_MSG_ERROR(["Either pica-node or pica-client must be enabled"])
+)
+
+AM_CONDITIONAL([PICA_NODE], [test "x$PICA_NODE_ENABLED" = "xyes"])
+AM_CONDITIONAL([PICA_CLIENT], [test "x$PICA_CLIENT_ENABLED" = "xyes"])
+
+#pica-node tests
+AS_IF([test "x$PICA_NODE_ENABLED" = "xyes"],[
 AC_CHECK_LIB([sqlite3], [sqlite3_open])
 
 AC_CHECK_PROG([SQLITE3], [sqlite3], [yes], [no])
@@ -20,10 +48,18 @@ AC_CHECK_PROG([SQLITE3], [sqlite3], [yes], [no])
 if test "x$SQLITE3" != xyes; then
             AC_MSG_ERROR(["sqlite3 program not found"])
    fi
+])
 
+#pica-client tests
+AS_IF([test "x$PICA_NODE_ENABLED" = "xyes"],[
+AC_PROG_CXX
+PKG_CHECK_MODULES([QT_DEPENDENCIES], [QtCore QtGui QtSql QtNetwork])
+AC_SUBST([QT_DEPENDENCIES_CFLAGS])
+AC_SUBST([QT_DEPENDENCIES_LIBS])
+])
 
 # Checks for header files.
-AC_CHECK_HEADERS([arpa/inet.h limits.h netdb.h netinet/in.h stdlib.h string.h sys/ioctl.h sys/socket.h sys/time.h unistd.h wchar.h])
+AC_CHECK_HEADERS([arpa/inet.h limits.h netdb.h netinet/in.h stdlib.h string.h sys/ioctl.h sys/socket.h sys/time.h unistd.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_UINT16_T

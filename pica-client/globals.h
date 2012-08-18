@@ -6,7 +6,7 @@
 
 #ifndef PICA_INSTALLPREFIX
 
-#define PICA_INSTALLPREFIX "/usr/"
+#define PICA_INSTALLPREFIX "/usr"
 
 #endif
 
