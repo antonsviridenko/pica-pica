@@ -8,6 +8,7 @@ AC_CONFIG_SRCDIR([PICA_node.c])
 
 # Checks for programs.
 AC_PROG_CC
+AC_PROG_CXX
 AC_PROG_INSTALL
 
 # Checks for common libraries, required by both pica-node and pica-client
@@ -51,8 +52,8 @@ if test "x$SQLITE3" != xyes; then
 ])
 
 #pica-client tests
-AS_IF([test "x$PICA_NODE_ENABLED" = "xyes"],[
-AC_PROG_CXX
+AS_IF([test "x$PICA_CLIENT_ENABLED" = "xyes"],[
+#AC_PROG_CXX
 PKG_CHECK_MODULES([QT_DEPENDENCIES], [QtCore QtGui QtSql QtNetwork])
 AC_SUBST([QT_DEPENDENCIES_CFLAGS])
 AC_SUBST([QT_DEPENDENCIES_LIBS])

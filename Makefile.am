@@ -1,6 +1,6 @@
 bin_PROGRAMS = 
 CLEANFILES =
-dist_pkgdata_DATA = CA.pem
+#dist_pkgdata_DATA = CA.pem
 
 
 EXTRA_DIST = 	iniparser/LICENSE \
@@ -33,6 +33,10 @@ nodelist.db: nodelist_db_create.sql
 	sqlite3 $@  "`cat $<`" 
 
 EXTRA_DIST += nodelist_db_create.sql 
+
+pkgpicanodedir = ${datarootdir}/pica-node
+
+dist_pkgpicanode_DATA = CA.pem README nodelist_db_create.sql
 
 endif
 #####################################
@@ -122,7 +126,8 @@ ui_%.h: pica-client/%.ui
 pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) 
 pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS)
 
-dist_pkgdata_DATA += pica-client/picapica-icon-fly.png pica-client/picapica-icon-sit.png 
+pkgpicaclientdir = ${datarootdir}/pica-client
+dist_pkgpicaclient_DATA = CA.pem pica-client/picapica-icon-fly.png pica-client/picapica-icon-sit.png 
 
 #$(filter moc_%.cpp,$(pica_client_SOURCES))
 CLEANFILES += moc_*.cpp ui_*.h
