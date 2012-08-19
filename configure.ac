@@ -46,9 +46,7 @@ AC_CHECK_LIB([sqlite3], [sqlite3_open])
 
 AC_CHECK_PROG([SQLITE3], [sqlite3], [yes], [no])
 
-if test "x$SQLITE3" != xyes; then
-            AC_MSG_ERROR(["sqlite3 program not found"])
-   fi
+AS_IF([test "x$SQLITE3" != xyes],  [ AC_MSG_ERROR(["sqlite3 program not found"])])
 ])
 
 #pica-client tests
@@ -57,6 +55,11 @@ AS_IF([test "x$PICA_CLIENT_ENABLED" = "xyes"],[
 PKG_CHECK_MODULES([QT_DEPENDENCIES], [QtCore QtGui QtSql QtNetwork])
 AC_SUBST([QT_DEPENDENCIES_CFLAGS])
 AC_SUBST([QT_DEPENDENCIES_LIBS])
+AC_CHECK_PROG([UIC], [uic], [yes], [no])
+AC_CHECK_PROG([MOC], [moc], [yes], [no])
+#fail if not found ...
+AS_IF([test "x$UIC" != xyes],[AC_MSG_ERROR(["uic program not found. Please install Qt development package"])])
+AS_IF([test "x$MOC" != xyes],[AC_MSG_ERROR(["moc program not found. Please install Qt development package"])])
 ])
 
 # Checks for header files.
