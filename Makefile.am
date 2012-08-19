@@ -26,7 +26,8 @@ pica_node_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" -DPICA_SYSCONFDIR=\"$(sy
 
 pkglocalstatedir = $(localstatedir)/lib/pica-node
 
-dist_pkglocalstate_DATA = nodelist.db 
+dist_pkglocalstate_DATA = nodelist.db
+dist_sysconf_DATA = pica-node.conf 
 
 nodelist.db: nodelist_db_create.sql
 	echo "Creating and initializing nodelist database..."
