@@ -23,7 +23,7 @@
 
 using namespace std;
 
-#define PICA_REGISTRAR_PORT 2299
+#define PICA_REGISTRAR_PORT 2288
 #define READ_BUF_SIZE 4096
 #define WRITE_BUF_SIZE 8192
 

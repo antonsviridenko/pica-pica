@@ -99,7 +99,7 @@ void RegisterAccountDialog::stageConnect(int retval,QProcess::ExitStatus)
     connect(&sock, SIGNAL(connected()), this, SLOT(stageGetCert()));
     connect(&sock, SIGNAL(error(QAbstractSocket::SocketError)), this, SLOT(showError()));
 
-    sock.connectToHost(registrar_hosts[(registrar_index++)%(sizeof(registrar_hosts)/sizeof(char*))], 2299);
+    sock.connectToHost(registrar_hosts[(registrar_index++)%(sizeof(registrar_hosts)/sizeof(char*))], 2288);
 }
 
 void RegisterAccountDialog::stageGetCert()
