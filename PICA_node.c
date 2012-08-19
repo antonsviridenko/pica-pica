@@ -186,16 +186,13 @@ PICA_debug1("received CONNID");
 caller_id=*((unsigned int*)(buf+2));
 callee_id=*((unsigned int*)(buf+6));
 
-printf("CONNID: caller_id=%u callee_id=%u\n",caller_id,callee_id);//debug
+PICA_debug1("CONNID: caller_id=%u callee_id=%u",caller_id,callee_id);
 
 link=cclink_list_search(caller_id,callee_id);
 
 if (!link)
 	return 0;
 
-puts("\ncclink found");//debug
-
-printf("link->state = %i\n", link->state);//debug
 
 if (link->state!=PICA_CCLINK_LOCAL_WAITCONNCLE && link->state!=PICA_CCLINK_LOCAL_WAITCONNCLR
 	&& link->state!=PICA_CCLINK_N2NCLR_WAITCONNCLR  && link->state!=PICA_CCLINK_N2NCLE_WAITCONNCLE)
@@ -213,7 +210,7 @@ else if (link->state==PICA_CCLINK_LOCAL_WAITCONNCLR || link->state==PICA_CCLINK_
 
 if (nc->addr.sin_addr.s_addr!=c->addr.sin_addr.s_addr)
 	{
-	puts("IP check failed");//debug
+	PICA_warn("CONNID: IP check failed. IP address of sender does not match IP in c2n connection");
 	return 0;
 	}
 }
@@ -226,7 +223,6 @@ if (link->state==PICA_CCLINK_LOCAL_WAITCONNCLE)
 		}
 	else
 		{
-		puts("unable to send FOUND to caller");//debug
 		cclink_list_delete(link);
 		return 0;
 		}
@@ -241,7 +237,6 @@ if (link->state==PICA_CCLINK_N2NCLE_WAITCONNCLE)
 		}
 	else
 		{
-		puts("unable to send N2NALLOW to caller node");//debug
 		cclink_list_delete(link);
 		return 0;
 		}
@@ -349,7 +344,6 @@ if (cclink_list_findwaitsearch(callee_id)/*search request for this id is already
 if ((mp = client_wbuf_push(i,PICA_PROTO_NOTFOUND,PICA_PROTO_NOTFOUND_SIZE)))
 	{
 	*((unsigned int*)mp->tail)=callee_id;
-	puts("sending NOTFOUND... put to senq q...");//debug
 	}
 
 return 1;
@@ -376,8 +370,7 @@ if (link->state!=PICA_CCLINK_LOCAL_WAITREP &&
     return 0;
 
 cclink_setwaitconn(link);
-	
-puts("procmsg_CONNALLOW - return 1");//debug
+
 return 1;
 }
 
@@ -462,7 +455,7 @@ PICA_debug1("received NEWNODE");
 switch (buf[0])
 	{
     	case PICA_PROTO_NEWNODE_IPV4:
-	printf("NEWNODE_IPV4: ip %.16s port %hu\n",inet_ntoa(*(struct in_addr*)(buf+2)),ntohs(*(uint16_t*)(buf+6)));//debug
+	PICA_debug1("NEWNODE_IPV4: ip %.16s port %hu\n",inet_ntoa(*(struct in_addr*)(buf+2)),ntohs(*(uint16_t*)(buf+6)));
 	{
 	struct PICA_nodeaddr_ipv4 na_ipv4;
 	
@@ -618,7 +611,7 @@ while(listleft)
 					nlp=nodelink_list_addnew(&nc);
 					send_newnode(nlp,my_addr);
 					nodelink_attach_nodeaddr(nlp,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
-					printf("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));//debug
+					PICA_debug1("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
 					}
 					
 			na.port = ntohs(na_ipv4.port);
@@ -930,8 +923,6 @@ struct cclink* cclink_list_add(struct client *clr,struct client *cle)
 {
 struct cclink *l;
 
-puts("cclink_list_add");//debug
-
 l=(struct cclink*)calloc(sizeof(struct cclink),1);
 
 if (!l)
@@ -1070,7 +1061,6 @@ switch(ccl->state)
 		return;
 		}
 	ccl->state = PICA_CCLINK_LOCAL_ACTIVE;
-	puts("caller cclink established");//debug
 	break;
 	case PICA_CCLINK_N2NCLR_WAITCONNCLR:
 	ccl->sck_p1 = s;
@@ -1203,7 +1193,7 @@ CLOSE(nc->sck);
 
 
 nc->sck=0;
-nc->pos=0;   printf("newconn_close: closing connection\n");//debug
+nc->pos=0;
 }
 
 //функция ищет свободный элемент в массиве структур newconn и возвращает на него указатель
@@ -1299,7 +1289,7 @@ struct client* client_tree_search(unsigned int id)//надо бы потести
 struct client* i_ptr;
 i_ptr=client_tree_root;
 
-printf("client_tree_search: searching for %u...\n",id);//debug
+PICA_debug1("client_tree_search: searching for %u...",id);
 
 while(i_ptr)
 	{
@@ -1312,7 +1302,7 @@ while(i_ptr)
 		i_ptr=i_ptr->right;
 	}
 
-puts("client_tree_search- id not found");//debug
+PICA_debug1("client_tree_search- id not found");
 return 0;
 }
 
@@ -1447,7 +1437,7 @@ else
 if (client_tree_search(ci->id) == ci)
 	{
 	client_tree_remove(ci);
-	client_tree_print(client_tree_root);//debug
+	client_tree_print(client_tree_root);
 	}
 
 cclink_list_delete_by_client(ci);
@@ -1565,13 +1555,11 @@ int nodelink_rbuf_grow(struct nodelink *nl)
 {
 unsigned char *p;
 
-puts(__FUNCTION__);//debug
-
 p=realloc(nl->r_buf,nl->buflen_r + DEFAULT_BUF_SIZE);
 
 if (!p)
 	{
-	puts("out of memory");//debug
+	PICA_error("realloc() failed");
 	return 0;
 	}
 nl->r_buf = p;
@@ -1590,7 +1578,7 @@ if (!nl->w_buf)
 	nl->w_buf=calloc(1,DEFAULT_BUF_SIZE );
 	if (!nl->w_buf)
 		{
-		puts("out of memory");//debug
+		PICA_error("calloc() failed. Out of memory");
 		return 0;
 		}
 	nl->buflen_w=DEFAULT_BUF_SIZE;
@@ -1636,13 +1624,11 @@ for (i=0;i<MAX_NEWCONNS;i++)
 			if (t-newconns[i].tmst>NEWCONN_TIMEOUT)
 				{
 				newconn_close(newconns+i);
-				puts("closing by timeout(1): ");//debug
 				}
 			}
 		else if ( newconns[i].tmst-t>NEWCONN_TIMEOUT)
 			{
 			newconn_close(newconns+i);
-			puts("closing by timeout(2): ");//debug
 			}
 		}
 	}
@@ -1672,7 +1658,6 @@ while(il)
 			dl=il;
 			il=il->next;
 			cclink_list_delete(dl);
-			puts("inactive cclink closed by timeout");//debug
 			continue;
 			}
 		}
@@ -1694,8 +1679,6 @@ FD_SET(s,readfds);
 
 if (s > *nfds)
 	*nfds=s;
-
-//printf("set_select_fd([socket %i ])\n",s);//debug
 }
 
 void listen_set_fds(fd_set *readfds,int *nfds)
@@ -1762,7 +1745,6 @@ struct sockaddr_in addr;
 int addrsize = sizeof(struct sockaddr_in);
 if (FD_ISSET(listen_comm_sck,readfds))
 	{
-	puts("accept");//debug
 	s = accept(listen_comm_sck,(struct sockaddr*)&addr,&addrsize);
 
 	if (s >= 0)
@@ -1771,12 +1753,11 @@ if (FD_ISSET(listen_comm_sck,readfds))
 		
 		nc->sck = s;		
 		nc->addr = addr;
-		printf("accepted connection\n");//debug
+		PICA_info("accepted connection");
 		}
 	else
 		{
 		perror("accept:");//debug
-		printf("accept error!\n");//debug
 		//ERR_CHECK
 		}
 	}
@@ -1795,7 +1776,7 @@ for (i=0;i<MAX_NEWCONNS;i++)
 
 		if (ret<=0)
 			{
-			perror("process_newconn_read - recv:");//debug
+			//perror("process_newconn_read - recv:");//debug
 			newconn_close(newconns+i);
 			continue;
 			}
@@ -1803,7 +1784,7 @@ for (i=0;i<MAX_NEWCONNS;i++)
 	
 		if(!PICA_processdatastream(newconns[i].buf,&(newconns[i].pos),newconns+i  /*arg*/,_msginfo_newconn, MSGINFO_MSGSNUM(_msginfo_newconn) ))
 			{
-			puts("processdatastream error\n");//debug
+			//puts("processdatastream error\n");//debug
 			newconn_close(newconns+i);
 			}
 		//FD_CLR(newconns[i].sck,readfds);
@@ -1880,7 +1861,7 @@ while(cc)
 		&& FD_ISSET(cc->sck_p1,readfds) && !cc->jam_p1p2 )
 		{
 		ret=recv(cc->sck_p1,cc->buf_p1p2 + cc->bufpos_p1p2,cc->buflen_p1p2 - cc->bufpos_p1p2,0);
-		printf("DATA recv  p1p2: ret=%i\n",ret);//debug
+		PICA_debug3("process_c2c_read: recv  p1p2: ret=%i",ret);
 		if (ret>0)
 			{
 			cc->bufpos_p1p2+=ret;
@@ -1893,7 +1874,7 @@ while(cc)
 		&& FD_ISSET(cc->sck_p2,readfds)  && !cc->jam_p2p1 )
 		{
 		ret=recv(cc->sck_p2,cc->buf_p2p1 + cc->bufpos_p2p1,cc->buflen_p2p1 - cc->bufpos_p2p1,0);
-		printf("DATA recv  p2p1: ret=%i\n",ret);//debug
+		PICA_debug3("process_c2c_read: recv  p2p1: ret=%i\n",ret);
 		if (ret>0)
 			{
 			cc->bufpos_p2p1+=ret;
@@ -1950,7 +1931,7 @@ while(nl)
 	
 	if (kill_ptr)
 		{
-		nodelink_list_delete(kill_ptr);puts("process_n2n_read - calling nodelink_list_delete");//debug
+		nodelink_list_delete(kill_ptr);
 		kill_ptr=0;
 		}
 	}
@@ -1978,7 +1959,7 @@ while(i_ptr)
 		
 		ret=SSL_write(i_ptr->ssl_comm,i_ptr->w_buf,i_ptr->btw_ssl);
 		
-		printf("process_comm: write: ret of SSL_write=%i\n",ret);//debug
+		PICA_debug3("process_c2n_write:  ret of SSL_write()=%i",ret);
 		
 		if (ret==i_ptr->btw_ssl)
 			{
@@ -1998,7 +1979,6 @@ while(i_ptr)
 		break;
 		case PICA_CLSTATE_SENDINGRESP:
 		ret=send(i_ptr->sck_comm,i_ptr->w_buf,i_ptr->w_pos,0);
-		printf("process_comm:  write: sendingresp w_pos=%u  ret=%i\n",i_ptr->w_pos,ret);//debug
 		if (!ret)
 			kill_ptr=i_ptr;
 		
@@ -2014,13 +1994,12 @@ while(i_ptr)
 		if (!i_ptr->w_pos)
 			i_ptr->state=PICA_CLSTATE_TLSNEGOTIATION;
 			
-			puts("SENDINGRESP");//debug
 		break;
 		case PICA_CLSTATE_TLSNEGOTIATION:
 		i_ptr->w_pos=0;
 		ret=SSL_connect(i_ptr->ssl_comm);
 		
-		printf("wr SSL_connect=%i\n",ret);//debug
+		PICA_debug3("process_c2n_write: SSL_connect()=%i",ret);
 		
 		if (!ret)
 			kill_ptr=i_ptr;
@@ -2033,13 +2012,13 @@ while(i_ptr)
 				{
 				case SSL_ERROR_WANT_WRITE:
 				i_ptr->w_pos=1;
-				printf("wr WANT_WRITE\n");//debug
+				PICA_debug3("SSL_ERROR_WANT_WRITE");
 				break;
 				case SSL_ERROR_WANT_READ:
-	    printf("wr WANT_READ\n");//debug
+	    			PICA_debug3("SSL_ERROR_WANT_READ");
 				break;
 				default:
-	    printf("wr SSL_get_error=%i",eret);//debug
+	    			PICA_debug3("SSL_get_error() = %i", eret);
 				kill_ptr=i_ptr;
 				}
 			}
@@ -2070,7 +2049,7 @@ while(i_ptr)
 			PICA_error("Unable to get client id from certificate, or certificate is invalid");
 			kill_ptr=i_ptr;
 			}
-    printf("user id=%u\n",i_ptr->id);//debug
+    		PICA_debug2("user id=%u",i_ptr->id);
 		#warning "see comments below"
 		//сделать проверку названия сети!!!!---------------------------<<<<<<<<<<<<<<<<<<<<<<
 					
@@ -2082,7 +2061,7 @@ while(i_ptr)
 		else
 			{
 			ret=client_tree_add(i_ptr);
-			client_tree_print(client_tree_root);//debug
+			client_tree_print(client_tree_root);
 			}
 		if (!ret)
 			{
@@ -2138,7 +2117,7 @@ while(cc)
 		else
 			ret=send(cc->sck_p2,cc->buf_p1p2,cc->bufpos_p1p2,MSG_NOSIGNAL);
 
-		printf("DATA send  p1p2: ret=%i\n",ret);//debug
+		PICA_debug3("process_c2c_write: send  p1p2: ret=%i",ret);
 		if (ret>0)
 			{
 			if (ret < cc->bufpos_p1p2)
@@ -2196,7 +2175,7 @@ while(cc)
 		else
 			ret=send(cc->sck_p1,cc->buf_p2p1,cc->bufpos_p2p1,MSG_NOSIGNAL);
 
-		printf("DATA send  p2p1: ret=%i\n",ret);//debug
+		PICA_debug3("process_c2c_write: send  p2p1: ret=%i",ret);
 		if (ret>0)
 			{
 			if (ret < cc->bufpos_p2p1)
@@ -2283,7 +2262,7 @@ while(nl)
 	
 	if (kill_ptr)
 		{
-		nodelink_list_delete(kill_ptr);puts("process_n2n_write - calling nodelink_list_delete");//debug
+		nodelink_list_delete(kill_ptr);
 		kill_ptr=0;
 		}
 	}

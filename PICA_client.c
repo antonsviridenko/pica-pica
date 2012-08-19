@@ -120,8 +120,8 @@ return 1;
          OPENSSL_free(DN_str);
          return 0;
          }
- printf("my id is %u\n",*p_id);//debug
- puts(DN_str);//debug
+ //printf("my id is %u\n",*p_id);//debug
+ //puts(DN_str);//debug
 
  OPENSSL_free(DN_str);
  return 1;
@@ -195,7 +195,7 @@ if (mp)
 		}
 	else
 		{
-		puts("callee CONNID");//debug
+		//puts("callee CONNID");//debug
 		*(unsigned int*)(mp->tail) = chnl->peer_id;//вызвывающий
 		*(unsigned int*)(mp->tail + 4) = chnl->conn->id;//вызываемый
 		}    
@@ -218,7 +218,7 @@ chnl->ssl=SSL_new(chnl->conn->ctx);
 
 if (!chnl->ssl)
 	{
-	puts("SSL_new !-  0");//debug
+	//puts("SSL_new !-  0");//debug
 	err_ret=PICA_ERRSSL;
 	goto error_ret;
 	}
@@ -227,7 +227,7 @@ ret=SSL_set_fd(chnl->ssl, chnl->sck_data);
 
 if (!ret)
 	{
-	puts("SSL_set_fd returned 0");//debug
+	//puts("SSL_set_fd returned 0");//debug
 	err_ret=PICA_ERRSSL;
 	goto error_ret_;
 	}
@@ -239,12 +239,12 @@ ret=SSL_connect(chnl->ssl);
 else
 ret=SSL_accept(chnl->ssl);
 
-printf("verify result:%i\n",(int)SSL_get_verify_result(chnl->ssl));//debug
+//printf("verify result:%i\n",(int)SSL_get_verify_result(chnl->ssl));//debug
 
 if (ret!=1)
 	{
-	printf("ret=%i of SSL_connect or accept\n",ret);//debug
-	printf("SSL_get_error says:%i\n",SSL_get_error(chnl->ssl,ret));//debug
+	//printf("ret=%i of SSL_connect or accept\n",ret);//debug
+	//printf("SSL_get_error says:%i\n",SSL_get_error(chnl->ssl,ret));//debug
 	err_ret=PICA_ERRSSL;
 	goto error_ret_;
 	}
@@ -263,7 +263,7 @@ DN_str=X509_NAME_oneline(X509_get_subject_name(chnl->peer_cert), 0, 0);
 
 if (!DN_str)
 	{
-	puts("no DN_str");//debug
+	//puts("no DN_str");//debug
 	err_ret=PICA_ERRSSL;
 	goto error_ret_;
 	}
@@ -273,7 +273,7 @@ if (!get_id_fromsubjstr(DN_str,&tmp_uid)  || tmp_uid!=chnl->peer_id)
 	err_ret=PICA_ERRINVPEERCERT;
 	goto error_ret_;
 	}
-puts(DN_str);//debug
+//puts(DN_str);//debug
 
 OPENSSL_free(DN_str);
 
@@ -391,7 +391,7 @@ static unsigned int procmsg_NOTFOUND(unsigned char* buf,unsigned int nb,void* p)
 struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
 struct PICA_chaninfo *ipt,*rq=0;
 
-puts("procmsg_NOTFOUND");//debug
+//puts("procmsg_NOTFOUND");//debug
 
 ipt=ci->chan_list_end;
 while(ipt)
@@ -407,10 +407,10 @@ while(ipt)
 if (!rq)
 	return 0;// ERR_CHECK -левое сообщение, такой запрос не посылался
 
-puts("procmsg_NOTFOUND_chkp0");//debug
+//puts("procmsg_NOTFOUND_chkp0");//debug
 PICA_close_channel(rq);
 
-puts("procmsg_NOTFOUND_chkp1");//debug
+//puts("procmsg_NOTFOUND_chkp1");//debug
 
 callbacks.notfound_cb(*(unsigned int*)(buf+2));
 return 1;
@@ -453,7 +453,7 @@ char ipaddr_string[INET6_ADDRSTRLEN];
 char temp_zeroswap;
 unsigned int port;
 
-puts("CLNODELIST");//debug
+//puts("CLNODELIST");//debug
 
 //callbacks.nodelist_cb(buf + 4, nb - 4);
 do
@@ -504,7 +504,7 @@ do
 		break;
 		
 	    	default:
-		puts("unknown node address type");//debug
+		//puts("unknown node address type");//debug
 		return 0;
 		}
 	}
@@ -700,7 +700,7 @@ if (ret!=1)
 ////<<
 
 ret=SSL_CTX_load_verify_locations(cid->ctx,CA_file,0/*"trustedCA/"*/);
-printf("loadverifylocations ret=%i\n",ret);//debug
+//printf("loadverifylocations ret=%i\n",ret);//debug
 SSL_CTX_set_client_CA_list(cid->ctx,SSL_load_client_CA_file(CA_file));
 
 
@@ -809,17 +809,17 @@ if (cid->init_resp_ok != 1)
     goto error_ret_5;
 	}
 
-printf("6\n");//debug
+//printf("6\n");//debug
 
 ret=SSL_set_fd(cid->ssl_comm,cid->sck_comm);
 
-printf("SSL_set_fd=%i\n",ret);
+//printf("SSL_set_fd=%i\n",ret);
 
 ret=SSL_accept(cid->ssl_comm);
 
 if (ret!=1)
 	{
-	printf("SSL_accept  ret=%i\n  SSL_get_error=%i\n",ret,SSL_get_error(cid->ssl_comm,ret));//debug
+	//printf("SSL_accept  ret=%i\n  SSL_get_error=%i\n",ret,SSL_get_error(cid->ssl_comm,ret));//debug
 		//ERR_CHECK
 	ret_err=PICA_ERRSSL;
     goto error_ret_5;
@@ -1304,10 +1304,10 @@ void PICA_close_channel(struct PICA_chaninfo *chn)
 {
 struct PICA_chaninfo *ipt;
 
-puts("PICA_close_channel");//debug
+//puts("PICA_close_channel");//debug
 	
 ipt=chn->conn->chan_list_head;
-puts("PICA_close_channel_chkp0");//debug
+//puts("PICA_close_channel_chkp0");//debug
 while(ipt)
 	{
 	if (ipt==chn)
@@ -1327,7 +1327,7 @@ while(ipt)
 	ipt=ipt->next;
 	}
 
-puts("PICA_close_channel_chkp1");//debug
+//puts("PICA_close_channel_chkp1");//debug
 
 if (chn -> read_buf)
 	free(chn -> read_buf);
@@ -1338,25 +1338,25 @@ if (chn -> write_buf)
 if (chn->peer_cert)
 	X509_free(chn->peer_cert);
 
-puts("PICA_close_channel_chkp2");//debug
+//puts("PICA_close_channel_chkp2");//debug
 
 if (chn->ssl)
 	SSL_shutdown(chn->ssl);
-	puts("PICA_close_channel_chkp3");//debug
+	//puts("PICA_close_channel_chkp3");//debug
 
 if (chn->ssl)
 	{
-	printf("3 SSL_free(%X)\n",chn->ssl);//debug
+	//printf("3 SSL_free(%X)\n",chn->ssl);//debug
 	SSL_free(chn->ssl);
 	}
 
-puts("PICA_close_channel_chkp4");//debug
+//puts("PICA_close_channel_chkp4");//debug
 SHUTDOWN(chn->sck_data);
-puts("PICA_close_channel_chkp5");//debug
+//puts("PICA_close_channel_chkp5");//debug
 CLOSE(chn->sck_data);
-puts("PICA_close_channel_chkp6");//debug
+//puts("PICA_close_channel_chkp6");//debug
 free(chn);
-puts("PICA_close_channel_chkp7");//debug
+//puts("PICA_close_channel_chkp7");//debug
 }
 
 void PICA_close_connection(struct PICA_conninfo *cid)
@@ -1367,7 +1367,7 @@ while((ipt = cid->chan_list_head))
 	PICA_close_channel(ipt);
 
 SSL_shutdown(cid->ssl_comm);
-printf("4 SSL_free(%X)\n",cid->ssl_comm);//debug
+//printf("4 SSL_free(%X)\n",cid->ssl_comm);//debug
 SSL_free(cid->ssl_comm);
 SHUTDOWN(cid->sck_comm);
 CLOSE(cid->sck_comm);
