@@ -2412,9 +2412,12 @@ int main(int argc,char** argv)
 
 process_cmdline(argc, argv);
 
-nodecfg.config_file = (nodecfg.config_file ? nodecfg.config_file : "/etc/pica-node.conf");
+nodecfg.config_file = (nodecfg.config_file ? nodecfg.config_file :PICA_NODECONFIG_DEF_CONFIG_FILE);
 
-PICA_nodeconfig_load(nodecfg.config_file);
+if (!PICA_nodeconfig_load(nodecfg.config_file))
+	{
+	PICA_fatal("Unable to load configuration. Please check if config file %s exists and has correct permissions", nodecfg.config_file);
+	}
 
 PICA_debug1("nodecfg.config_file = %s", nodecfg.config_file);
 PICA_debug1("nodecfg.announced_addr = %s",nodecfg.announced_addr);
