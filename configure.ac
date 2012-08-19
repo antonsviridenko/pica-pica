@@ -65,6 +65,11 @@ AS_IF([test "x$MOC" != xyes],[AC_MSG_ERROR(["moc program not found. Please insta
 #check for xdg-utils
 AC_CHECK_PROG([XDG_DESKTOP_MENU], [xdg-desktop-menu], [yes], [no])
 AS_IF([test "x$XDG_DESKTOP_MENU" != xyes],[AC_MSG_WARN(["Looks like xdg-utils are not installed. Desktop menu item installation disabled"])])
+
+#check for openssl command line tool
+
+AC_CHECK_PROG([OPENSSL_TOOL], [openssl], [yes], [no])
+AS_IF([test "x$OPENSSL_TOOL" != xyes],[AC_MSG_WARN(["openssl command line tool not found. This is a runtime dependency for pica-client!"])])
 ])
 
 AM_CONDITIONAL([XDG_UTILS], [test "x$XDG_DESKTOP_MENU" = "xyes"])
