@@ -133,5 +133,27 @@ dist_pkgpicaclient_DATA = CA.pem pica-client/picapica-icon-fly.png pica-client/p
 #$(filter moc_%.cpp,$(pica_client_SOURCES))
 CLEANFILES += moc_*.cpp ui_*.h
 
+EXTRA_DIST += pica-client/pica-client.desktop
+
+if XDG_UTILS
+
+pica-client-install-icon: pica-client/picapica-icon-sit.png
+	xdg-icon-resource install --size 32 $< pica-client
+
+pica-client-install-menuitem: pica-client/pica-client.desktop 
+	xdg-desktop-menu install $<
+
+install-data-hook: pica-client-install-icon pica-client-install-menuitem
+
+pica-client-uninstall-icon:
+	xdg-icon-resource uninstall --size 32 pica-client
+
+pica-client-uninstall-menuitem:
+	xdg-desktop-menu uninstall pica-client.desktop
+
+uninstall-hook: pica-client-uninstall-menuitem pica-client-uninstall-icon
+
+endif
+
 endif
 #####################################

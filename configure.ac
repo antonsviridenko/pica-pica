@@ -49,6 +49,7 @@ AC_CHECK_PROG([SQLITE3], [sqlite3], [yes], [no])
 AS_IF([test "x$SQLITE3" != xyes],  [ AC_MSG_ERROR(["sqlite3 program not found"])])
 ])
 
+
 #pica-client tests
 AS_IF([test "x$PICA_CLIENT_ENABLED" = "xyes"],[
 #AC_PROG_CXX
@@ -60,7 +61,13 @@ AC_CHECK_PROG([MOC], [moc], [yes], [no])
 #fail if not found ...
 AS_IF([test "x$UIC" != xyes],[AC_MSG_ERROR(["uic program not found. Please install Qt development package"])])
 AS_IF([test "x$MOC" != xyes],[AC_MSG_ERROR(["moc program not found. Please install Qt development package"])])
+
+#check for xdg-utils
+AC_CHECK_PROG([XDG_DESKTOP_MENU], [xdg-desktop-menu], [yes], [no])
+AS_IF([test "x$XDG_DESKTOP_MENU" != xyes],[AC_MSG_WARN(["Looks like xdg-utils are not installed. Desktop menu item installation disabled"])])
 ])
+
+AM_CONDITIONAL([XDG_UTILS], [test "x$XDG_DESKTOP_MENU" = "xyes"])
 
 # Checks for header files.
 AC_CHECK_HEADERS([arpa/inet.h limits.h netdb.h netinet/in.h stdlib.h string.h sys/ioctl.h sys/socket.h sys/time.h unistd.h])

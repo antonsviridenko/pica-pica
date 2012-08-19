@@ -1,0 +1,16 @@
+[Desktop Entry]
+Name=Pica Pica Messenger
+Name[ru]=Клиент обмена мгновенными сообщениями Pica Pica
+
+GenericName=Internet Messenger
+GenericName[ru]=Клиент обмена мгновенными сообщениями
+
+Comment=Distributed secure instant messaging with strong encryption
+Comment[ru]=Переписка мгновенными сообщениями в криптографически защищенной распределенной системе. 
+
+Exec=pica-client
+Icon=pica-client
+
+Terminal=false
+Type=Application
+Categories=Network;InstantMessaging;
