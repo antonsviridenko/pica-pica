@@ -22,9 +22,9 @@ pica_node_SOURCES = PICA_node.c PICA_msgproc.c PICA_nodeaddrlist.c \
 		
 dist_man_MANS = pica-node.8 pica-node.conf.5
 
-pica_node_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" -DPICA_SYSCONFDIR=\"$(sysconfdir)\"
+pica_node_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" -DPICA_SYSCONFDIR=\"$(sysconfdir)\" -DPICA_LOCALSTATEDIR=\"$(localstatedir)\"
 
-pkglocalstatedir = $(localstatedir)/pica-node
+pkglocalstatedir = $(localstatedir)/lib/pica-node
 
 dist_pkglocalstate_DATA = nodelist.db 
 

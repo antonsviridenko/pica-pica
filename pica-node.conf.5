@@ -16,9 +16,11 @@ section. The possible options and their meanings are as follows:
 .TP
 .I announced_addr
 Network address that can be used to reach this instance of pica-node. 
-Can be specified in form of DNS name or IPv4 adress. If the computer 
-running pica-node is behind NAT, external public address of NAT machine
-must be specified and port forwarding must be configured.
+Can be specified in form of DNS name or IP  adress (Right now only IPv4
+address format is supported. IPv6 and domain name support will be added in 
+future releases). If the computer running pica-node is behind the NAT, external 
+ public address of NAT machine must be specified and port forwarding must be 
+ configured.
 .TP
 .I listen_port
 Specifies the port number that 

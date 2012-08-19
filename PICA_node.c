@@ -2427,8 +2427,12 @@ PICA_debug1("nodecfg.nodes_db_file = %s",nodecfg.nodes_db_file);
 if (!PICA_node_init())
 	return -1;
 
-//if (PICA_node_joinskynet("nodelist")<=0)//CONF имя файла
-	/*return -1*/;//вывести предупреждение, что ни к одному другому узлу подключиться не удалось
+if (INADDR_NONE == inet_addr(nodecfg.announced_addr) || INADDR_ANY == inet_addr(nodecfg.announced_addr))
+	{
+	PICA_fatal("announced_addr  (%.16s) is invalid or not configured. Please set correct public IP address of your pica-node instance in config file",
+			nodecfg.announced_addr
+	);
+	}
 
 PICA_node_joinskynet(nodecfg.nodes_db_file, nodecfg.announced_addr);//CONF-CONF имя файла с адресами узлов, свой адрес
 
