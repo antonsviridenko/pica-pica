@@ -29,7 +29,7 @@ class PicaSysTray *systray;
 
 // /usr/share/pica-client/pica-pica_CA.pem
 //QString config_defaultCA("/home/root_jr/files/projects/picapica_wc/localhost/project_picapica/trunk/tests/trusted_CA.pem");
-QString config_defaultCA(PICA_INSTALLPREFIX"/share/pica-client/trusted_CA.pem");
+QString config_defaultCA(PICA_INSTALLPREFIX"/share/pica-client/CA.pem");
 
 static bool create_config_dir()
 {
