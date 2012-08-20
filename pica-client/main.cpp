@@ -108,6 +108,9 @@ static bool create_config_dir()
                         constraint pk primary key (address,port) on conflict replace \
                      );");
 
+         query.exec("insert into nodes values(\"picapica.im\", 2299, 0, 0);");
+         query.exec("insert into nodes values(\"picapica.ge\", 2299, 0, 0);");
+
 
         if (query.lastError().isValid())
         showerror:
