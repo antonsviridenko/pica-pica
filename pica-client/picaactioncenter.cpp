@@ -20,10 +20,15 @@ PicaActionCenter::PicaActionCenter(QObject *parent) :
 
 void PicaActionCenter::about()
 {
+#ifdef PACKAGE_VERSION
+#define VERSION_STRING "v"PACKAGE_VERSION
+#else
+#define VERSION_STRING ""
+#endif
     QMessageBox mbx;
     mbx.setWindowIcon(picapica_ico_sit);
     mbx.setIconPixmap(picapica_ico_sit.pixmap(32));
-    mbx.setText(tr("(c) 2012 Anton Sviridenko"));
+    mbx.setText(tr("Pica Pica Messenger "VERSION_STRING"\n(c) 2012 Anton Sviridenko\n http://picapica.im"));
     mbx.exec();
 }
 
