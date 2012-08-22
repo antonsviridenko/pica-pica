@@ -1,3 +1,50 @@
-Pica Pica Messenger Node v0.5
+Pica Pica  Node and Pica Pica Messenger
+========================
 (c) 2012 Anton Sviridenko
+anton@picapica.im
+
  
+Pica Pica Node serves Pica Pica distributed network. It authenticates users,
+provides info about other existing nodes and online users, routes encrypted
+connections between users. Pica Pica Node is written in C.
+
+Pica Pica Messenger is a graphical IM client written in C++ which uses Qt toolkit.
+
+BUILD
+=========================
+Run ./configure && make install to build and install pica-node and pica-client.
+
+Dependencies:
+	1) pica-node - OpenSSL libraries (libssl and libcrypto) >=0.9.8, 
+SQLite3 library (libsqlite3) and sqlite3 command line client
+
+	2) pica-client - OpenSSL libraries (libssl and libcrypto) >=0.9.8 and openssl command line tool,
+Qt 4 libraries (QtCore, QtGui, QtSql, QtNetwork), Qt4 tools (uic and moc), pkg-config, xdg-utils (for menu 
+item installation)
+
+You can disable building of pica-node or pica-client by passing apropriate option to configure script:
+	--disable-node
+	--disable-client
+
+pica-node:
+By default, Pica Pica sources are configured to be installed in /usr/local prefix. You can override default
+settings using --prefix=[your prefix]. If you are building .rpm, .deb or some other package, it is better to 
+use the following settings:
+./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var
+
+"make install" command installs these important files for pica-node: pica-node.conf with default settings in
+$(sysconfdir), nodelist.db (database with addresses of all existing nodes) in $(localstatedir)/lib/pica-node
+
+After installation it is important to set "announced_addr" parameter in configuration file.
+
+pica-client:
+Alternatively, pica-client.pro project file can be used to build pica-client bypassing autotools stuff. Open 
+pica-client.pro in Qt Creator IDE or use QMake to generate Makefile
+
+LICENSE
+=========================
+See LICENSE file
+
+BUGS
+=========================
+Report bugs at http://picapica.im/bugzilla/
