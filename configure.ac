@@ -56,11 +56,11 @@ AS_IF([test "x$PICA_CLIENT_ENABLED" = "xyes"],[
 PKG_CHECK_MODULES([QT_DEPENDENCIES], [QtCore QtGui QtSql QtNetwork])
 AC_SUBST([QT_DEPENDENCIES_CFLAGS])
 AC_SUBST([QT_DEPENDENCIES_LIBS])
-AC_CHECK_PROG([UIC], [uic], [yes], [no])
-AC_CHECK_PROG([MOC], [moc], [yes], [no])
+AC_CHECK_PROGS([UIC], [uic uic-qt4], [notfound])
+AC_CHECK_PROGS([MOC], [moc moc-qt4], [notfound])
 #fail if not found ...
-AS_IF([test "x$UIC" != xyes],[AC_MSG_ERROR(["uic program not found. Please install Qt development package"])])
-AS_IF([test "x$MOC" != xyes],[AC_MSG_ERROR(["moc program not found. Please install Qt development package"])])
+AS_IF([test "x$UIC" = xnotfound],[AC_MSG_ERROR(["uic program not found. Please install Qt development package"])])
+AS_IF([test "x$MOC" = xnotfound],[AC_MSG_ERROR(["moc program not found. Please install Qt development package"])])
 
 #check for xdg-utils
 AC_CHECK_PROG([XDG_DESKTOP_MENU], [xdg-desktop-menu], [yes], [no])

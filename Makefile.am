@@ -110,10 +110,10 @@ moc_viewcertdialog.cpp \
 ui_mainwindow.h
 
 moc_%.cpp: pica-client/%.h
-	moc $< -o $@
+	$(MOC) $< -o $@
 
 moc_%.cpp: pica-client/dialogs/%.h
-	moc $< -o $@
+	$(MOC) $< -o $@
 
 pica-client/mainwindow.cpp: ui_mainwindow.h
 
@@ -121,7 +121,7 @@ pica-client/mainwindow.cpp: ui_mainwindow.h
 #	uic $(CPPFLAGS) $< -o $@
 
 ui_%.h: pica-client/%.ui
-	uic $(CPPFLAGS) $< -o $@
+	$(UIC) $(CPPFLAGS) $< -o $@
 
  
 pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) 
