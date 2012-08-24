@@ -44,8 +44,13 @@ void ContactListWidget::contextMenuEvent(QContextMenuEvent *event)
         menu.addAction(delcontactAct);
 
     menu.addAction(addcontactAct);
-    menu.addAction(startchatAct);
-    menu.addAction(viewcertAct);
+
+    if (this->itemAt(event->pos()))
+        menu.addAction(startchatAct);
+
+    if (this->itemAt(event->pos()))
+        menu.addAction(viewcertAct);
+
     menu.exec(event->globalPos());
 }
 
