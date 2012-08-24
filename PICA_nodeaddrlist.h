@@ -4,6 +4,7 @@
 #define PICA_NODEADDRLIST_H
 
 #include <netinet/in.h>
+#include <time.h>
 
 struct PICA_nodeaddr_ipv4
 {
