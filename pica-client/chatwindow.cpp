@@ -47,12 +47,11 @@ void ChatWindow::put_message(QString msg, quint32 id, bool is_me)
         color = "#ff0000";
 
     QTextCursor c(chatw->document());
-
     c.movePosition(QTextCursor::End, QTextCursor::MoveAnchor);
-
     if (is_me)
         undelivered_msgs.append(c.position());
 
+    chatw->moveCursor(QTextCursor::End, QTextCursor::MoveAnchor);
     fmt = chatw->currentCharFormat();
     chatw->insertHtml(
                       QString("<b><font color=%1>&nbsp;(%2) %3 : </font></b>").
@@ -63,7 +62,7 @@ void ChatWindow::put_message(QString msg, quint32 id, bool is_me)
     chatw->setCurrentCharFormat(fmt);
     chatw->insertPlainText(msg + '\n');
 
-    chatw->moveCursor(QTextCursor::End, QTextCursor::KeepAnchor);
+    chatw->moveCursor(QTextCursor::End, QTextCursor::MoveAnchor);
 }
 
 void ChatWindow::msg_from_peer(QString msg)
@@ -135,6 +134,7 @@ void TextSend::keyPressEvent(QKeyEvent *e)
 
     QTextEdit::keyPressEvent(e);
 }
+
 
 
 
