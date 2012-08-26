@@ -33,7 +33,7 @@ nodelist.db: nodelist_db_create.sql
 	echo "Creating and initializing nodelist database..."
 	sqlite3 $@  "`cat $<`" 
 
-EXTRA_DIST += nodelist_db_create.sql 
+EXTRA_DIST += nodelist_db_create.sql gentoo_initscript pica-node-0.5.2.ebuild
 
 pkgpicanodedir = ${datarootdir}/pica-node
 
