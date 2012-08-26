@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 static int PICA_loglevel = PICA_LOG_INFO;
 
@@ -83,11 +84,17 @@ void PICA_log_entry(int loglevel, const char *fmt, va_list args)
 static char buf[1024];
 static const char *loglevel_txt[] = {"fatal", "error", "warning", "info", "debug1", "debug2", "debug3"};
 FILE *log_file = stdout;
+time_t log_time;
+static char timebuf[32];
 
 if (loglevel <= PICA_LOG_WARN)
 	log_file = stderr;
 
-sprintf(buf, "%s: %.1000s\n", loglevel_txt[loglevel - PICA_LOG_FATAL], fmt);
+log_time = time(NULL);
+strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", localtime(&log_time));
+
+
+sprintf(buf, "[%.32s] %s: %.1000s\n", timebuf, loglevel_txt[loglevel - PICA_LOG_FATAL], fmt);
 
 vfprintf(log_file, buf, args);
 }
