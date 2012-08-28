@@ -133,7 +133,7 @@ dist_pkgpicaclient_DATA = CA.pem pica-client/picapica-icon-fly.png pica-client/p
 #$(filter moc_%.cpp,$(pica_client_SOURCES))
 CLEANFILES += moc_*.cpp ui_*.h
 
-EXTRA_DIST += pica-client/pica-client.desktop
+EXTRA_DIST += pica-client/pica-client.desktop pica-client-0.5.2.ebuild
 
 if XDG_UTILS
 
