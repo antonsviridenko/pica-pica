@@ -97,6 +97,7 @@ strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", localtime(&log_time));
 sprintf(buf, "[%.32s] %s: %.1000s\n", timebuf, loglevel_txt[loglevel - PICA_LOG_FATAL], fmt);
 
 vfprintf(log_file, buf, args);
+fflush(log_file);
 }
 
 void PICA_set_loglevel(int loglevel)
