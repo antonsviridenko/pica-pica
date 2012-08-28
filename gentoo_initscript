@@ -12,7 +12,8 @@ start() {
 	cd /
 	start-stop-daemon --start --quiet --background --make-pidfile \
 		--pidfile /var/run/pica-node.pid --exec /usr/bin/pica-node \
-		--stdout /var/log/pica-node.log --stderr /var/log/pica-node.err \
+		--stdout /var/log/pica-node/pica-node.log \
+		--stderr /var/log/pica-node/pica-node.err \
 		--user ${PICANODE_USER:-pica-node}  -- \
 		 ${PICANODE_OPTS:--v}
 	eend $?

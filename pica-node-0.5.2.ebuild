@@ -38,10 +38,9 @@ pkg_preinst() {
 #    enewgroup pica-node
 	enewuser pica-node
 	fowners -R pica-node:pica-node "/var/lib/pica-node"
-	touch "${D}/var/log/pica-node.log"
-	touch "${D}/var/log/pica-node.err"
-	fowners -R pica-node:pica-node "/var/log/pica-node.log"
-	fowners -R pica-node:pica-node "/var/log/pica-node.err"
+	
+	dodir "/var/log/pica-node"
+	fowners -R pica-node:pica-node "/var/log/pica-node"
 }
 
 pkg_postinst() {
