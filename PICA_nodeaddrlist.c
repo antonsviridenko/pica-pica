@@ -36,7 +36,7 @@ na->inactive_count = atoi(argv[2]);
 
 na->last_active = atoi(argv[3]);
 
-na->next = NULL;
+na->next = *(cp->n_addr);
 
 *(cp->n_addr) = na;
 (*(cp->N))++;
@@ -49,7 +49,7 @@ int PICA_nodeaddr_list_load(char* dbfilename,struct PICA_nodeaddr **list_head)
  int N=0, ret;
 sqlite3 *db;
 char *zErrMsg = 0;
-const char query[] = "select address, port, inactive_count, last_active  from nodes order by inactive_count asc, last_active desc";
+const char query[] = "select address, port, inactive_count, last_active  from nodes order by inactive_count desc, last_active asc";
 struct cb_param p = {list_head, &N};
 
 

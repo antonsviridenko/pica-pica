@@ -29,6 +29,8 @@ int ret;
 
 memset(&h,0,sizeof(struct addrinfo));
 
+PICA_debug1("connecting to node %.255s %u ...", addr, port);
+
 #ifdef AI_IDN
 #define H_AI_FLAGS (AI_ADDRCONFIG | AI_IDN)
 #else
