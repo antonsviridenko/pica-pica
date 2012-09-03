@@ -2272,7 +2272,7 @@ int node_loop()
 {
 fd_set fds;
 struct timeval tv; 
-int nfds,ret;
+int nfds = 0,ret;
     
 do
 	{
