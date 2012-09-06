@@ -947,7 +947,7 @@ if (ret>0)
 	ipt=ci->chan_list_head;
 	while(ipt)
 		{
-		if (FD_ISSET(ipt->sck_data, &fds))
+		if (ipt->state==PICA_CHANSTATE_ACTIVE && FD_ISSET(ipt->sck_data, &fds))
 			{
 			if (PICA_OK != (ret = PICA_read_c2c(ipt)) )
 				{
