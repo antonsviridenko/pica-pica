@@ -3,7 +3,7 @@
 
 AC_PREREQ([2.68])
 AC_INIT([Pica Pica Messenger], [0.5.2], [http://picapica.im/bugzilla/], [pica-pica], [http://picapica.im])
-AM_INIT_AUTOMAKE([-Wall -Werror foreign])
+AM_INIT_AUTOMAKE([-Wall  foreign])
 AC_CONFIG_SRCDIR([PICA_node.c])
 
 # Checks for programs.
