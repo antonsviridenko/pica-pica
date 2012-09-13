@@ -619,6 +619,10 @@ CRYPTO_set_locking_callback(locking_cb);
 //if (!ctx)
 //;//ERR_CHECK
 
+#ifndef WIN32
+signal(SIGPIPE, SIG_IGN);
+#endif
+
 return 1;
 }
 
