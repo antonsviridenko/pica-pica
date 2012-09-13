@@ -3,7 +3,13 @@
 #ifndef PICA_NODEADDRLIST_H
 #define PICA_NODEADDRLIST_H
 
+#ifndef WIN32
 #include <netinet/in.h>
+#else
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include <time.h>
 
 struct PICA_nodeaddr_ipv4

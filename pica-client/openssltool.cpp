@@ -102,6 +102,9 @@ bool OpenSSLTool::GenCSRSignal(QString csr_file, QString keyfile, QString subjec
     openssl_.start("openssl",
                    QStringList()
                         <<"req"
+#ifdef WIN32
+						<<"-config"<<"openssl.cnf"
+#endif
                         <<"-out"<<csr_file
                         <<"-key"<<keyfile
                         <<"-subj"<<"/CN=" + subject

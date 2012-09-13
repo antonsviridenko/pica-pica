@@ -573,6 +573,10 @@ void locking_cb(int mode, int type, char *file, int line)
 int PICA_client_init(struct PICA_client_callbacks *clcbs)
 {
 struct sockaddr_in sd;
+#ifdef WIN32
+WSADATA wsd;
+WSAStartup(MAKEWORD(2,2),&wsd);
+#endif
 
 if (!clcbs)
 	return 0;
@@ -582,10 +586,7 @@ callbacks=*clcbs;
 SSL_load_error_strings();
 SSL_library_init(); 
 
-#ifdef WIN32
-WSADATA wsd;
-WSAStartup(MAKEWORD(2,2),&wsd);
-#endif
+
 
 #ifdef NO_RAND_DEV  
 PICA_rand_seed();
@@ -934,7 +935,7 @@ while(ipt)
 	ipt=ipt->next;
 	}
 
-#warning "make sockets non-blocking!!!!"
+//#warning "make sockets non-blocking!!!!"
 
 ret=select(nfds+1,&fds,0,0,&tv);
 

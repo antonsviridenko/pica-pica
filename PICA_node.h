@@ -17,6 +17,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <sys/errno.h>
+#include <sys/time.h>
 
 #define SOCKET int
 #define SOCKET_ERROR -1

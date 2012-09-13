@@ -2,10 +2,6 @@
 #include "../openssltool.h"
 #include <QVBoxLayout>
 #include <QMessageBox>
-
-#include <unistd.h>
-#include <stdio.h>
-#include <sys/wait.h>
 #include <QFile>
 
 ViewCertDialog::ViewCertDialog(QWidget *parent) :

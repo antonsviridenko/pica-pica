@@ -1,31 +1,13 @@
 #ifndef PICA_CLIENT_H
 #define PICA_CLIENT_H
 
-#include <openssl/crypto.h>
-#include <openssl/x509.h>
-#include <openssl/pem.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <openssl/bio.h>
-
-
-#ifdef PICA_MULTITHREADED
-
-#define OPENSSL_THREAD_DEFINES
-#include <openssl/opensslconf.h>
-#if defined(OPENSSL_THREADS)
-  // thread support enabled
-#else
-#error "THREAD SUPPORT IS NOT ENABLED IN OPENSSL!"
-#endif
-
-#endif
-
-
 #ifdef WIN32
 
-#include <windows.h>
 #include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+
+typedef unsigned __int16 uint16_t;
 
 #else
 
@@ -42,6 +24,25 @@
 
 #define SOCKET int
 #define SOCKET_ERROR -1
+
+#endif
+
+#include <openssl/crypto.h>
+#include <openssl/x509.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/bio.h>
+
+#ifdef PICA_MULTITHREADED
+
+#define OPENSSL_THREAD_DEFINES
+#include <openssl/opensslconf.h>
+#if defined(OPENSSL_THREADS)
+  // thread support enabled
+#else
+#error "THREAD SUPPORT IS NOT ENABLED IN OPENSSL!"
+#endif
 
 #endif
 
@@ -79,7 +80,7 @@ struct PICA_chaninfo;
 
 struct PICA_conninfo
 {
-#warning "sockaddr!"
+//#warning "sockaddr!"
 struct sockaddr_in srv_addr; // sockaddr !!
 unsigned int id;
 SSL_CTX* ctx;

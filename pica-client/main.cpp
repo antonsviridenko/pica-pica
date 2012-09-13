@@ -29,7 +29,11 @@ class PicaSysTray *systray;
 
 // /usr/share/pica-client/pica-pica_CA.pem
 //QString config_defaultCA("/home/root_jr/files/projects/picapica_wc/localhost/project_picapica/trunk/tests/trusted_CA.pem");
+#ifndef WIN32
 QString config_defaultCA(PICA_INSTALLPREFIX"/share/pica-client/CA.pem");
+#else
+QString config_defaultCA("share\\CA.pem");
+#endif
 
 static bool create_config_dir()
 {
@@ -134,9 +138,13 @@ int main(int argc, char *argv[])
 
     if (!create_config_dir())
         return -1;
-
+#ifndef WIN32
     picapica_ico_sit = QIcon(PICA_INSTALLPREFIX"/share/pica-client/picapica-icon-sit.png");
     picapica_ico_fly = QIcon(PICA_INSTALLPREFIX"/share/pica-client/picapica-icon-fly.png");
+#else
+	picapica_ico_sit = QIcon("share\\picapica-icon-sit.png");
+    picapica_ico_fly = QIcon("share\\picapica-icon-fly.png");
+#endif
 
     PicaActionCenter ac;
     action_center = &ac;
