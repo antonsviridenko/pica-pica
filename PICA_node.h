@@ -94,8 +94,8 @@ int state;
 struct client* next;//структура client может быть одновременно в составе дерева и линейного списка
 struct client* prev;
 
-
-
+time_t tmst;
+int disconnect_ticking;//on sending message TO client this var is set to 1, on receiving some message FROM client this var is reset to 0
 };
 
 struct cclink //структура, описывающая соединение двух клиентов между собой через сервер
@@ -103,7 +103,7 @@ struct cclink //структура, описывающая соединение 
 //unsigned int cclink_id;
 unsigned int state;
 
-clock_t tmst;
+time_t tmst;
 struct client *p1;//caller
 struct client *p2;//callee
 
@@ -126,13 +126,14 @@ unsigned int bufpos_p2p1;
 struct cclink *next;
 struct cclink *prev;
 
+int disconnect_ticking;
 };
 
 struct newconn //структура, описывающая новое подключение (клиента)
 {
 SOCKET sck;
 struct sockaddr_in addr;
-clock_t tmst;
+time_t tmst;
 int pos;
 unsigned char buf[NEWCONN_BUFSIZE];
 };
@@ -155,6 +156,9 @@ unsigned int w_pos;
 
 struct nodelink *next;
 struct nodelink *prev;
+
+time_t tmst;
+int disconnect_ticking;
 };
 
 #endif

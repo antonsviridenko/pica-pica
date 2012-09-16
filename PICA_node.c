@@ -26,6 +26,9 @@
 #define JOINSKYNET_TIMEOUT 15
 #define SELECT_TIMEOUT 1
 
+#define NOREPLY_TIMEOUT 15
+#define KEEPALIVE_TIMEOUT 60
+
 clock_t TMO_CCLINK_WAITACTIVE=15;//CONF //таймаут ожидания перехода соединения в активное состояние
 
 char *my_addr;//TEMP CONF FIXME  собственный ip-адрес узла, на котором он ожидает соединения
@@ -325,6 +328,9 @@ if ((o = client_tree_search(callee_id)))
 		{
 		*((unsigned int*)mp->tail)=i->id;
 		cclink_list_addlocal(i,o);
+	
+		o->tmst = time(0);
+		o->disconnect_ticking = 1;//if client does not reply in given time period, client is disconnected
 		return 1;
 		}
 	
@@ -358,6 +364,9 @@ PICA_debug1("received CONALLOW");
 callee=(struct client *)ptr;
 caller_id=*(unsigned int*)(buf+2);
 
+callee->disconnect_ticking = 0;
+callee->tmst = time(0);
+
 link=cclink_list_search(caller_id,callee->id);
 
 if (!link)
@@ -383,6 +392,9 @@ PICA_debug1("received CONNDENY");
 
 callee=(struct client *)ptr;
 caller_id=*(unsigned int*)(buf+2);
+
+callee->disconnect_ticking = 0;
+callee->tmst = time(0);
 
 link=cclink_list_search(caller_id,callee->id);
 
@@ -1663,9 +1675,47 @@ while(il)
 	}
 }
 
+void process_timeouts_c2n()
+{
+struct client *i_ptr, *kill_ptr;
+int ret;
+
+i_ptr = client_list_head;
+kill_ptr = 0;
+
+while(i_ptr)
+	{
+	if (i_ptr->disconnect_ticking)
+		{
+		clock_t cur_time = time(0);
+
+		if (cur_time >= i_ptr->tmst)
+			{
+			if ((cur_time - i_ptr->tmst) > NOREPLY_TIMEOUT)
+				kill_ptr = i_ptr; 
+			}
+		else
+			{//2038 year has come, and this code is still working somewhere with 32bit Unix timestamps :)
+			if ((i_ptr->tmst - cur_time ) > NOREPLY_TIMEOUT)
+				kill_ptr = i_ptr; 
+			}
+		}
+		
+	i_ptr = i_ptr->next;
+
+	if (kill_ptr)
+		{
+		PICA_info("Disconnecting user %u due to noreply timeout", kill_ptr -> id);
+		client_list_delete(kill_ptr);
+		kill_ptr=0;
+		}
+	}
+}
+
 int process_timeouts()
 {
 process_timeouts_newconn();
+process_timeouts_c2n();
 process_timeouts_c2c();
 //..
 return 1;
