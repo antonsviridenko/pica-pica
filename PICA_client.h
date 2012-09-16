@@ -1,6 +1,8 @@
 #ifndef PICA_CLIENT_H
 #define PICA_CLIENT_H
 
+#include <time.h>
+
 #ifdef WIN32
 
 #include <winsock2.h>
@@ -75,6 +77,8 @@ typedef unsigned __int16 uint16_t;
 #define PICA_CONNSTATE_CONNECTING 17
 #define PICA_CONNSTATE_CONNECTED 19
 
+#define PICA_CHAN_ACTIVATE_TIMEOUT 30
+
 struct PICA_conninfo;
 struct PICA_chaninfo;
 
@@ -124,6 +128,7 @@ unsigned int write_buflen;
 struct PICA_chaninfo *next;
 struct PICA_chaninfo *prev;
 int state;
+time_t timestamp;
 };
 
 struct PICA_client_callbacks

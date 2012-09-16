@@ -142,7 +142,9 @@ chnl->conn=ci;
 chnl->outgoing=is_outgoing;
 chnl->peer_id=uid;
 
-chnl->sck_data = -1;//prevent closing stdin when closing not active connection
+chnl->timestamp = time(0);
+
+chnl->sck_data = -1;//prevent closing stdin when closing non-active connection
 
 chnl->read_buf = calloc(PICA_CHANREADBUFSIZE, 1);
 
@@ -932,7 +934,18 @@ while(ipt)
 			nfds=ipt->sck_data;
 		}	
 
+	if (ipt->state != PICA_CHANSTATE_ACTIVE && (time(0) - ipt->timestamp) > PICA_CHAN_ACTIVATE_TIMEOUT)
+		{
+		kill_ptr = ipt;  
+		}
+
 	ipt=ipt->next;
+
+	if (kill_ptr)
+		{
+		PICA_close_channel(kill_ptr);
+		kill_ptr = 0;
+		}
 	}
 
 //#warning "make sockets non-blocking!!!!"
@@ -962,8 +975,8 @@ if (ret>0)
 			    
 			}
 		
-		ipt=ipt->next;
-		
+        ipt=ipt->next;
+
 		if (kill_ptr)
 			{
 			PICA_close_channel(kill_ptr);
