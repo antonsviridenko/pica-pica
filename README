@@ -13,6 +13,12 @@ Pica Pica Messenger is a graphical IM client written in C++ which uses Qt toolki
 BUILD
 =========================
 Run ./configure && make install to build and install pica-node and pica-client.
+If you've checked out source code from repository, then you need to run 
+
+autoreconf --install
+
+in order to create configure script and install other required files. Autoconf and automake 
+should be installed on your system in this case.
 
 Dependencies:
 	1) pica-node - OpenSSL libraries (libssl and libcrypto) >=0.9.8, 
