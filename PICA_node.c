@@ -96,6 +96,7 @@ void cclink_list_delete_by_nodelink(struct nodelink *node);
 struct client* client_tree_search(unsigned int id);//
 struct client *client_list_addnew(struct newconn *nc);
 struct PICA_proto_msg* client_wbuf_push(struct client *c,unsigned int msgid,unsigned int size);
+int client_rbuf_grow(struct client *c);
 
 struct PICA_proto_msg* nodelink_wbuf_push(struct nodelink *nl,unsigned int msgid,unsigned int size);
 int nodelink_rbuf_grow(struct nodelink *nl);
@@ -1422,7 +1423,13 @@ ci->addr=nc->addr;
 
 SSL_set_fd(ci->ssl_comm,ci->sck_comm);
 
-//ci->state=PICA_CLSTATE_SENDINGRESP;
+ci->r_buf = calloc(1,DEFAULT_BUF_SIZE);
+if (!ci->r_buf)
+	{
+	free(ci);
+	return 0;
+	}
+ci->buflen_r = DEFAULT_BUF_SIZE;
 
 
 return ci;
@@ -1452,6 +1459,12 @@ if (client_tree_search(ci->id) == ci)
 
 cclink_list_delete_by_client(ci);
 
+if (ci->r_buf)
+	free(ci->r_buf);
+
+if (ci->w_buf)
+	free(ci->w_buf);
+
 CLOSE(ci->sck_comm);
 
 free(ci);
@@ -1460,20 +1473,52 @@ free(ci);
 struct PICA_proto_msg* client_wbuf_push
 	(struct client *c,unsigned int msgid,unsigned int size)
 {
-//Дальнейший вариант - размер буфера w_buf может увеличиться в
-//этой функции путем вызова realloc, если размер сообщения превышает половину 
-//текущего размера буфера
-//Если буфер занят меньше, чем на половину, его размер может уменьшаться где-нибудь
-//в другом месте, для экономии памяти 
-	if (CL_WBUFSIZE - c->w_pos >= size) 
+if (!c->w_buf)
+	{
+	c->w_buf = calloc(1,DEFAULT_BUF_SIZE + (size/DEFAULT_BUF_SIZE)*DEFAULT_BUF_SIZE );
+	if (!c->w_buf)
 		{
-		struct PICA_proto_msg *mp=(struct PICA_proto_msg *)(c->w_buf + c->w_pos);
-		mp->head[0]=mp->head[1]=msgid;
-		c->w_pos+=size;
-		return mp;
-		}
-	else
+		PICA_error("calloc() failed. Out of memory");
 		return 0;
+		}
+	c->buflen_w = DEFAULT_BUF_SIZE + (size/DEFAULT_BUF_SIZE)*DEFAULT_BUF_SIZE;
+	}
+
+if ((c->buflen_w - c->w_pos) < size)
+	{
+	unsigned char *p;
+	p=realloc(c->w_buf,size + c->w_pos);
+
+	if (p) 
+		{
+		c->w_buf=p;
+		c->buflen_w=size + c->w_pos;
+		}
+	else 
+		return 0;
+	}
+	
+struct PICA_proto_msg *mp=(struct PICA_proto_msg *)(c->w_buf + c->w_pos);
+mp->head[0]=mp->head[1]=msgid;
+c->w_pos+=size;
+return mp;
+}
+
+int client_rbuf_grow(struct client *c)
+{
+unsigned char *p;
+
+p=realloc(c->r_buf, c->buflen_r + DEFAULT_BUF_SIZE);
+
+if (!p)
+	{
+	PICA_error("realloc() failed");
+	return 0;
+	}
+c->r_buf = p;
+c->buflen_r +=DEFAULT_BUF_SIZE;
+
+return 1;
 }
 
 struct nodelink *nodelink_list_addnew(struct newconn *nc)
@@ -1855,7 +1900,7 @@ while (i_ptr)
 		switch(i_ptr->state)
 		{
 		case PICA_CLSTATE_CONNECTED:
-		ret=SSL_read(i_ptr->ssl_comm,i_ptr->r_buf+i_ptr->r_pos,CL_RBUFSIZE-i_ptr->r_pos);
+		ret=SSL_read(i_ptr->ssl_comm, i_ptr->r_buf + i_ptr->r_pos, i_ptr->buflen_r - i_ptr->r_pos);
 		
 		if (!ret)
 			kill_ptr=i_ptr;
@@ -1875,6 +1920,10 @@ while (i_ptr)
 			i_ptr->r_pos+=ret;
 			if(!PICA_processdatastream(i_ptr->r_buf,&(i_ptr->r_pos),i_ptr,_msginfo_comm, MSGINFO_MSGSNUM(_msginfo_comm) ))
 						kill_ptr=i_ptr;
+			
+			if (i_ptr->buflen_r == i_ptr->r_pos)
+				if (!client_rbuf_grow(i_ptr))
+					kill_ptr = i_ptr;
 
 			}
 		break;

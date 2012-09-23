@@ -66,8 +66,8 @@
 #define PICA_NETWORKNAME "TESTNET" // TEMP //CONF
 
 #define NEWCONN_BUFSIZE 10
-#define CL_RBUFSIZE 32
-#define CL_WBUFSIZE 128
+//#define CL_RBUFSIZE 32
+//#define CL_WBUFSIZE 128
 
 #define DEFAULT_BUF_SIZE 4096
 
@@ -82,8 +82,10 @@ struct client *right;
 SOCKET sck_comm;
 struct sockaddr_in addr;
 SSL *ssl_comm;
-unsigned char r_buf[CL_RBUFSIZE];
-unsigned char w_buf[CL_WBUFSIZE];
+unsigned char *r_buf;
+unsigned char *w_buf;
+unsigned int buflen_r;
+unsigned int buflen_w;
 unsigned int r_pos;
 unsigned int w_pos;
 
