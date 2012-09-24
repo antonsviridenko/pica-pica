@@ -170,6 +170,16 @@ else
 	{
 	//// PICA_PROTO_VERDIFFER
 	send(nc->sck,msg_VERDIFFER,msg_VERDIFFER_len,0);
+
+	if (buf[2] > PICA_PROTO_VER_HIGH || (buf[2] == PICA_PROTO_VER_HIGH && buf[3] > PICA_PROTO_VER_LOW))
+		{
+		PICA_warn("Client has newer protocol version than node. Please check if update for pica-node is available");
+		}
+	else
+		{
+		PICA_info("Client has older protocol version. Disconnecting ...");
+		}
+
 	return 0;
 	}
 
@@ -277,6 +287,17 @@ else
 	{
 	//// PICA_PROTO_VERDIFFER
 	send(nc->sck,msg_VERDIFFER,msg_VERDIFFER_len,0);
+
+	if (buf[2] > PICA_PROTO_VER_HIGH || (buf[2] == PICA_PROTO_VER_HIGH && buf[3] > PICA_PROTO_VER_LOW))
+		{
+		PICA_warn("Node %s has newer protocol version [%u, %u]. Please check if update for pica-node is available",
+				inet_ntoa(nc->addr.sin_addr), buf[2], buf[3]);
+		}
+	else
+		{
+		PICA_info("Node %s has older protocol version. Disconnecting ...", inet_ntoa(nc->addr.sin_addr));
+		}
+
 	return 0;
 	}
 

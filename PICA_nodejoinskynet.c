@@ -123,7 +123,7 @@ else
 	{
 	if (proto_version.c[0]> PICA_PROTO_VER_HIGH ||  (proto_version.c[1]> PICA_PROTO_VER_LOW && proto_version.c[0]== PICA_PROTO_VER_HIGH))
 		{
-		PICA_info("make update of node software - peer node has newer protocol version");
+		PICA_warn("make update of node software - peer node has newer protocol version");
 		}
 	else
 		{//peer node has older software version
