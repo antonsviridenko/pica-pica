@@ -2154,7 +2154,10 @@ while(i_ptr)
 		X509_free(client_cert);
 		//прицепить структуру к дереву
 		if (client_tree_search(i_ptr->id))
-		    ret = 0;//id already exists in tree
+			{
+			PICA_info("Disconnecting client %p because other user with same ID = %u is already connected", i_ptr, i_ptr->id);
+			ret = 0;//id already exists in tree
+			}
 		else
 			{
 			ret=client_tree_add(i_ptr);
