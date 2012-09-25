@@ -79,6 +79,12 @@ unsigned int procmsg_N2NALLOW(unsigned char* buf,unsigned int size,void* ptr);
 unsigned int procmsg_N2NNOTFOUND(unsigned char* buf,unsigned int size,void* ptr);
 unsigned int procmsg_N2NMSG(unsigned char* buf,unsigned int size,void* ptr);
 
+unsigned int procmsg_PINGREQ_client(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_PINGREP_client(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_PINGREQ_node(unsigned char* buf,unsigned int size,void* ptr);
+unsigned int procmsg_PINGREP_node(unsigned char* buf,unsigned int size,void* ptr);
+
+
 struct cclink* cclink_list_add(struct client *clr,struct client *cle);
 struct cclink* cclink_list_search(unsigned int caller_id, unsigned int callee_id);
 struct cclink* cclink_list_findwaitsearch(unsigned int callee_id);
@@ -115,8 +121,10 @@ struct PICA_msginfo  _msginfo_comm[]={
 {PICA_PROTO_CONNREQOUTG, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNREQOUTG_SIZE, procmsg_CONNREQOUTG},
 {PICA_PROTO_CONNALLOW, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNALLOW_SIZE, procmsg_CONNALLOW}, 
 {PICA_PROTO_CONNDENY, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNDENY_SIZE, procmsg_CONNDENY},
-{PICA_PROTO_CLNODELISTREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CLNODELISTREQ_SIZE, procmsg_NODELISTREQ}
-};//---!!! PING!!!
+{PICA_PROTO_CLNODELISTREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CLNODELISTREQ_SIZE, procmsg_NODELISTREQ},
+{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE,PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ_client},
+{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE,PICA_PROTO_PINGREP_SIZE, procmsg_PINGREP_client}
+};
 
 struct PICA_msginfo _msginfo_node[]={
 {PICA_PROTO_INITRESPOK,PICA_MSG_FIXED_SIZE,PICA_PROTO_INITRESPOK_SIZE,procmsg_NODERESP},
@@ -131,7 +139,10 @@ struct PICA_msginfo _msginfo_node[]={
 {PICA_PROTO_N2NCONNREQOUTG,PICA_MSG_FIXED_SIZE,PICA_PROTO_N2NCONNREQOUTG_SIZE,procmsg_N2NCONNREQOUTG},
 {PICA_PROTO_N2NALLOW,PICA_MSG_FIXED_SIZE,PICA_PROTO_N2NALLOW_SIZE,procmsg_N2NALLOW},
 {PICA_PROTO_N2NNOTFOUND,PICA_MSG_FIXED_SIZE,PICA_PROTO_N2NNOTFOUND_SIZE,procmsg_N2NNOTFOUND},
-{PICA_PROTO_N2NMSG,PICA_MSG_VAR_SIZE,PICA_MSG_VARSIZE_INT16,procmsg_N2NMSG}
+{PICA_PROTO_N2NMSG,PICA_MSG_VAR_SIZE,PICA_MSG_VARSIZE_INT16,procmsg_N2NMSG},
+{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE,PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ_node},
+{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE,PICA_PROTO_PINGREP_SIZE, procmsg_PINGREP_node}
+
 };
 
 struct PICA_msginfo _msginfo_newconn[]={
@@ -451,6 +462,64 @@ else if (link->state==PICA_CCLINK_N2NCLE_WAITREP)
 	}
 
 cclink_list_delete(link);
+
+return 1;
+}
+
+unsigned int procmsg_PINGREQ_client(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct client *c = (struct client*)ptr;
+struct PICA_proto_msg *mp;
+
+PICA_debug3("PINGREQ");
+
+if ((mp = client_wbuf_push(c, PICA_PROTO_PINGREP, PICA_PROTO_PINGREP_SIZE)))
+	{
+	RAND_bytes(mp->tail, 2);
+	}
+else
+	return 0;
+
+return 1;
+}
+
+unsigned int procmsg_PINGREP_client(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct client *c = (struct client*)ptr;
+
+PICA_debug3("PINGREP");
+
+c->disconnect_ticking = 0;
+c->tmst = time(0);
+
+return 1;
+}
+
+unsigned int procmsg_PINGREQ_node(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct nodelink *n=(struct nodelink *)ptr;
+struct PICA_proto_msg *mp;
+
+PICA_debug3("PINGREQ");
+
+if ((mp = nodelink_wbuf_push(n, PICA_PROTO_PINGREP, PICA_PROTO_PINGREP_SIZE)))
+	{
+	RAND_bytes(mp->tail, 2);
+	}
+else
+	return 0;
+
+return 1;
+}
+
+unsigned int procmsg_PINGREP_node(unsigned char* buf,unsigned int size,void* ptr)
+{
+struct nodelink *n=(struct nodelink *)ptr;
+
+PICA_debug3("PINGREP");
+
+n->disconnect_ticking = 0;
+n->tmst = time(0);
 
 return 1;
 }
@@ -1749,12 +1818,12 @@ int ret;
 i_ptr = client_list_head;
 kill_ptr = 0;
 
+clock_t cur_time = time(0);
+
 while(i_ptr)
 	{
 	if (i_ptr->disconnect_ticking)
 		{
-		clock_t cur_time = time(0);
-
 		if (cur_time >= i_ptr->tmst)
 			{
 			if ((cur_time - i_ptr->tmst) > NOREPLY_TIMEOUT)
@@ -1764,6 +1833,23 @@ while(i_ptr)
 			{//2038 year has come, and this code is still working somewhere with 32bit Unix timestamps :)
 			if ((i_ptr->tmst - cur_time ) > NOREPLY_TIMEOUT)
 				kill_ptr = i_ptr; 
+			}
+		}
+	else
+		{
+		if (cur_time >= i_ptr->tmst)
+			{
+			if ((cur_time - i_ptr->tmst) > KEEPALIVE_TIMEOUT)
+				{
+				struct PICA_proto_msg *mp;
+			
+				if ((mp = client_wbuf_push(i_ptr, PICA_PROTO_PINGREQ, PICA_PROTO_PINGREQ_SIZE)))
+					{
+					RAND_bytes(mp->tail, 2);
+					}
+				else
+					kill_ptr = i_ptr;
+				}
 			}
 		}
 		
