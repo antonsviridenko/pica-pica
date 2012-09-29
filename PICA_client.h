@@ -35,6 +35,7 @@ typedef unsigned __int16 uint16_t;
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/bio.h>
+#include <openssl/rand.h>
 
 #ifdef PICA_MULTITHREADED
 
