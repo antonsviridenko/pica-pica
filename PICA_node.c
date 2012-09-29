@@ -487,7 +487,7 @@ unsigned int procmsg_PINGREP_client(unsigned char* buf,unsigned int size,void* p
 {
 struct client *c = (struct client*)ptr;
 
-PICA_debug3("PINGREP");
+PICA_debug3("PINGREP c2n");
 
 c->disconnect_ticking = 0;
 c->tmst = time(0);
@@ -516,7 +516,7 @@ unsigned int procmsg_PINGREP_node(unsigned char* buf,unsigned int size,void* ptr
 {
 struct nodelink *n=(struct nodelink *)ptr;
 
-PICA_debug3("PINGREP");
+PICA_debug3("PINGREP n2n");
 
 n->disconnect_ticking = 0;
 n->tmst = time(0);
@@ -1521,6 +1521,7 @@ if (!ci->r_buf)
 	}
 ci->buflen_r = DEFAULT_BUF_SIZE;
 
+ci->tmst = time(0);
 
 return ci;
 }
@@ -1642,6 +1643,8 @@ if (!nl->r_buf)
 	return 0;
 	}
 nl->buflen_r=DEFAULT_BUF_SIZE;
+
+nl->tmst = time(0);
 
 nodelink_list_count++;
 return nl;
@@ -1845,7 +1848,11 @@ while(i_ptr)
 			
 				if ((mp = client_wbuf_push(i_ptr, PICA_PROTO_PINGREQ, PICA_PROTO_PINGREQ_SIZE)))
 					{
+					PICA_debug3("sending PINGREQ to %p", i_ptr);
 					RAND_bytes(mp->tail, 2);
+				
+					i_ptr->tmst = time(0);
+					i_ptr->disconnect_ticking = 1;
 					}
 				else
 					kill_ptr = i_ptr;

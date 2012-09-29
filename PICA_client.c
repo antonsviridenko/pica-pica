@@ -36,6 +36,7 @@ static unsigned int procmsg_FOUND(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_CLNODELIST(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_MSGUTF8(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_MSGOK(unsigned char*,unsigned int,void*);
+static unsigned int procmsg_PINGREQ(unsigned char*,unsigned int,void*);
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_conninfo *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_chaninfo *chn, unsigned int msgid, unsigned int size);
@@ -45,7 +46,8 @@ const struct PICA_msginfo  c2n_messages[] = {
 	{PICA_PROTO_CONNREQINC, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNREQINC_SIZE, procmsg_CONNREQINC},
 	{PICA_PROTO_NOTFOUND, PICA_MSG_FIXED_SIZE, PICA_PROTO_NOTFOUND_SIZE, procmsg_NOTFOUND},
 	{PICA_PROTO_FOUND, PICA_MSG_FIXED_SIZE, PICA_PROTO_FOUND_SIZE, procmsg_FOUND},
-	{PICA_PROTO_CLNODELIST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CLNODELIST}
+    {PICA_PROTO_CLNODELIST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CLNODELIST},
+    {PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ}
 };//---!!! PING!!!
 
 const struct PICA_msginfo  c2c_messages[] = {
@@ -543,6 +545,22 @@ callbacks.msgok_cb(chan -> peer_id);
 return 1;
 }
 
+unsigned int procmsg_PINGREQ(unsigned char* buf,unsigned int nb,void* p)
+{
+struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
+struct PICA_proto_msg *mp;
+
+mp = c2n_writebuf_push(ci, PICA_PROTO_PINGREP, PICA_PROTO_PINGREP_SIZE);
+
+if (mp)
+    {
+    RAND_bytes(mp->tail, 2);
+    }
+else
+    return 0;
+
+return 1;
+}
 
 #ifdef PICA_MULTITHREADED
 
