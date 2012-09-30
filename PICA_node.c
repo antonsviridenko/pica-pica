@@ -1871,11 +1871,70 @@ while(i_ptr)
 	}
 }
 
+void process_timeouts_n2n()
+{
+struct nodelink *i_ptr, *kill_ptr;
+int ret;
+
+i_ptr = nodelink_list_head;
+kill_ptr = 0;
+
+clock_t cur_time = time(0);
+
+while(i_ptr)
+	{
+	if (i_ptr->disconnect_ticking)
+		{
+		if (cur_time >= i_ptr->tmst)
+			{
+			if ((cur_time - i_ptr->tmst) > NOREPLY_TIMEOUT)
+				kill_ptr = i_ptr; 
+			}
+		else
+			{//2038 year has come, and this code is still working somewhere with 32bit Unix timestamps :)
+			if ((i_ptr->tmst - cur_time ) > NOREPLY_TIMEOUT)
+				kill_ptr = i_ptr; 
+			}
+		}
+	else
+		{
+		if (cur_time >= i_ptr->tmst)
+			{
+			if ((cur_time - i_ptr->tmst) > KEEPALIVE_TIMEOUT)
+				{
+				struct PICA_proto_msg *mp;
+			
+				if ((mp = nodelink_wbuf_push(i_ptr, PICA_PROTO_PINGREQ, PICA_PROTO_PINGREQ_SIZE)))
+					{
+					PICA_debug3("sending PINGREQ to node %p", i_ptr);
+					RAND_bytes(mp->tail, 2);
+				
+					i_ptr->tmst = time(0);
+					i_ptr->disconnect_ticking = 1;
+					}
+				else
+					kill_ptr = i_ptr;
+				}
+			}
+		}
+		
+	i_ptr = i_ptr->next;
+
+	if (kill_ptr)
+		{
+		PICA_info("Disconnecting node %p due to noreply timeout", kill_ptr);
+		nodelink_list_delete(kill_ptr);
+		kill_ptr=0;
+		}
+	}
+}
+
 int process_timeouts()
 {
 process_timeouts_newconn();
 process_timeouts_c2n();
 process_timeouts_c2c();
+process_timeouts_n2n();
 //..
 return 1;
 }
