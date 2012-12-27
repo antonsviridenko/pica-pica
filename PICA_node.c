@@ -12,9 +12,9 @@
 #include "PICA_msgproc.h"
 #include "PICA_nodeaddrlist.h"
 #include "PICA_common.h"
-#include "PICA_nodejoinskynet.h"
 #include "PICA_nodeconfig.h"
 #include "PICA_log.h"
+#include "PICA_nodewait.h"
 
 #ifdef NO_RAND_DEV
 #include "PICA_rand_seed.h"
@@ -53,9 +53,6 @@ struct nodelink *nodelink_list_head;
 struct nodelink *nodelink_list_end;
 unsigned int nodelink_list_count;
 
-struct PICA_nodeaddr *nodeaddr_list_head;
-struct PICA_nodeaddr *nodeaddr_list_end;
-unsigned int nodeaddr_list_count;
 
 
 char msg_VERDIFFER[4]={PICA_PROTO_VERDIFFER,PICA_PROTO_VERDIFFER,PICA_PROTO_VER_HIGH,PICA_PROTO_VER_LOW};
@@ -113,6 +110,7 @@ void nodelink_list_delete(struct nodelink *n);
 void newconn_close(struct newconn* nc);
 void newconn_free(struct newconn* nc);
 struct newconn* newconn_add(struct newconn *ncs,int *pos);
+
 
 //описание формата сообщений, которые могут приходить _ОТ_ клиентов по управляющему защищенному соединению 
 #define MSGINFO_MSGSNUM(arr) (sizeof(arr)/sizeof(struct PICA_msginfo))
@@ -526,6 +524,8 @@ return 1;
 
 unsigned int procmsg_NODERESP(unsigned char* buf,unsigned int size,void* ptr)
 {
+struct nodelink *n=(struct nodelink *)ptr;
+struct PICA_proto_msg *mp;
 
 PICA_debug1("received NODERESP");
 
@@ -535,11 +535,35 @@ switch(buf[0])
 	if (buf[2]!='O' || buf[3]!='K')
 		return 0;
 
-	*((int*)ptr)=0;
+	
+mp = nodelink_wbuf_push(n, PICA_PROTO_NEWNODE_IPV4, PICA_PROTO_NEWNODE_IPV4_SIZE);//IPv6
+if (mp)
+	{
+	*((in_addr_t*)(mp->tail))=inet_addr(nodecfg.announced_addr);
+	*((uint16_t*)(mp->tail+4))=(nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT));//CONF; 
+	}
+else 
+	return 0;
+
+mp = nodelink_wbuf_push(n, PICA_PROTO_NODELISTREQ, PICA_PROTO_NODELISTREQ_SIZE);
+if (mp)
+	{
+	RAND_bytes(mp->tail, 2);
+	}
+else 
+	return 0;
+	
 	break;
 	case PICA_PROTO_VERDIFFER:
-	((char*)ptr)[0]=buf[2];
-	((char*)ptr)[1]=buf[3];
+	if (buf[2]> PICA_PROTO_VER_HIGH ||  (buf[3]> PICA_PROTO_VER_LOW && buf[2]== PICA_PROTO_VER_HIGH))
+		{
+		PICA_warn("make update of node software - peer node has newer protocol version");
+		}
+	else
+		{//peer node has older software version
+		PICA_info("peer node has older protocol version");
+		}
+	return 0;
 	break;
 	}
 
@@ -706,16 +730,19 @@ while(listleft)
 			na_ipv4.port=*(in_port_t*)(buf+size-listleft+5);
 
 			sprintf(na.addr,"%.16s",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-			if (try_connect_to_node(na.addr,ntohs(na_ipv4.port),&nc))
-				if (try_get_reply(&nc))
-					{
-					nlp=nodelink_list_addnew(&nc);
-					send_newnode(nlp,my_addr);
-					nodelink_attach_nodeaddr(nlp,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
-					PICA_debug1("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-					}
-					
 			na.port = ntohs(na_ipv4.port);
+			
+			nodewait_start_connection(&na);
+// 			if (try_connect_to_node(na.addr,ntohs(na_ipv4.port),&nc))
+// 				if (try_get_reply(&nc))
+// 					{
+// 					nlp=nodelink_list_addnew(&nc);
+// 					send_newnode(nlp,my_addr);
+// 					nodelink_attach_nodeaddr(nlp,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
+// 					PICA_debug1("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
+// 					}
+					
+			
 
 			listleft-=PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 			break;
@@ -1753,7 +1780,6 @@ return mp;
 }
 
 
-
 // обработка различных таймаутов. Отправка пингов
 
 void process_timeouts_newconn()
@@ -2541,6 +2567,48 @@ while(nl)
 	}
 }
 
+void process_nodewait()
+{
+struct nodewait *kill_ptr = 0, *nw = nodewait_list;
+
+while(nw)
+	{
+	if (PICA_NODEWAIT_FINISHED_OK == nw->state)
+		{
+		struct nodelink *nlp;
+		
+		PICA_debug1("connected to %.255s %u, sending request ", nw->addr.addr, nw->addr.port);
+		nlp=nodelink_list_addnew(&nw->nc);
+		if (nlp)
+			{
+			struct PICA_proto_msg *mp;
+			mp = nodelink_wbuf_push(nlp, PICA_PROTO_NODECONNREQ, PICA_PROTO_NODECONNREQ_SIZE);
+			if (mp)
+				{
+				mp->tail[0] = PICA_PROTO_VER_HIGH;
+				mp->tail[0] = PICA_PROTO_VER_LOW;
+				}
+			}
+		kill_ptr = nw;
+		}
+
+	if (PICA_NODEWAIT_FINISHED_ERR == nw->state)
+		{
+		PICA_debug1("connection to %.255s %u failed", nw->addr.addr, nw->addr.port);
+		kill_ptr = nw;
+		}
+
+	nw = nw->next;
+
+	if (kill_ptr)
+		{
+		nodewait_list_delete(nw);
+		kill_ptr = 0;
+		}
+	}
+
+}
+
 int node_loop()
 {
 fd_set fds;
@@ -2583,6 +2651,7 @@ do
 	process_n2n_write();
 	
 	process_timeouts();
+	process_nodewait();
 	}
 while(1);////<<<<<<<<<<
 return 0;
@@ -2657,6 +2726,26 @@ if (verbosity > 3)
 	verbosity = 3;
 
 PICA_set_loglevel(PICA_LOG_INFO + verbosity);
+}
+
+void PICA_node_joinskynet(char* addrlistfilename,const char *my_addr)
+{
+struct PICA_nodeaddr *nap,*addrlist_h=0;
+int ret;
+
+ret = PICA_nodeaddr_list_load(addrlistfilename, &addrlist_h);//MEM
+if (ret <= 0)
+	return;
+
+nap = addrlist_h;
+
+while(nap)
+	{
+	nodewait_start_connection(nap);
+	nap=nap->next;
+	}
+
+PICA_nodeaddr_list_free(addrlist_h);
 }
 
 int main(int argc,char** argv)

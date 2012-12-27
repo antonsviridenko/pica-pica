@@ -14,7 +14,7 @@ AC_PROG_INSTALL
 # Checks for common libraries, required by both pica-node and pica-client
 AC_CHECK_LIB([crypto], [RAND_add],[],[AC_MSG_ERROR(["libcrypto from OpenSSL package not found"])],[ -ldl -lz ])
 AC_CHECK_LIB([ssl], [SSL_library_init],[],[AC_MSG_ERROR(["libssl from OpenSSL package not found"])], [ -lcrypto -ldl -lz ])
-
+AC_CHECK_LIB([pthread], [pthread_create])
 
 #checking if pica-node is disabled
 AC_ARG_ENABLE([node],
