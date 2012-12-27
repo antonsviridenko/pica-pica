@@ -43,6 +43,8 @@ void nodewait_list_delete(struct nodewait *nw)
 struct nodewait **pp = &nodewait_list;
 struct nodewait *p = nodewait_list;
 
+PICA_debug3("nodewait_list_delete(%p)", nw);
+
 while(p) 
 	{
 	if (p == nw)

@@ -2573,6 +2573,7 @@ struct nodewait *kill_ptr = 0, *nw = nodewait_list;
 
 while(nw)
 	{
+	PICA_debug3("checking nodewait pointer %p", nw);
 	if (PICA_NODEWAIT_FINISHED_OK == nw->state)
 		{
 		struct nodelink *nlp;
@@ -2586,7 +2587,7 @@ while(nw)
 			if (mp)
 				{
 				mp->tail[0] = PICA_PROTO_VER_HIGH;
-				mp->tail[0] = PICA_PROTO_VER_LOW;
+				mp->tail[1] = PICA_PROTO_VER_LOW;
 				}
 			}
 		kill_ptr = nw;
@@ -2602,7 +2603,7 @@ while(nw)
 
 	if (kill_ptr)
 		{
-		nodewait_list_delete(nw);
+		nodewait_list_delete(kill_ptr);
 		kill_ptr = 0;
 		}
 	}
