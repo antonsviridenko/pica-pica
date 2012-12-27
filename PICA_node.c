@@ -2729,7 +2729,7 @@ if (verbosity > 3)
 PICA_set_loglevel(PICA_LOG_INFO + verbosity);
 }
 
-void PICA_node_joinskynet(char* addrlistfilename,const char *my_addr)
+void PICA_node_joinskynet(char* addrlistfilename, const char *my_addr)
 {
 struct PICA_nodeaddr *nap,*addrlist_h=0;
 int ret;
@@ -2742,7 +2742,13 @@ nap = addrlist_h;
 
 while(nap)
 	{
-	nodewait_start_connection(nap);
+	if (0 == strncmp(nap->addr, my_addr, 256) && nap->port == atoi(nodecfg.listen_port))
+		{
+		PICA_warn("Skipping self address %.255s port %u", nap->addr, nap->port);
+		}
+	else
+		nodewait_start_connection(nap);
+	
 	nap=nap->next;
 	}
 
