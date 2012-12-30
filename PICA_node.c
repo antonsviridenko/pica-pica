@@ -2777,11 +2777,10 @@ while(nap)
 				//IPv6
 				}
 			}
-		else
-			{
-			if (0 == strncmp(nap->addr, inet_ntoa(nl->addr.sin_addr),16) && nap->port == ntohs(nl->addr.sin_port))
-				skip = 1;
-			}
+		
+		if (0 == strncmp(nap->addr, inet_ntoa(nl->addr.sin_addr),16) && nap->port == ntohs(nl->addr.sin_port))
+			skip = 1;
+		
 		
 		nl = nl->next;
 		}
