@@ -74,7 +74,70 @@ sqlite3_close(db);
 return N;
 }
 
+int PICA_nodeaddr_update(char* dbfilename, struct PICA_nodeaddr *naddr, int is_alive)
+{
+sqlite3 *db;
+sqlite3_stmt *stmt;
+int ret;
+const char q1[] = "update nodes set last_active = strftime('%s','now'), inactive_count = 0 where address = :addr and port = :port";
+const char q2[] = "update nodes set inactive_count = inactive_count + 1 where address = :addr and port = :port";
+char *query;
 
+query = is_alive ? q1 : q2;
+
+ret = sqlite3_open(dbfilename, &db);
+
+if (ret != SQLITE_OK)
+	{
+	PICA_error("Can't open nodelist database: %s\n", sqlite3_errmsg(db));
+	sqlite3_close(db);
+	return -1;
+	}
+
+ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+
+if (ret != SQLITE_OK)
+	{
+	PICA_error("Can't prepare SQLite statement: %s\n", sqlite3_errmsg(db));
+	sqlite3_close(db);
+	return -1;
+	}
+
+ret = sqlite3_bind_text(stmt, 1, naddr->addr, -1, SQLITE_STATIC);
+
+if (ret != SQLITE_OK)
+	{
+	PICA_error("Can't bind address value: %s\n", sqlite3_errmsg(db));
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+	return -1;
+	}
+
+ret = sqlite3_bind_int(stmt, 2, naddr->port);
+
+if (ret != SQLITE_OK)
+	{
+	PICA_error("Can't bind port value: %s\n", sqlite3_errmsg(db));
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+	return -1;
+	}
+
+ret = sqlite3_step(stmt);
+
+if (ret !=SQLITE_DONE)
+{
+	PICA_error( "Can't execute query: %s\n", sqlite3_errmsg(db));
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+	return -1;
+}
+
+sqlite3_finalize(stmt);
+sqlite3_close(db);
+
+return 1;
+}
 
 int PICA_nodeaddr_save(char* dbfilename, struct PICA_nodeaddr *naddr)
 {

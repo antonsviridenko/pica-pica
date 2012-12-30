@@ -23,11 +23,13 @@
 #define MAX_NEWCONNS 64
 
 #define NEWCONN_TIMEOUT 10 //sec
-#define JOINSKYNET_TIMEOUT 15
+#define SKYNET_REFRESH_TIMEOUT 93
 #define SELECT_TIMEOUT 1
 
 #define NOREPLY_TIMEOUT 15
 #define KEEPALIVE_TIMEOUT 60
+
+time_t skynet_refresh_tmst;
 
 clock_t TMO_CCLINK_WAITACTIVE=15;//CONF //таймаут ожидания перехода соединения в активное состояние
 
@@ -732,7 +734,7 @@ while(listleft)
 			sprintf(na.addr,"%.16s",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
 			na.port = ntohs(na_ipv4.port);
 			
-			nodewait_start_connection(&na);
+			//nodewait_start_connection(&na);
 // 			if (try_connect_to_node(na.addr,ntohs(na_ipv4.port),&nc))
 // 				if (try_get_reply(&nc))
 // 					{
@@ -1961,7 +1963,12 @@ process_timeouts_newconn();
 process_timeouts_c2n();
 process_timeouts_c2c();
 process_timeouts_n2n();
-//..
+
+if (time(0) - skynet_refresh_tmst > SKYNET_REFRESH_TIMEOUT && !nodewait_list)	
+	{
+	PICA_debug3("refreshing nodelist database");
+	PICA_node_joinskynet(nodecfg.nodes_db_file, nodecfg.announced_addr);
+	}
 return 1;
 }
 
@@ -2590,12 +2597,14 @@ while(nw)
 				mp->tail[1] = PICA_PROTO_VER_LOW;
 				}
 			}
+		PICA_nodeaddr_update(nodecfg.nodes_db_file, &nw->addr, 1);
 		kill_ptr = nw;
 		}
 
 	if (PICA_NODEWAIT_FINISHED_ERR == nw->state)
 		{
 		PICA_debug1("connection to %.255s %u failed", nw->addr.addr, nw->addr.port);
+		PICA_nodeaddr_update(nodecfg.nodes_db_file, &nw->addr, 0);
 		kill_ptr = nw;
 		}
 
@@ -2732,6 +2741,7 @@ PICA_set_loglevel(PICA_LOG_INFO + verbosity);
 void PICA_node_joinskynet(char* addrlistfilename, const char *my_addr)
 {
 struct PICA_nodeaddr *nap,*addrlist_h=0;
+struct nodelink *nl;
 int ret;
 
 ret = PICA_nodeaddr_list_load(addrlistfilename, &addrlist_h);//MEM
@@ -2742,17 +2752,49 @@ nap = addrlist_h;
 
 while(nap)
 	{
+	int skip = 0;
+
 	if (0 == strncmp(nap->addr, my_addr, 256) && nap->port == atoi(nodecfg.listen_port))
 		{
 		PICA_warn("Skipping self address %.255s port %u", nap->addr, nap->port);
+		skip = 1;
 		}
-	else
+	
+	nl = nodelink_list_head;
+	//check if connection to node with current address is already established
+	while(nl && !skip)
+		{
+		if (nl->node_addr)
+			{
+			switch(nl->addr_type)
+				{
+			    	case PICA_PROTO_NEWNODE_IPV4:
+				if (0 == strncmp(nap->addr, inet_ntoa(*(struct in_addr*)&(((struct PICA_nodeaddr_ipv4*)nl->node_addr)->addr)) , 16)
+				&& 
+				nap->port == ntohs(((struct PICA_nodeaddr_ipv4*)nl->node_addr)->port))
+					skip = 1;
+				break;
+				//IPv6
+				}
+			}
+		else
+			{
+			if (0 == strncmp(nap->addr, inet_ntoa(nl->addr.sin_addr),16) && nap->port == ntohs(nl->addr.sin_port))
+				skip = 1;
+			}
+		
+		nl = nl->next;
+		}
+	
+	if (!skip)
 		nodewait_start_connection(nap);
 	
 	nap=nap->next;
 	}
 
 PICA_nodeaddr_list_free(addrlist_h);
+
+skynet_refresh_tmst = time(0);
 }
 
 int main(int argc,char** argv)
