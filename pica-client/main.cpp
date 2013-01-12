@@ -115,6 +115,22 @@ static bool create_config_dir()
          query.exec("insert into nodes values(\"picapica.im\", 2299, 0, 0);");
          query.exec("insert into nodes values(\"picapica.ge\", 2299, 0, 0);");
 
+         if (query.lastError().isValid())
+                 goto showerror;
+
+         query.exec("create table history \
+                    (\
+                        id integer primary key autoincrement, \
+                        contact_id int not null, \
+                        account_id int not null, \
+                        timestamp int not null, \
+                        is_me int not null, \
+                        is_delivered int not null, \
+                        message text(65536) not null, \
+                        foreign key(contact_id) references contacts(id) on delete cascade\
+                        foreign key(account_id) references accounts(id) on delete cascade\
+                    );"
+                     );
 
         if (query.lastError().isValid())
         showerror:

@@ -30,7 +30,8 @@ SOURCES += main.cpp\
     dialogs/viewcertdialog.cpp \
     dialogs/forgedcertdialog.cpp \
     dialogs/registeraccountdialog.cpp \
-    openssltool.cpp
+    openssltool.cpp \
+    history.cpp
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -54,7 +55,8 @@ HEADERS  += mainwindow.h \
     ../PICA_common.h \
     ../PICA_proto.h \
     dialogs/registeraccountdialog.h \
-    openssltool.h
+    openssltool.h \
+    history.h
 
 
 DEFINES = PICA_MULTITHREADED
