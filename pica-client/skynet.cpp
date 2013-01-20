@@ -7,7 +7,7 @@
 //#include <QMessageBox> //debug
 //#include "dialogs/forgedcertdialog.h"
 #include <QDebug>
-
+#include "history.h"
 
 SkyNet::SkyNet()
     : nodes(config_dbname), QObject(0)
@@ -61,6 +61,14 @@ void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread
 
     //restore old peer connections, if any
     QList<quint32> c2c_peer_ids;
+
+    //load undelivered messages from history
+    if (msgqueues.isEmpty())
+    {
+        History h(config_dbname, account_id);
+
+        msgqueues = h.GetUndeliveredMessages();
+    }
 
     c2c_peer_ids = msgqueues.keys();
 

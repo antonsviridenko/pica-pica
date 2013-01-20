@@ -1,5 +1,6 @@
 #include "msguirouter.h"
 #include "dialogs/forgedcertdialog.h"
+#include "history.h"
 
 
 /*
@@ -83,6 +84,12 @@ void MsgUIRouter::delivered(quint32 to)
   if (chatwindows.contains(to))
   {
     chatwindows[to]->msg_delivered();
+  }
+  else
+  {
+      History h(config_dbname, account_id);
+
+      h.SetDelivered(to);
   }
 }
 
