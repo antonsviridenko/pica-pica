@@ -101,10 +101,6 @@ void ContactListWidget::add_contact()
 
         r.id=user_id;
         r.name="";
-        //void ContactListWidget::debug_onmsginput(QString msg, ChatWindow *sender_window)
-        //{
-        //    skynet->SendMessage(sender_window->getPeerId(), msg);
-        //}
 
         storage->Add(user_id);
 
@@ -158,12 +154,6 @@ if (QMessageBox::Yes==mbx.exec())
 
 void ContactListWidget::start_chat()
 {
-//    ChatWindow *cw_debug_remove;
-
-//    (cw_debug_remove = new ChatWindow(wgitem_to_recs[currentItem()]->id)) ->show();//debug
-
-//    connect(cw_debug_remove, SIGNAL(msg_input(QString,ChatWindow*)), this, SLOT(debug_onmsginput(QString, ChatWindow*)));
-
     msguirouter->start_chat(wgitem_to_recs[currentItem()]->id);
 }
 
