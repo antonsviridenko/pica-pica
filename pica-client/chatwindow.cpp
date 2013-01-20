@@ -63,7 +63,6 @@ ChatWindow::ChatWindow(quint32 peer_id) :
         Contacts ct(config_dbname, account_id);
         peer_name_ = ct.GetContactName(peer_id_);
 
-        qDebug()<<"peer_name ="<<peer_name_;
         if (peer_name_.isEmpty())
             peer_name_ = QString::number(peer_id_);
 
@@ -103,25 +102,6 @@ void ChatWindow::put_message(QString msg, quint32 id, bool is_me)
 
     if (is_me)
         undelivered_msgs.append(pos);
-
-//    QTextCursor c(chatw->document());
-//    c.movePosition(QTextCursor::End, QTextCursor::MoveAnchor);
-//    if (is_me)
-//        undelivered_msgs.append(c.position());
-
-//    chatw->moveCursor(QTextCursor::End, QTextCursor::MoveAnchor);
-//    fmt = chatw->currentCharFormat();
-//    chatw->insertHtml(
-//                      QString("<b><font color=%1>&nbsp;(%2) %3 : </font></b>").
-//                      arg(color).
-//                      arg(QDateTime::currentDateTime().toString()).
-//                      arg(QString::number(id))
-//                      );
-//    chatw->setCurrentCharFormat(fmt);
-//    chatw->insertPlainText(msg + '\n');
-
-//    chatw->moveCursor(QTextCursor::End, QTextCursor::MoveAnchor);
-
 }
 
 int ChatWindow::draw_message(QString msg, QString nickname, QString datetime, QString color, bool is_delivered)

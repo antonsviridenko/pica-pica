@@ -136,11 +136,6 @@ void SkyNet::verify_peer_cert(quint32 peer_id, QString cert_pem, bool *verified)
         if (stored_DER.size() != received_DER.size() ||
         memcmp(stored_DER.constData(), received_DER.constData(), stored_DER.size()) != 0)
         {//put scary message here
-            //QMessageBox mbx;
-            //mbx.setText(tr("Certificate is forged!!!"));
-            //mbx.exec();
-            //ForgedCertDialog fcd(peer_id, cert_pem, stored_cert);
-            //fcd.exec();
             *verified = false;
             emit CertificateForged(peer_id, cert_pem, stored_cert);
         }
