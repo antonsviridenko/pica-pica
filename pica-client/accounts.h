@@ -22,6 +22,7 @@ public:
     void Add(AccountRecord& acc);
     void Delete(quint32 id);
     QList<AccountRecord> GetAccounts();
+    QString GetName(quint32 id);
     bool isOK();
     QString GetLastError();
 

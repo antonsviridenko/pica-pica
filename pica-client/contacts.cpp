@@ -104,6 +104,25 @@ QString Contacts::GetContactCert(quint32 id)
     return query.value(0).toString();
 }
 
+QString Contacts::GetContactName(quint32 id)
+{
+    QSqlQuery query;
+
+    query.prepare("select name from contacts where id=:id and account_id=:account_id");
+    query.bindValue(":id",id);
+    query.bindValue(":account_id",account_id_);
+    query.exec();
+
+    lasterr=query.lastError();
+
+    if (lasterr.isValid())
+        return QString::null;
+
+    query.next();
+
+    return query.value(0).toString();
+}
+
 void Contacts::SetContactCert(quint32 id, QString &cert_pem)
 {
     QSqlQuery query;

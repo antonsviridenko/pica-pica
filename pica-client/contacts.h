@@ -21,6 +21,7 @@ public:
     void Delete(quint32 id);
     QList<ContactRecord> GetContacts();
     QString GetContactCert(quint32 id);
+    QString GetContactName(quint32 id);
     void SetContactCert(quint32 id, QString &cert_pem);
     void SetContactName(quint32 id, QString name);
     QString GetLastError();

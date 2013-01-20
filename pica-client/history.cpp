@@ -1,4 +1,5 @@
 #include "history.h"
+#include <QDebug>
 
 History::History(QString storage, quint32 my_id)
     : me_(my_id)
@@ -23,11 +24,13 @@ void History::Add(quint32 peer_id, QString message, bool is_me)
 {
     QSqlQuery query;
 
-    query.prepare("insert into history (contact_id, account_id, timestamp, is_me, is_delivered, message) \
-                  values (:peer_id, :me, strftime('%s','now'), :is_me, :is_delivered, :message)");
+    query.prepare(
+                "insert into \"history\" (\"contact_id\", \"account_id\", \"is_me\", \"is_delivered\", \"message\", \"id\", \"timestamp\") \
+                values (:contact_id, :account_id, :is_me, :is_delivered, :message, null, strftime('%s','now'));"
+                );
 
-    query.bindValue(":peer_id", peer_id);
-    query.bindValue(":me", me_);
+    query.bindValue(":contact_id", peer_id);
+    query.bindValue(":account_id", me_);
 
     if (is_me)
     {
@@ -123,4 +126,14 @@ QMap<quint32, QList<QString> >  History::GetUndeliveredMessages()
     }
 
     return M;
+}
+
+bool History::isOK()
+{
+  return  !lasterr.isValid();
+}
+
+QString History::GetLastError()
+{
+    return lasterr.text();
 }

@@ -127,7 +127,6 @@ static bool create_config_dir()
                         is_me int not null, \
                         is_delivered int not null, \
                         message text(65536) not null, \
-                        foreign key(contact_id) references contacts(id) on delete cascade\
                         foreign key(account_id) references accounts(id) on delete cascade\
                     );"
                      );

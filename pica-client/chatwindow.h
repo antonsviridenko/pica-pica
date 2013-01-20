@@ -4,6 +4,10 @@
 #include <QWidget>
 #include <QTextEdit>
 #include <QList>
+#include <QMenuBar>
+#include <QAction>
+#include <QMenu>
+#include "history.h"
 
 class TextSend : public QTextEdit
 {
@@ -40,14 +44,26 @@ private:
     TextSend *sendtextw;
     quint32 peer_id_;
     QList<int> undelivered_msgs;
-
+    History hist;
+    QMenuBar *menu;
+    QAction *hist24h;
+    QAction *hist1week;
+    QAction *histAll;
+    QString peer_name_;
+    QString my_name_;
 
     void put_message(QString msg, quint32 id, bool is_me);
+    int draw_message(QString msg, QString nickname, QString datetime, QString color, bool is_delivered);
+    void print_history(QList<History::HistoryRecord> H);
 
     void closeEvent(QCloseEvent *e);
 
 private slots:
     void send_message();
+
+    void show_history24h();
+    void show_history1w();
+    void show_historyAll();
 };
 
 #endif // CHATWINDOW_H

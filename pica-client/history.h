@@ -24,6 +24,8 @@ public:
     void SetDelivered(quint32 peer_id); //mark first undelivered message from me to peer as delivered
     QList<HistoryRecord> GetMessages(quint32 peer_id, quint32 start_timestamp, quint32 end_timestamp);
     QMap<quint32, QList<QString> > GetUndeliveredMessages();
+    bool isOK();
+    QString GetLastError();
 
 private:
     QSqlDatabase dbconn;

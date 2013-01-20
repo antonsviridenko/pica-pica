@@ -73,6 +73,24 @@ QList<Accounts::AccountRecord> Accounts::GetAccounts()
     return L;
 }
 
+QString Accounts::GetName(quint32 id)
+{
+    QSqlQuery query;
+
+    query.prepare("select name from accounts where id=:id");
+    query.bindValue(":id", id);
+    query.exec();
+
+    lasterr=query.lastError();
+
+    if (lasterr.isValid())
+        return QString::null;
+
+    query.next();
+
+    return query.value(0).toString();
+}
+
 bool Accounts::isOK()
 {
   return  !lasterr.isValid();
