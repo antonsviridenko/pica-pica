@@ -35,6 +35,184 @@ QString config_defaultCA(PICA_INSTALLPREFIX"/share/pica-client/CA.pem");
 QString config_defaultCA("share\\CA.pem");
 #endif
 
+static bool create_database()
+{
+    QMessageBox msgBox;
+
+    QSqlDatabase dbconn=QSqlDatabase::addDatabase("QSQLITE");
+    dbconn.setDatabaseName(config_dbname);
+
+    if (!dbconn.open())
+    {
+
+        msgBox.setText(dbconn.lastError().text());
+        msgBox.exec();
+        return false;
+    }
+
+    QSqlQuery query;
+
+    query.exec("PRAGMA foreign_keys=ON;");
+
+    if (query.lastError().isValid())
+            goto showerror;
+
+    query.exec("create table accounts \
+               (\
+                   id int primary key, \
+                   name varchar(64), \
+                   cert_file varchar(255) not null, \
+                   pkey_file varchar(255) not null, \
+                   ca_file varchar(255) default null \
+                   );");
+
+    if (query.lastError().isValid())
+                    goto showerror;
+
+    query.exec("create table contacts \
+               (\
+                   id int,\
+                   name varchar(64), \
+                   cert_pem text(2048), \
+                   account_id int not null, \
+                   primary key(id, account_id),\
+                   foreign key(account_id) references accounts(id) on delete cascade\
+                );");
+
+    if (query.lastError().isValid())
+            goto showerror;
+
+    query.exec(
+                "create table nodes \
+                (\
+                    address varchar(255) not null,\
+                    port int not null,\
+                    last_active int not null,\
+                    inactive_count int not null,\
+                    constraint pk primary key (address,port) on conflict replace \
+                 );");
+
+     query.exec("insert into nodes values(\"picapica.im\", 2299, 0, 0);");
+     query.exec("insert into nodes values(\"picapica.ge\", 2299, 0, 0);");
+
+     if (query.lastError().isValid())
+             goto showerror;
+
+     query.exec("create table history \
+                (\
+                    id integer primary key autoincrement, \
+                    contact_id int not null, \
+                    account_id int not null, \
+                    timestamp int not null, \
+                    is_me int not null, \
+                    is_delivered int not null, \
+                    message text(65536) not null, \
+                    foreign key(account_id) references accounts(id) on delete cascade\
+                );"
+                 );
+
+     if (query.lastError().isValid())
+             goto showerror;
+
+     query.exec("create table schema_version \
+                  ( \
+                    ver integer primary key, \
+                    timestamp int not null \
+                  );"
+                );
+
+     if (query.lastError().isValid())
+             goto showerror;
+
+     query.exec("insert into schema_version values (1, strftime('%s','now'));"); //current schema version. update when needed
+
+    if (query.lastError().isValid())
+    showerror:
+    {
+        msgBox.setText(query.lastError().text());
+        msgBox.exec();
+        return false;
+    }
+
+    return true;
+}
+
+static bool update_database()
+{
+    QMessageBox msgBox;
+
+    QSqlDatabase dbconn=QSqlDatabase::addDatabase("QSQLITE");
+    dbconn.setDatabaseName(config_dbname);
+
+    if (!dbconn.open())
+    {
+
+        msgBox.setText(dbconn.lastError().text());
+        msgBox.exec();
+        return false;
+    }
+
+    QSqlQuery query;
+
+    //checking if table schema_version exists. If not, then database belongs to pica-client before 0.5.3 version
+    query.exec("select count(*) from sqlite_master where name=\"schema_version\"");
+    query.next();
+
+    if (query.lastError().isValid())
+        goto showerror;
+
+    if (query.value(0).toInt() == 0)
+    {
+        //--------updating from pre0.5.3 pica-client database
+        msgBox.setText("Updating database to newer version");
+        msgBox.exec();
+
+        query.exec("create table history \
+                   (\
+                       id integer primary key autoincrement, \
+                       contact_id int not null, \
+                       account_id int not null, \
+                       timestamp int not null, \
+                       is_me int not null, \
+                       is_delivered int not null, \
+                       message text(65536) not null, \
+                       foreign key(account_id) references accounts(id) on delete cascade\
+                   );"
+                    );
+
+        if (query.lastError().isValid())
+                goto showerror;
+
+        query.exec("\
+                   create table schema_version \
+                     ( \
+                       ver integer primary key, \
+                       timestamp int not null \
+                     );"
+                   );
+
+        if (query.lastError().isValid())
+                goto showerror;
+
+        query.exec("insert into schema_version values (1, strftime('%s','now'));");
+        //--------------------------------------------------
+    }
+    else
+    {
+        //check latest version from schema_version, update if needed
+    }
+
+if (query.lastError().isValid())
+showerror:
+    {
+        msgBox.setText(query.lastError().text());
+        msgBox.exec();
+        return false;
+    }
+
+    return true;
+}
+
 static bool create_config_dir()
 {
     QMessageBox msgBox;
@@ -42,9 +220,6 @@ static bool create_config_dir()
 
     if (!QFile::exists(config_dir))
     {
-        msgBox.setText(QString("%1 does not exist").arg(config_dir));//debug
-        msgBox.exec();
-
         QDir dir;
 
         if (!dir.mkpath(config_dir))
@@ -59,92 +234,13 @@ static bool create_config_dir()
 
     if (!QFile::exists(config_dbname))
     {
-        QSqlDatabase dbconn=QSqlDatabase::addDatabase("QSQLITE");
-        dbconn.setDatabaseName(config_dbname);
-
-        if (!dbconn.open())
-        {
-
-            msgBox.setText(dbconn.lastError().text());
-            msgBox.exec();
+        if (!create_database())
             return false;
-        }
-
-        QSqlQuery query;
-
-        query.exec("PRAGMA foreign_keys=ON;");
-
-        if (query.lastError().isValid())
-                goto showerror;
-
-        query.exec("create table accounts \
-                   (\
-                       id int primary key, \
-                       name varchar(64), \
-                       cert_file varchar(255) not null, \
-                       pkey_file varchar(255) not null, \
-                       ca_file varchar(255) default null \
-                       );");
-
-        if (query.lastError().isValid())
-                        goto showerror;
-
-        query.exec("create table contacts \
-                   (\
-                       id int,\
-                       name varchar(64), \
-                       cert_pem text(2048), \
-                       account_id int not null, \
-                       primary key(id, account_id),\
-                       foreign key(account_id) references accounts(id) on delete cascade\
-                    );");
-
-        if (query.lastError().isValid())
-                goto showerror;
-
-        query.exec(
-                    "create table nodes \
-                    (\
-                        address varchar(255) not null,\
-                        port int not null,\
-                        last_active int not null,\
-                        inactive_count int not null,\
-                        constraint pk primary key (address,port) on conflict replace \
-                     );");
-
-         query.exec("insert into nodes values(\"picapica.im\", 2299, 0, 0);");
-         query.exec("insert into nodes values(\"picapica.ge\", 2299, 0, 0);");
-
-         if (query.lastError().isValid())
-                 goto showerror;
-
-         query.exec("create table history \
-                    (\
-                        id integer primary key autoincrement, \
-                        contact_id int not null, \
-                        account_id int not null, \
-                        timestamp int not null, \
-                        is_me int not null, \
-                        is_delivered int not null, \
-                        message text(65536) not null, \
-                        foreign key(account_id) references accounts(id) on delete cascade\
-                    );"
-                     );
-
-        if (query.lastError().isValid())
-        showerror:
-        {
-            msgBox.setText(query.lastError().text());
-            msgBox.exec();
-            return false;
-        }
-
     }
-
+    else
+        update_database();
 
     return true;
-
-
 }
 
 int main(int argc, char *argv[])
