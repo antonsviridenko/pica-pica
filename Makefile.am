@@ -77,6 +77,8 @@ pica-client/picasystray.cpp \
 pica-client/picasystray.h \
 pica-client/skynet.cpp \
 pica-client/skynet.h \
+pica-client/history.h \
+pica-client/history.cpp \
  \
 pica-client/dialogs/addaccountdialog.cpp \
 pica-client/dialogs/addaccountdialog.h \
