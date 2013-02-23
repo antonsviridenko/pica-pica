@@ -3,7 +3,6 @@
 
 #include <QObject>
 #include <QAction>
-#include <QLabel>
 
 class PicaActionCenter : public QObject
 {
@@ -17,8 +16,6 @@ public:
 private:
     QAction *aboutAct;
     QAction *exitAct;
-    QLabel *link;
-    bool eventFilter(QObject *obj, QEvent *ev);
 
 signals:
     
