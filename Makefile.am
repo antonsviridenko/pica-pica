@@ -123,7 +123,7 @@ pica-client/mainwindow.cpp: ui_mainwindow.h
 #	uic $(CPPFLAGS) $< -o $@
 
 ui_%.h: pica-client/%.ui
-	$(UIC) $(CPPFLAGS) $< -o $@
+	$(UIC)  $< -o $@
 
  
 pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) 
