@@ -1,5 +1,3 @@
--- create table schema and insert initial node addresses
-
 create table if not exists nodes 
                     (
                         address varchar(255) not null,
