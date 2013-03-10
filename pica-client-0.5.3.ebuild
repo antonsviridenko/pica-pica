@@ -17,9 +17,9 @@ KEYWORDS="~amd64 ~x86"
 IUSE=""
 
 DEPEND=">=dev-libs/openssl-0.9.8
-	>x11-libs/qt-core-4.0.0
-	>x11-libs/qt-gui-4.0.0
-	>x11-libs/qt-sql-4.0.0[sqlite]
+	>dev-qt/qtcore-4.0.0
+	>dev-qt/qtgui-4.0.0
+	>dev-qt/qtsql-4.0.0[sqlite]
 	virtual/pkgconfig
 	x11-misc/xdg-utils"
 
