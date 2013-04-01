@@ -19,10 +19,16 @@ MainWindow::MainWindow(QWidget *parent) :
     layout = new QVBoxLayout;
     contact_list = new ContactListWidget;
     status = new QComboBox;
+    notifications = new QListWidget();
+    bt_showhide_notifications = new QPushButton();
+    hide_notifications();
 
     status->setMinimumHeight(36);
+    notifications->setMinimumHeight(48);
 
-    layout->addWidget(contact_list);
+    layout->addWidget(notifications, 1, Qt::AlignTop);
+    layout->addWidget(bt_showhide_notifications, 0, Qt::AlignRight);
+    layout->addWidget(contact_list, 8);
     layout->addWidget(status,0,Qt::AlignBottom);
 
     centralWidget()->setLayout(layout);
@@ -40,6 +46,7 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(skynet, SIGNAL(BecameSelfAware()), this, SLOT(set_online()));
     connect(skynet, SIGNAL(LostSelfAwareness()), this, SLOT(set_offline()));
     connect(status, SIGNAL(currentIndexChanged(int)), this, SLOT(status_changed(int)));
+    connect(bt_showhide_notifications, SIGNAL(clicked()), this, SLOT(showhide_click()));
 }
 
 MainWindow::~MainWindow()
@@ -104,7 +111,27 @@ void MainWindow::createMenus()
 
 }
 
+void MainWindow::show_notifications()
+{
+    notifications->show();
+    bt_showhide_notifications->setText(tr("Hide Notifications"));
+    status_notifications_hidden = false;
+}
 
+void MainWindow::hide_notifications()
+{
+    notifications->hide();
+    bt_showhide_notifications->setText(tr("Show Notifications"));
+    status_notifications_hidden = true;
+}
+
+void MainWindow::showhide_click()
+{
+    if (status_notifications_hidden)
+        show_notifications();
+    else
+        hide_notifications();
+}
 
 
 
