@@ -193,6 +193,7 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
         connect(threads.last(), SIGNAL(finished()),this,SLOT(nodethread_finished()));
         connect(threads.last(), SIGNAL(NodeStatusChanged(QString,quint16,bool)), this, SLOT(node_status_changed(QString,quint16,bool)));
         connect(threads.last(), SIGNAL(ConnectedToNode(QString,quint16,NodeThread*)), this, SLOT(nodethread_connected(QString,quint16,NodeThread*)));
+        connect(threads.last(), SIGNAL(ErrorMsg(QString)), this, SIGNAL(ErrMsgFromNode(QString)));
     }
 
 }

@@ -1,5 +1,6 @@
 #include "nodethread.h"
 #include "mainwindow.h"
+#include "../PICA_proto.h"
 
 QMutex NodeThread::finished_mutex;
 
@@ -61,6 +62,25 @@ void NodeThread::run()
         break;
 
         case PICA_ERRSSL:
+        exit = 1;
+        break;
+
+        case PICA_ERRPROTONEW:
+
+        emit ErrorMsg(QString("Node %1:%2 has newer protocol version. Please check if update for pica-client is available")
+                            .arg(node_addr.address)
+                            .arg(node_addr.port)
+                            );
+        exit = 1;
+        break;
+
+        case PICA_ERRPROTOOLD:
+
+        emit ErrorMsg(QString("Node %1:%2 has older protocol. Disconnected.")
+                            .arg(node_addr.address)
+                            .arg(node_addr.port)
+                            );
+
         exit = 1;
         break;
 

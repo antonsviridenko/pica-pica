@@ -32,7 +32,7 @@ private:
 signals:
     void NodeStatusChanged(QString addr, quint16 port, bool alive);
     void ConnectedToNode(QString addr, quint16 port, NodeThread *thread);
-
+    void ErrorMsg(QString msg);
 public slots:
 
 };

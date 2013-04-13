@@ -58,7 +58,7 @@ typedef unsigned __int16 uint16_t;
 #define PICA_ERRSSL -3
 #define PICA_ERRSOCK -4
 #define PICA_ERRSERV -5
-#define PICA_ERRVERDIFFER -6
+//#define PICA_ERRVERDIFFER -6
 #define PICA_ERRNOTFOUND -7
 #define PICA_ERRNOPEERCERT -8
 #define PICA_ERRINVPEERCERT -9
@@ -66,6 +66,9 @@ typedef unsigned __int16 uint16_t;
 #define PICA_ERRINVCERT -11
 #define PICA_ERRMSGSIZE -12
 #define PICA_ERRDNSRESOLVE -13
+
+#define PICA_ERRPROTOOLD -14
+#define PICA_ERRPROTONEW -15
 
 //#define PICA_CHNMSGBUFLEN 104
 

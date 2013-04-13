@@ -1,6 +1,7 @@
 #include "msguirouter.h"
 #include "dialogs/forgedcertdialog.h"
 #include "history.h"
+#include "mainwindow.h"
 
 
 /*
@@ -20,6 +21,7 @@ MsgUIRouter::MsgUIRouter(QObject *parent) :
     connect(skynet, SIGNAL(UnableToDeliver(quint32,QString)), this, SLOT(delivery_failed(quint32,QString)));
     connect(skynet, SIGNAL(Delivered(quint32)), this, SLOT(delivered(quint32)));
     connect(skynet, SIGNAL(CertificateForged(quint32,QString,QString)), this, SLOT(scary_cert_message(quint32,QString,QString)));
+    connect(skynet, SIGNAL(ErrMsgFromNode(QString)), this, SLOT(notification(QString)));
 
 }
 
@@ -97,4 +99,10 @@ void MsgUIRouter::scary_cert_message(quint32 peer_id, QString received_cert, QSt
 {
     ForgedCertDialog fcd(peer_id, received_cert, stored_cert);
     fcd.exec();
+}
+
+void MsgUIRouter::notification(QString text)
+{
+    if (mainwindow)
+        mainwindow->AddNotification(text);
 }

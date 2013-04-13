@@ -30,6 +30,7 @@ signals:
     void LostSelfAwareness();
     void PeerCertificateReceived(quint32 peer_id, QString cert_pem, bool *verified);
     void CertificateForged(quint32 peer_id, QString received_cert, QString stored_cert);
+    void ErrMsgFromNode(QString msg);
 
 private:
     Nodes nodes;

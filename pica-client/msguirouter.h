@@ -27,6 +27,7 @@ public slots:
     void delivered(quint32 to);
 
     void scary_cert_message(quint32 peer_id, QString received_cert, QString stored_cert);
+    void notification(QString text);
 private:
     QMap<quint32,ChatWindow*> chatwindows;
 

@@ -26,9 +26,9 @@ MainWindow::MainWindow(QWidget *parent) :
     status->setMinimumHeight(36);
     notifications->setMinimumHeight(48);
 
-    layout->addWidget(notifications, 1, Qt::AlignTop);
-    layout->addWidget(bt_showhide_notifications, 0, Qt::AlignRight);
     layout->addWidget(contact_list, 8);
+    layout->addWidget(bt_showhide_notifications, 0, Qt::AlignRight);
+    layout->addWidget(notifications, 1, Qt::AlignBottom);
     layout->addWidget(status,0,Qt::AlignBottom);
 
     centralWidget()->setLayout(layout);
@@ -131,6 +131,13 @@ void MainWindow::showhide_click()
         show_notifications();
     else
         hide_notifications();
+}
+
+void MainWindow::AddNotification(QString &text)
+{
+    notifications->addItem(text);
+    notifications->item(notifications->count() -1) ->setForeground(QBrush(QColor(230, 10, 10, 196)));
+    show_notifications();
 }
 
 

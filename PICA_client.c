@@ -829,8 +829,13 @@ while (cid->init_resp_ok == 0);
 if (cid->init_resp_ok != 1)
 	{
 	if (cid->init_resp_ok == -1)
-		ret_err = PICA_ERRVERDIFFER;
-	
+        {
+        if (cid->node_ver_major > PICA_PROTO_VER_HIGH ||
+                (cid->node_ver_major == PICA_PROTO_VER_HIGH && cid->node_ver_minor > PICA_PROTO_VER_LOW))
+            ret_err = PICA_ERRPROTONEW;
+        else
+            ret_err = PICA_ERRPROTOOLD;
+        }
     goto error_ret_5;
 	}
 
