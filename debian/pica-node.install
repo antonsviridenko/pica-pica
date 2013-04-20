@@ -1,0 +1,5 @@
+debian/tmp/etc/pica-node.conf
+debian/tmp/usr/bin/pica-node
+debian/tmp/usr/share/pica-node/*
+debian/tmp/var/lib/pica-node/*
+

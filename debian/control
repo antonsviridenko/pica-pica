@@ -1,0 +1,23 @@
+Source: pica-pica
+Section: net
+Priority: optional
+Maintainer: Anton Sviridenko <anton@picapica.im>
+Build-Depends: debhelper (>= 8.0.0), autotools-dev, libssl-dev, libqt4-dev
+Standards-Version: 3.9.2
+Homepage: http://picapica.im
+
+Package: pica-client
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Pica Pica instant messaging client
+ Client for secure distributed instant messaging system 
+ Pica Pica.
+
+Package: pica-node
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, adduser (>= 3.11)
+Description: node component for Pica Pica IM system
+ Pica Pica node serves Pica Pica distributed IM network.
+ It authenticates users, provides info about other existing
+ nodes and online users, routes encrypted connections between
+ users. 

@@ -1,0 +1,4 @@
+pica-client/pica-client.desktop usr/share/applications
+debian/tmp/usr/bin/pica-client
+debian/tmp/usr/share/pica-client/*
+

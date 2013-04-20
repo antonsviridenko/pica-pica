@@ -1,0 +1,2 @@
+?package(pica-client):needs=X11 section=Applications/Network/Communication\
+  title="Pica Pica IM Client" command=/usr/bin/pica-client
