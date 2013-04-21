@@ -91,7 +91,7 @@ static bool create_database()
                     inactive_count int not null,\
                     constraint pk primary key (address,port) on conflict replace \
                  );");
-
+     query.exec("insert into nodes values(\"picapica.im\", 2233, 0, 0);");
      query.exec("insert into nodes values(\"picapica.im\", 2299, 0, 0);");
      query.exec("insert into nodes values(\"picapica.ge\", 2299, 0, 0);");
 
