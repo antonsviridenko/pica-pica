@@ -5,7 +5,10 @@ CLEANFILES =
 
 EXTRA_DIST = 	iniparser/LICENSE \
 			LICENSE \
-			README
+			README \
+			debian \
+			gentoo \
+			windows
 
 #####################################
 if PICA_NODE
@@ -33,7 +36,7 @@ nodelist.db: nodelist_db_create.sql
 	echo "Creating and initializing nodelist database..."
 	sqlite3 $@  "`cat $<`" 
 
-EXTRA_DIST += nodelist_db_create.sql gentoo_initscript pica-node-0.5.3.ebuild
+EXTRA_DIST += nodelist_db_create.sql 
 
 pkgpicanodedir = ${datarootdir}/pica-node
 
@@ -135,7 +138,7 @@ dist_pkgpicaclient_DATA = CA.pem pica-client/picapica-icon-fly.png pica-client/p
 #$(filter moc_%.cpp,$(pica_client_SOURCES))
 CLEANFILES += moc_*.cpp ui_*.h
 
-EXTRA_DIST += pica-client/pica-client.desktop pica-client-0.5.3.ebuild
+EXTRA_DIST += pica-client/pica-client.desktop 
 
 if XDG_UTILS
 

@@ -30,7 +30,7 @@ src_configure() {
 
 src_install() {
 	emake DESTDIR="${D}" install || die "Install failed"
-	newinitd "${S}/gentoo_initscript" ${PN}
+	newinitd "${S}/gentoo/gentoo_initscript" ${PN}
 	#dodoc README  || die
 }
 
