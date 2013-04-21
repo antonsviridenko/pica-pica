@@ -36,6 +36,8 @@ nodelist.db: nodelist_db_create.sql
 	echo "Creating and initializing nodelist database..."
 	sqlite3 $@  "`cat $<`" 
 
+CLEANFILES += nodelist.db
+
 EXTRA_DIST += nodelist_db_create.sql 
 
 pkgpicanodedir = ${datarootdir}/pica-node
