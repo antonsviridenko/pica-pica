@@ -594,6 +594,7 @@ switch (buf[0])
 	
 	if (nodelink_search_by_ipv4addr(na_ipv4.addr, na_ipv4.port)) //connection with this node is already established
 		{
+		PICA_debug3("disconnecting node %.16s:%hu - connection with this node is already established", inet_ntoa(na_ipv4.addr), ntohs(na_ipv4.port));
 		return 0;
 		}
 
