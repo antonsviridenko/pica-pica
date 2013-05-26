@@ -108,11 +108,13 @@ int nodelink_rbuf_grow(struct nodelink *nl);
 int nodelink_attach_nodeaddr(struct nodelink *nl, unsigned int addr_type, void* nodeaddr, unsigned int nodeaddr_size);
 struct nodelink *nodelink_list_addnew(struct newconn *nc);
 void nodelink_list_delete(struct nodelink *n);
+struct nodelink *nodelink_search_by_ipv4addr(in_addr_t addr, in_port_t port); /* arguments are in network byte order */
 
 void newconn_close(struct newconn* nc);
 void newconn_free(struct newconn* nc);
 struct newconn* newconn_add(struct newconn *ncs,int *pos);
 
+void PICA_node_joinskynet(const char* addrlistfilename, const char *my_addr);
 
 //описание формата сообщений, которые могут приходить _ОТ_ клиентов по управляющему защищенному соединению 
 #define MSGINFO_MSGSNUM(arr) (sizeof(arr)/sizeof(struct PICA_msginfo))
@@ -590,6 +592,11 @@ switch (buf[0])
 	na_ipv4.addr=*(in_addr_t*)(buf+2);
 	na_ipv4.port=*(in_port_t*)(buf+6);
 	
+	if (nodelink_search_by_ipv4addr(na_ipv4.addr, na_ipv4.port)) //connection with this node is already established
+		{
+		return 0;
+		}
+
 	sprintf(na.addr,"%.16s",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
 	na.port = ntohs(na_ipv4.port);
 	
@@ -1781,6 +1788,26 @@ nl->w_pos+=size;
 return mp;
 }
 
+struct nodelink *nodelink_search_by_ipv4addr(in_addr_t ip, in_port_t port)
+{
+struct nodelink *nl;
+
+nl = nodelink_list_head;
+
+while(nl && !(
+			(nl->addr.sin_addr.s_addr == ip && nl->addr.sin_port == port) || 
+			(nl->node_addr && nl->addr_type == PICA_PROTO_NEWNODE_IPV4 && 
+				((struct PICA_nodeaddr_ipv4*)nl->node_addr) ->addr == ip &&
+				((struct PICA_nodeaddr_ipv4*)nl->node_addr) ->port == port
+			)
+		   )
+	)
+	{
+	nl = nl->next;
+	}
+
+return nl;
+}
 
 // обработка различных таймаутов. Отправка пингов
 
@@ -2739,7 +2766,7 @@ if (verbosity > 3)
 PICA_set_loglevel(PICA_LOG_INFO + verbosity);
 }
 
-void PICA_node_joinskynet(char* addrlistfilename, const char *my_addr)
+void PICA_node_joinskynet(const char* addrlistfilename, const char *my_addr)
 {
 struct PICA_nodeaddr *nap,*addrlist_h=0;
 struct nodelink *nl;

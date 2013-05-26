@@ -44,7 +44,7 @@ na->next = *(cp->n_addr);
 return 0;
 }
 
-int PICA_nodeaddr_list_load(char* dbfilename,struct PICA_nodeaddr **list_head)
+int PICA_nodeaddr_list_load(const char* dbfilename,struct PICA_nodeaddr **list_head)
 {
  int N=0, ret;
 sqlite3 *db;
@@ -74,7 +74,7 @@ sqlite3_close(db);
 return N;
 }
 
-int PICA_nodeaddr_update(char* dbfilename, struct PICA_nodeaddr *naddr, int is_alive)
+int PICA_nodeaddr_update(const char* dbfilename, struct PICA_nodeaddr *naddr, int is_alive)
 {
 sqlite3 *db;
 sqlite3_stmt *stmt;
@@ -139,7 +139,7 @@ sqlite3_close(db);
 return 1;
 }
 
-int PICA_nodeaddr_save(char* dbfilename, struct PICA_nodeaddr *naddr)
+int PICA_nodeaddr_save(const char* dbfilename, struct PICA_nodeaddr *naddr)
 {
 sqlite3 *db;
 sqlite3_stmt *stmt;
