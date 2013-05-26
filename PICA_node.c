@@ -2708,7 +2708,7 @@ Options:\n\
 
 void print_version()
 {
-puts("Pica Pica Node v0.5.3 \n(c) 2012 - 2013 Anton Sviridenko\n");
+puts("Pica Pica Node v"PACKAGE_VERSION" \n(c) 2012 - 2013 Anton Sviridenko\n");
 puts("protocol version "PICA_PROTO_VER_STRING"\n");
 
 ////----include this only if OpenSSL is statically linked
