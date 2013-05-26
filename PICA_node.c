@@ -2787,7 +2787,7 @@ while(nap)
 
 	if (0 == strncmp(nap->addr, my_addr, 256) && nap->port == atoi(nodecfg.listen_port))
 		{
-		PICA_warn("Skipping self address %.255s port %u", nap->addr, nap->port);
+		PICA_debug1("Skipping self address %.255s port %u", nap->addr, nap->port);
 		skip = 1;
 		}
 	
