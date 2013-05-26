@@ -594,7 +594,7 @@ switch (buf[0])
 	
 	if (nodelink_search_by_ipv4addr(na_ipv4.addr, na_ipv4.port)) //connection with this node is already established
 		{
-		PICA_debug3("disconnecting node %.16s:%hu - connection with this node is already established", inet_ntoa(na_ipv4.addr), ntohs(na_ipv4.port));
+		PICA_debug3("disconnecting node %.16s:%hu - connection with this node is already established", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
 		return 0;
 		}
 
@@ -2773,6 +2773,8 @@ struct PICA_nodeaddr *nap,*addrlist_h=0;
 struct nodelink *nl;
 int ret;
 
+skynet_refresh_tmst = time(0);
+
 ret = PICA_nodeaddr_list_load(addrlistfilename, &addrlist_h);//MEM
 if (ret <= 0)
 	return;
@@ -2821,8 +2823,6 @@ while(nap)
 	}
 
 PICA_nodeaddr_list_free(addrlist_h);
-
-skynet_refresh_tmst = time(0);
 }
 
 int main(int argc,char** argv)
