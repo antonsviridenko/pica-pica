@@ -53,6 +53,9 @@ while(p)
 		//
 		//free resources
 		//
+		if (nw->ai)
+			freeaddrinfo(nw->ai);
+	
 		free(nw);
 	
 		return;
@@ -64,16 +67,16 @@ while(p)
 }
 
 #ifdef WIN32
-static DWORD WINAPI nodewait_thread (void *arg)
+static DWORD WINAPI nodewait_resolve_thread (void *arg)
 #else
-static void  *nodewait_thread (void *arg)
+static void  *nodewait_resolve_thread (void *arg)
 #endif
 {
 struct nodewait *nw = (struct nodewait *)arg;
-struct addrinfo h,*r,*ap;
+struct addrinfo h;
 char portbuf[8];
 
-nw->state = PICA_NODEWAIT_RUNNING;
+nw->state = PICA_NODEWAIT_RESOLVING;
 
 memset(&h,0,sizeof(struct addrinfo));
 
@@ -90,10 +93,29 @@ h.ai_protocol=IPPROTO_TCP;
 
 sprintf(portbuf,"%u",nw->addr.port);
 
-if (0!=getaddrinfo(nw->addr.addr, portbuf, &h, &r))
-	return 0;
+nw->ai_errorcode = getaddrinfo(nw->addr.addr, portbuf, &h, &nw->ai);
 
-ap = r;
+if (nw->ai_errorcode)
+	nw->state = PICA_NODEWAIT_RESOLVING_FAILED;
+else
+	nw->state = PICA_NODEWAIT_RESOLVED;
+
+return 0;
+}
+
+
+#ifdef WIN32
+static DWORD WINAPI nodewait_connect_thread (void *arg)
+#else
+static void  *nodewait_connect_thread (void *arg)
+#endif
+{
+struct nodewait *nw = (struct nodewait *)arg;
+struct  addrinfo *ap;
+
+nw->state = PICA_NODEWAIT_CONNECTING;
+
+ap = nw->ai;
 
 while(ap)
 	{
@@ -120,18 +142,16 @@ while(ap)
 if (ap)
 	{
 	nw->nc.addr=*((struct sockaddr_in*)(ap->ai_addr));
-	freeaddrinfo(r);
 
-	nw->state = PICA_NODEWAIT_FINISHED_OK;
+	nw->state = PICA_NODEWAIT_CONNECTED;
 	return 1;
 	}
 
-freeaddrinfo(r);
-nw->state = PICA_NODEWAIT_FINISHED_ERR;
+nw->state = PICA_NODEWAIT_CONNECT_FAILED;
 return 0;
 }
 
-void nodewait_start_connection(struct PICA_nodeaddr *a)
+void nodewait_start_resolve(struct PICA_nodeaddr *a)
 {
 struct nodewait *nw;
 #ifndef WIN32
@@ -149,7 +169,7 @@ if (!nw)
 
 nw ->addr = *a;
 
-PICA_debug1("starting connection to node %.255s %u ...", nw->addr.addr, nw->addr.port);
+PICA_debug1("starting to resolve  node address %.255s %u ...", nw->addr.addr, nw->addr.port);
 
 #ifndef WIN32
 if (0 != pthread_attr_init(&attr))
@@ -157,16 +177,49 @@ if (0 != pthread_attr_init(&attr))
 
 pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
-if (0 != pthread_create(&thr, &attr, nodewait_thread, (void*)nw))
+if (0 != pthread_create(&thr, &attr, nodewait_resolve_thread, (void*)nw))
 	PICA_error("unable to create thread: %s", strerror(errno));
 
 pthread_attr_destroy(&attr);
 #else
-thread_h = CreateThread(NULL, 4096, nodewait_thread, (void*)nw, 0, &thread_id);
+thread_h = CreateThread(NULL, 4096, nodewait_resolve_thread, (void*)nw, 0, &thread_id);
 
 if (NULL != thread_h)
 	CloseHandle(thread_h);
 else
 	PICA_error("unable to create thread: %u", GetLastError());
 #endif
+}
+
+void nodewait_start_connect(struct nodewait *nw)
+{
+#ifndef WIN32
+pthread_t thr;
+pthread_attr_t attr;
+#else
+DWORD thread_id;
+HANDLE thread_h;
+#endif
+
+PICA_debug1("connecting to  node  %.255s %u ...", nw->addr.addr, nw->addr.port);
+
+#ifndef WIN32
+if (0 != pthread_attr_init(&attr))
+	PICA_error("pthread_attr_init() call failed.");
+
+pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+if (0 != pthread_create(&thr, &attr, nodewait_connect_thread, (void*)nw))
+	PICA_error("unable to create thread: %s", strerror(errno));
+
+pthread_attr_destroy(&attr);
+#else
+thread_h = CreateThread(NULL, 4096, nodewait_connect_thread, (void*)nw, 0, &thread_id);
+
+if (NULL != thread_h)
+	CloseHandle(thread_h);
+else
+	PICA_error("unable to create thread: %u", GetLastError());
+#endif
+
 }

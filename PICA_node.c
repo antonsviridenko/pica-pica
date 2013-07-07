@@ -2609,7 +2609,45 @@ struct nodewait *kill_ptr = 0, *nw = nodewait_list;
 while(nw)
 	{
 	PICA_debug3("checking nodewait pointer %p", nw);
-	if (PICA_NODEWAIT_FINISHED_OK == nw->state)
+	switch(nw->state)
+	{
+	case PICA_NODEWAIT_RESOLVED:
+		{
+		int skip = 0;
+		struct nodelink *nl;
+		
+		nl = nodelink_list_head;
+
+		while(nl && !skip)//check existing connections
+			{
+			struct addrinfo *p_ai = nw->ai;
+
+			while(p_ai) //IPv6
+				{
+				struct sockaddr_in in = *(struct sockaddr_in*)p_ai->ai_addr;
+
+				if (nl->addr.sin_family == in.sin_family && nl->addr.sin_addr.s_addr == in.sin_addr.s_addr && nl->addr.sin_port == in.sin_port)
+					{
+					skip = 1;
+					break;
+					}
+
+				p_ai = p_ai->ai_next;
+				}
+			nl = nl->next;
+			}
+
+		if (!skip)
+			nodewait_start_connect(nw);
+		else
+			{
+			PICA_debug3("skipping node %.255s %u , connection already exist", nw->addr.addr, nw->addr.port);
+			kill_ptr = nw;
+			}
+		}
+	break;
+
+	case PICA_NODEWAIT_CONNECTED:
 		{
 		struct nodelink *nlp;
 		
@@ -2628,14 +2666,25 @@ while(nw)
 		PICA_nodeaddr_update(nodecfg.nodes_db_file, &nw->addr, 1);
 		kill_ptr = nw;
 		}
+	break;
 
-	if (PICA_NODEWAIT_FINISHED_ERR == nw->state)
+	case PICA_NODEWAIT_RESOLVING_FAILED:
+		{
+		PICA_debug1("resolving %.255s %u failed: %s", nw->addr.addr, nw->addr.port, gai_strerror(nw->ai_errorcode));
+		PICA_nodeaddr_update(nodecfg.nodes_db_file, &nw->addr, 0);
+		kill_ptr = nw;
+		}
+	break;
+
+	case PICA_NODEWAIT_CONNECT_FAILED:
 		{
 		PICA_debug1("connection to %.255s %u failed", nw->addr.addr, nw->addr.port);
 		PICA_nodeaddr_update(nodecfg.nodes_db_file, &nw->addr, 0);
 		kill_ptr = nw;
 		}
-
+	break;
+	}
+	
 	nw = nw->next;
 
 	if (kill_ptr)
@@ -2787,7 +2836,7 @@ while(nap)
 
 	if (0 == strncmp(nap->addr, my_addr, 256) && nap->port == atoi(nodecfg.listen_port))
 		{
-		PICA_debug1("Skipping self address %.255s port %u", nap->addr, nap->port);
+		PICA_debug3("Skipping self address %.255s port %u", nap->addr, nap->port);
 		skip = 1;
 		}
 	
@@ -2817,7 +2866,7 @@ while(nap)
 		}
 	
 	if (!skip)
-		nodewait_start_connection(nap);
+		nodewait_start_resolve(nap);
 	
 	nap=nap->next;
 	}
