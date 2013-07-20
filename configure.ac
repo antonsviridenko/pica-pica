@@ -6,14 +6,23 @@ AC_INIT([Pica Pica Messenger], [0.5.4dev], [http://picapica.im/bugzilla/], [pica
 AM_INIT_AUTOMAKE([-Wall  foreign])
 AC_CONFIG_SRCDIR([PICA_node.c])
 
+AC_CANONICAL_HOST
+
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_CXX
 AC_PROG_INSTALL
 
+# Platform-specific environment settings
+AS_CASE([$host],
+    [*-*-freebsd*],  [LDFLAGS="$LDFLAGS -L/usr/local/lib" CPPFLAGS="$CPPFLAGS -I/usr/local/include"],
+    []
+)
+
 # Checks for common libraries, required by both pica-node and pica-client
-AC_CHECK_LIB([crypto], [RAND_add],[],[AC_MSG_ERROR(["libcrypto from OpenSSL package not found"])],[ -ldl -lz ])
-AC_CHECK_LIB([ssl], [SSL_library_init],[],[AC_MSG_ERROR(["libssl from OpenSSL package not found"])], [ -lcrypto -ldl -lz ])
+AC_SEARCH_LIBS([dlopen], [dl])
+AC_CHECK_LIB([crypto], [RAND_add],[],[AC_MSG_ERROR(["libcrypto from OpenSSL package not found"])],[ -lz ])
+AC_CHECK_LIB([ssl], [SSL_library_init],[],[AC_MSG_ERROR(["libssl from OpenSSL package not found"])])
 AC_CHECK_LIB([pthread], [pthread_create])
 
 #checking if pica-node is disabled
@@ -46,7 +55,7 @@ AM_CONDITIONAL([PICA_CLIENT], [test "x$PICA_CLIENT_ENABLED" = "xyes"])
 
 #pica-node tests
 AS_IF([test "x$PICA_NODE_ENABLED" = "xyes"],[
-AC_CHECK_LIB([sqlite3], [sqlite3_open])
+AC_CHECK_LIB([sqlite3], [sqlite3_open], [], [AC_MSG_ERROR(["libsqlite3 library not found"])])
 
 AC_CHECK_PROG([SQLITE3], [sqlite3], [yes], [no])
 
