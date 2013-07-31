@@ -1228,6 +1228,7 @@ int PICA_node_init()
 {
 struct sockaddr_in sd;
 int ret;
+int flag;
 
 SSL_load_error_strings();
 SSL_library_init(); 
@@ -1243,6 +1244,12 @@ listen_comm_sck=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
 if (listen_comm_sck == -1)
 	PICA_fatal("unable to get socket - %s", strerror(errno));
+
+flag = 1; //enable SO_REUSEADDR
+if (0 != setsockopt(listen_comm_sck, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)))
+{
+    PICA_error("failed to set SO_REUSEADDR on socket: %s", strerror(errno));
+}
 
 memset(&sd,0,sizeof(sd));
 
@@ -2246,7 +2253,7 @@ while(nl)
 		if (ret<=0)
 			{
 			if (ret < 0)
-				perror("n2n_read recv:");//debug
+				PICA_debug3("recv() failed in process_n2n_read(): %s", strerror(errno));
 			kill_ptr=nl;
 			}
 		else
