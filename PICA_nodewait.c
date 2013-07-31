@@ -126,11 +126,16 @@ while(ap)
 		continue;
 		}
 
+	PICA_debug2("created socket %i", nw->nc.sck);
+
 	if (0 != connect(nw->nc.sck,ap->ai_addr,ap->ai_addrlen))	
 		{
 		ap=ap->ai_next;
 
+		PICA_debug2("connect() failed: %s", strerror(errno));
+	
 		CLOSE(nw->nc.sck);
+		PICA_debug2("closed socket %i", nw->nc.sck);
 		continue;
 		}
 	else

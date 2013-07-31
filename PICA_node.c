@@ -991,6 +991,7 @@ if (l->p1)
 		{
 		SHUTDOWN(l->sck_p1);
 		CLOSE(l->sck_p1);
+		PICA_debug2("closed socket %i", l->sck_p1);
 		}
 
 if (l->p2)
@@ -998,6 +999,7 @@ if (l->p2)
 		{
 		SHUTDOWN(l->sck_p2);
 		CLOSE(l->sck_p2);
+		PICA_debug2("closed socket %i", l->sck_p2);
 		}
 
 
@@ -1328,7 +1330,7 @@ return 1;
 void newconn_close(struct newconn* nc)
 {
 CLOSE(nc->sck);
-
+PICA_debug2("closed socket %i", nc->sck);
 
 nc->sck=0;
 nc->pos=0;
@@ -1364,6 +1366,7 @@ else
 		*pos=min_pos;
 		SHUTDOWN(ncs[min_pos].sck);
 		CLOSE(ncs[min_pos].sck);
+		PICA_debug2("closed socket %i", ncs[min_pos].sck);
 		}
 	}
 
@@ -1594,6 +1597,7 @@ if (ci->w_buf)
 	free(ci->w_buf);
 
 CLOSE(ci->sck_comm);
+PICA_debug2("closed socket %i", ci->sck_comm);
 
 free(ci);
 }
@@ -1701,6 +1705,7 @@ if (n->node_addr)
 	free(n->node_addr);
 
 CLOSE(n->sck);
+PICA_debug2("closed socket %i", n->sck);
 
 if (n->prev)
 	n->prev->next=n->next;
@@ -2080,12 +2085,11 @@ if (FD_ISSET(listen_comm_sck,readfds))
 		
 		nc->sck = s;		
 		nc->addr = addr;
-		PICA_info("accepted connection");
+		PICA_debug1("accepted connection from %.16s, new socket %i", inet_ntoa(addr.sin_addr), s);//IPv6
 		}
 	else
 		{
-		perror("accept:");//debug
-		//ERR_CHECK
+		PICA_error("unable to accept connection: %s", strerror(errno));
 		}
 	}
 
@@ -2608,7 +2612,7 @@ struct nodewait *kill_ptr = 0, *nw = nodewait_list;
 
 while(nw)
 	{
-	PICA_debug3("checking nodewait pointer %p", nw);
+	//PICA_debug3("checking nodewait pointer %p", nw);
 	switch(nw->state)
 	{
 	case PICA_NODEWAIT_RESOLVED:
