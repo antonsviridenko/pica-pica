@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <time.h>
 
+//logging functions are not thread-safe, call them only from the main thread
+
 static int PICA_loglevel = PICA_LOG_INFO;
 
 void PICA_fatal(const char *fmt,...)

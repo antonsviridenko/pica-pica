@@ -72,6 +72,9 @@ static DWORD WINAPI nodewait_resolve_thread (void *arg)
 static void  *nodewait_resolve_thread (void *arg)
 #endif
 {
+/*
+* DO NOT CALL LOGGING FUNCTIONS HERE, THEY ARE NOT THREAD-SAFE
+*/
 struct nodewait *nw = (struct nodewait *)arg;
 struct addrinfo h;
 char portbuf[8];
@@ -110,6 +113,9 @@ static DWORD WINAPI nodewait_connect_thread (void *arg)
 static void  *nodewait_connect_thread (void *arg)
 #endif
 {
+/*
+* DO NOT CALL LOGGING FUNCTIONS HERE, THEY ARE NOT THREAD-SAFE
+*/
 struct nodewait *nw = (struct nodewait *)arg;
 struct  addrinfo *ap;
 
@@ -126,16 +132,11 @@ while(ap)
 		continue;
 		}
 
-	PICA_debug2("created socket %i", nw->nc.sck);
-
 	if (0 != connect(nw->nc.sck,ap->ai_addr,ap->ai_addrlen))	
 		{
 		ap=ap->ai_next;
-
-		PICA_debug2("connect() failed: %s", strerror(errno));
 	
 		CLOSE(nw->nc.sck);
-		PICA_debug2("closed socket %i", nw->nc.sck);
 		continue;
 		}
 	else

@@ -2663,6 +2663,7 @@ while(nw)
 		struct nodelink *nlp;
 		
 		PICA_debug1("connected to %.255s %u, sending request ", nw->addr.addr, nw->addr.port);
+		PICA_debug2("connection socket is %i", nw->nc.sck);
 		nlp=nodelink_list_addnew(&nw->nc);
 		if (nlp)
 			{
@@ -2682,6 +2683,7 @@ while(nw)
 	case PICA_NODEWAIT_RESOLVING_FAILED:
 		{
 		PICA_debug1("resolving %.255s %u failed: %s", nw->addr.addr, nw->addr.port, gai_strerror(nw->ai_errorcode));
+		PICA_debug2("socket %i is closed", nw->nc.sck);
 		PICA_nodeaddr_update(nodecfg.nodes_db_file, &nw->addr, 0);
 		kill_ptr = nw;
 		}
