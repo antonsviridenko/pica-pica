@@ -2683,7 +2683,6 @@ while(nw)
 	case PICA_NODEWAIT_RESOLVING_FAILED:
 		{
 		PICA_debug1("resolving %.255s %u failed: %s", nw->addr.addr, nw->addr.port, gai_strerror(nw->ai_errorcode));
-		PICA_debug2("socket %i is closed", nw->nc.sck);
 		PICA_nodeaddr_update(nodecfg.nodes_db_file, &nw->addr, 0);
 		kill_ptr = nw;
 		}
@@ -2692,6 +2691,7 @@ while(nw)
 	case PICA_NODEWAIT_CONNECT_FAILED:
 		{
 		PICA_debug1("connection to %.255s %u failed", nw->addr.addr, nw->addr.port);
+		PICA_debug2("socket %i is closed", nw->nc.sck);
 		PICA_nodeaddr_update(nodecfg.nodes_db_file, &nw->addr, 0);
 		kill_ptr = nw;
 		}
