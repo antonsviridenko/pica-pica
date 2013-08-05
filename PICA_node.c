@@ -2713,10 +2713,12 @@ int node_loop()
 {
 fd_set fds;
 struct timeval tv; 
-int nfds = 0,ret;
+int nfds, ret;
     
 do
 	{
+	nfds = 0;
+	    
 	FD_ZERO(&fds);
 	tv.tv_sec=SELECT_TIMEOUT;
 	tv.tv_usec=0;
