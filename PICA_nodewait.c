@@ -79,7 +79,6 @@ struct nodewait *nw = (struct nodewait *)arg;
 struct addrinfo h;
 char portbuf[8];
 
-nw->state = PICA_NODEWAIT_RESOLVING;
 
 memset(&h,0,sizeof(struct addrinfo));
 
@@ -119,7 +118,6 @@ static void  *nodewait_connect_thread (void *arg)
 struct nodewait *nw = (struct nodewait *)arg;
 struct  addrinfo *ap;
 
-nw->state = PICA_NODEWAIT_CONNECTING;
 
 ap = nw->ai;
 
@@ -177,6 +175,8 @@ nw ->addr = *a;
 
 PICA_debug1("starting to resolve  node address %.255s %u ...", nw->addr.addr, nw->addr.port);
 
+nw->state = PICA_NODEWAIT_RESOLVING;
+
 #ifndef WIN32
 if (0 != pthread_attr_init(&attr))
 	PICA_error("pthread_attr_init() call failed.");
@@ -209,6 +209,7 @@ HANDLE thread_h;
 
 PICA_debug1("connecting to  node  %.255s %u ...", nw->addr.addr, nw->addr.port);
 
+nw->state = PICA_NODEWAIT_CONNECTING;
 #ifndef WIN32
 if (0 != pthread_attr_init(&attr))
 	PICA_error("pthread_attr_init() call failed.");
