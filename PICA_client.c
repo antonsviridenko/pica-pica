@@ -98,24 +98,7 @@ if (tmp1==tmp2)
 return 1;
 }
 */
-int get_id_from_X509(X509 *x, unsigned char *id)
-{
-unsigned char *der = NULL;
-int len;
 
-len = i2d_X509(x, &der);
-
-if (len <= 0)
-{
-	return 0;
-}
-
-SHA224(der, len, id);
-
-OPENSSL_free(der);
-
-return 1;
-}
 
 int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id)
 {
@@ -138,7 +121,7 @@ if (!x)
     return 0;
 }
 
-return get_id_from_X509(x, id);
+return PICA_id_from_X509(x, id);
 }
 
 static int verify_callback(int preverify_ok, X509_STORE_CTX *x509_ctx)
@@ -282,7 +265,7 @@ if (!chnl->peer_cert)
 {
 unsigned char temp_id[PICA_ID_SIZE];
 
-if (get_id_from_X509(chnl->peer_cert, temp_id) == 0)
+if (PICA_id_from_X509(chnl->peer_cert, temp_id) == 0)
 	{
 	err_ret=PICA_ERRNOPEERCERT;
 	goto error_ret_;

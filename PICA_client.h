@@ -2,6 +2,7 @@
 #define PICA_CLIENT_H
 
 #include <time.h>
+#include "PICA_id.h"
 
 #ifdef WIN32
 
@@ -84,7 +85,6 @@ typedef unsigned __int16 uint16_t;
 
 #define PICA_CHAN_ACTIVATE_TIMEOUT 30
 
-#define PICA_ID_SIZE SHA224_DIGEST_LENGTH
 
 #define PICA_CHANNEL_INCOMING 0
 #define PICA_CHANNEL_OUTGOING 1

@@ -30,9 +30,11 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
+#include <openssl/sha.h>
 
 #include <time.h>
 #include "PICA_nodeaddrlist.h"
+#include "PICA_id.h"
 
 
 #define PICA_COMM_PORT 51914
@@ -71,11 +73,12 @@
 
 #define DEFAULT_BUF_SIZE 4096
 
+
 struct nodelink;
 
 struct client
 {
-unsigned int id;
+unsigned char id[PICA_ID_SIZE];
 struct client *up;
 struct client *left;
 struct client *right;
@@ -109,8 +112,8 @@ time_t tmst;
 struct client *p1;//caller
 struct client *p2;//callee
 
-unsigned int caller_id;
-unsigned int callee_id;
+unsigned char *caller_id;
+unsigned char *callee_id;
 
 struct nodelink *caller_node;
 struct nodelink *callee_node;
