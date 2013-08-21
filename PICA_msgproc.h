@@ -20,5 +20,5 @@ unsigned int PICA_msggetsize(unsigned char *buf,unsigned int nb,struct PICA_msgi
 
 unsigned int PICA_processmsg(unsigned char *buf,unsigned int size,void* arg,struct PICA_msginfo *msgs,unsigned int nmsg);
 
-unsigned int PICA_processdatastream(unsigned char *buf,unsigned int *read_pos,void* arg,struct PICA_msginfo *msgs,unsigned int nmsg);
+unsigned int PICA_processdatastream(unsigned char *buf,unsigned int *read_pos,void* arg,const struct PICA_msginfo *msgs,unsigned int nmsg);
 #endif

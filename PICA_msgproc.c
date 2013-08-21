@@ -60,7 +60,7 @@ for (i=0;i<nmsg;i++)
 return 0;
 }
 
-unsigned int PICA_processdatastream(unsigned char *buf,unsigned int *read_pos,void* arg,struct PICA_msginfo *msgs,unsigned int nmsg)
+unsigned int PICA_processdatastream(unsigned char *buf,unsigned int *read_pos,void* arg, const struct PICA_msginfo *msgs,unsigned int nmsg)
 {
 			while(*read_pos)
 				{

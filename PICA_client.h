@@ -36,6 +36,7 @@ typedef unsigned __int16 uint16_t;
 #include <openssl/err.h>
 #include <openssl/bio.h>
 #include <openssl/rand.h>
+#include <openssl/sha.h>
 
 #ifdef PICA_MULTITHREADED
 
@@ -83,6 +84,11 @@ typedef unsigned __int16 uint16_t;
 
 #define PICA_CHAN_ACTIVATE_TIMEOUT 30
 
+#define PICA_ID_SIZE SHA224_DIGEST_LENGTH
+
+#define PICA_CHANNEL_INCOMING 0
+#define PICA_CHANNEL_OUTGOING 1
+
 struct PICA_conninfo;
 struct PICA_chaninfo;
 
@@ -90,13 +96,11 @@ struct PICA_conninfo
 {
 //#warning "sockaddr!"
 struct sockaddr_in srv_addr; // sockaddr !!
-unsigned int id;
+unsigned char id[PICA_ID_SIZE]; //SHA224 hash of user's certificate in DER format
 SSL_CTX* ctx;
 SOCKET sck_comm;
 SSL* ssl_comm;
-//сертификат клиента
-// unsigned char r_buf[128];
-// unsigned int r_pos;
+
 
 int state;
 
@@ -116,7 +120,7 @@ unsigned char node_ver_major, node_ver_minor;
 struct PICA_chaninfo
 {
 struct PICA_conninfo *conn;//соединение с сервером, через которое установлен данный логический канал связи
-unsigned int peer_id;//номер собеседника
+unsigned char peer_id[PICA_ID_SIZE];
 SOCKET sck_data;
 SSL *ssl;
 int outgoing;//1 если создание канала инициировано локальным клиентом, 0 - если собеседником
@@ -138,24 +142,24 @@ time_t timestamp;
 struct PICA_client_callbacks
 {
 //получение сообщения.
-void (*newmsg_cb)(unsigned int peer_id,char* msgbuf,unsigned int nb,int type);
+void (*newmsg_cb)(const unsigned char *peer_id,char* msgbuf,unsigned int nb,int type);
 //получение подтверждения о доставке сообщения
-void (*msgok_cb)(unsigned int peer_id);
+void (*msgok_cb)(const unsigned char *peer_id);
 //создание канала с собеседником
-void (*channel_established_cb)(unsigned int peer_id);
+void (*channel_established_cb)(const unsigned char *peer_id);
 //создать канал не удалось		
-void (*channel_failed)(unsigned int peer_id);
+void (*channel_failed)(const unsigned char *peer_id);
 //входящий запрос на создание канала от пользователя с номером caller_id
 //возвращаемое значение: 0 - отклонить запрос, ненулевое значение - принять запрос
-int (*accept_cb)(unsigned int caller_id);
+int (*accept_cb)(const unsigned char  *caller_id);
 //запрошенный пользователь не найден, в оффлайне или отказался от общения
-void (*notfound_cb)(unsigned int callee_id);
+void (*notfound_cb)(const unsigned char  *callee_id);
 //
-void (*channel_closed_cb)(unsigned int peer_id, int reason);
+void (*channel_closed_cb)(const unsigned char *peer_id, int reason);
 
 void (*nodelist_cb)(int type, void *addr_bin, const char *addr_str, unsigned int port);
 //сертификат собеседника в формате PEM. Функция должна сравнить предъявленный сертификат с сохранённым (если есть) и вернуть 1 при успешной проверке, 0 - при неуспешной
-int (*peer_cert_verify_cb)(unsigned int peer_id, const char *cert_pem, unsigned int nb);
+int (*peer_cert_verify_cb)(const unsigned char *peer_id, const char *cert_pem, unsigned int nb);
 };
 
  	
@@ -164,7 +168,8 @@ int (*peer_cert_verify_cb)(unsigned int peer_id, const char *cert_pem, unsigned 
 extern "C" {
 #endif
 
-int PICA_get_id_from_cert(const char *cert_file, unsigned int *p_id);
+//read certificate from cert_file in PEM format, store id in buffer pointed by id 
+int PICA_get_id_from_cert(const char *cert_file, unsigned char *id); 
 int PICA_client_init(struct PICA_client_callbacks *clcbs);
 
 int PICA_new_connection
@@ -173,11 +178,10 @@ int PICA_new_connection
 	  const char *CA_file,
 	  const char *cert_file, 
 	  const char *pkey_file, 
-          //const char* password,
           int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
 	  struct PICA_conninfo **ci);
 
-int PICA_create_channel(struct PICA_conninfo *ci,unsigned int uid,struct PICA_chaninfo **chn);
+int PICA_create_channel(struct PICA_conninfo *ci,const unsigned char *peer_id,struct PICA_chaninfo **chn);
 int PICA_read_c2n(struct PICA_conninfo *ci);
 
 int PICA_read(struct PICA_conninfo *ci,int timeout);

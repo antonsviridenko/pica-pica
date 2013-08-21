@@ -67,7 +67,7 @@ struct PICA_msginfo c2n_init_messages[] = {
 //buf[size - 1] = 0;
 //return(strlen(buf));
 //}
-
+/*
 //функция возвращает номер клиента id в бинарном виде, извлекая его из строки,
 //которая возвращается функцией X509_NAME_oneline и представляет собой DN из сертификата клиента
  static int get_id_fromsubjstr(char* DN_str,unsigned int* id)
@@ -97,41 +97,56 @@ if (tmp1==tmp2)
 *tmp2='#';
 return 1;
 }
+*/
+int get_id_from_X509(X509 *x, unsigned char *id)
+{
+unsigned char *der = NULL;
+int len;
 
- int PICA_get_id_from_cert(const char *cert_file, unsigned int *p_id)
- {
- char *DN_str;
- X509 *x;
- FILE *f;
+len = i2d_X509(x, &der);
 
- f=fopen(cert_file,"r");
+if (len <= 0)
+{
+	return 0;
+}
 
- if (!f)
- {
-   perror(cert_file);
-   return 0;
- }
+SHA224(der, len, id);
 
- x=PEM_read_X509(f,0,0,0);
- fclose(f);
+OPENSSL_free(der);
 
- DN_str=X509_NAME_oneline(X509_get_subject_name(x), 0, 0);
+return 1;
+}
 
- if (!get_id_fromsubjstr(DN_str,p_id))
-         {
-         OPENSSL_free(DN_str);
-         return 0;
-         }
- //printf("my id is %u\n",*p_id);//debug
- //puts(DN_str);//debug
+int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id)
+{
+X509 *x;
+FILE *f;
 
- OPENSSL_free(DN_str);
- return 1;
- }
+f=fopen(cert_file,"r");
 
+if (!f)
+{
+	perror(cert_file);
+	return 0;
+}
 
+x=PEM_read_X509(f,0,0,0);
+fclose(f);
 
-static int add_chaninfo(struct PICA_conninfo *ci,struct PICA_chaninfo **chn,unsigned int uid,int is_outgoing)
+if (!x)
+{
+    return 0;
+}
+
+return get_id_from_X509(x, id);
+}
+
+static int verify_callback(int preverify_ok, X509_STORE_CTX *x509_ctx)
+{ //return 1 for self-signed certificates
+    return preverify_ok;
+}
+
+static int add_chaninfo(struct PICA_conninfo *ci, struct PICA_chaninfo **chn, const unsigned char *peer_id, int is_outgoing)
 {
 struct PICA_chaninfo *chnl,*ipt;
 
@@ -140,9 +155,9 @@ chnl=*chn=(struct PICA_chaninfo*)calloc(sizeof(struct PICA_chaninfo),1);
 if (!chnl)
 	return 0;//ERR_CHECK
 
-chnl->conn=ci;
-chnl->outgoing=is_outgoing;
-chnl->peer_id=uid;
+chnl->conn = ci;
+chnl->outgoing = is_outgoing;
+memcpy(chnl->peer_id, peer_id, PICA_ID_SIZE);
 
 chnl->timestamp = time(0);
 
@@ -194,14 +209,13 @@ if (mp)
 	{
 	if (chnl->outgoing)
 		{
-		*(unsigned int*)(mp->tail) = chnl->conn->id;//вызвывающий
-		*(unsigned int*)(mp->tail + 4) = chnl->peer_id;//вызываемый
+		memcpy(mp->tail, chnl->conn->id, PICA_ID_SIZE);//вызвывающий
+		memcpy(mp->tail + PICA_ID_SIZE, chnl->peer_id, PICA_ID_SIZE);//вызываемый
 		}
 	else
 		{
-		//puts("callee CONNID");//debug
-		*(unsigned int*)(mp->tail) = chnl->peer_id;//вызвывающий
-		*(unsigned int*)(mp->tail + 4) = chnl->conn->id;//вызываемый
+		memcpy(mp->tail, chnl->peer_id, PICA_ID_SIZE);//вызвывающий
+		memcpy(mp->tail + PICA_ID_SIZE, chnl->conn->id, PICA_ID_SIZE);//вызываемый
 		}    
 	}
 else
@@ -209,7 +223,7 @@ else
 	err_ret=PICA_ERRNOMEM;
 	goto error_ret;
 	}
-//ret=send(chnl->sck_data,buf,PICA_PROTO_CONNID_SIZE,0);
+
 do
 	{
 	 err_ret = PICA_write_c2c(chnl);
@@ -236,7 +250,9 @@ if (!ret)
 	goto error_ret_;
 	}
 
-SSL_set_verify(chnl->ssl, SSL_VERIFY_PEER,0);
+SSL_set_verify(chnl->ssl, SSL_VERIFY_PEER, verify_callback);
+SSL_set_verify_depth(chnl->ssl, 1);//peer certificate and one CA
+
 
 if (chnl->outgoing)
 ret=SSL_connect(chnl->ssl);
@@ -263,6 +279,22 @@ if (!chnl->peer_cert)
 	goto error_ret_;
 	}
 
+{
+unsigned char temp_id[PICA_ID_SIZE];
+
+if (get_id_from_X509(chnl->peer_cert, temp_id) == 0)
+	{
+	err_ret=PICA_ERRNOPEERCERT;
+	goto error_ret_;
+	}
+
+if (memcmp(temp_id, chnl->peer_id, PICA_ID_SIZE) != 0)
+	{
+	err_ret=PICA_ERRINVPEERCERT;
+	goto error_ret_;
+	}
+}
+/*
 DN_str=X509_NAME_oneline(X509_get_subject_name(chnl->peer_cert), 0, 0);
 
 if (!DN_str)
@@ -279,7 +311,9 @@ if (!get_id_fromsubjstr(DN_str,&tmp_uid)  || tmp_uid!=chnl->peer_id)
 	}
 //puts(DN_str);//debug
 
-OPENSSL_free(DN_str);
+OPENSSL_free(DN_str);*/
+
+
 
 {
 BIO *mem = BIO_new(BIO_s_mem());
@@ -339,9 +373,10 @@ static unsigned int procmsg_CONNREQINC(unsigned char* buf,unsigned int nb,void* 
 int ret;
 struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
 struct PICA_proto_msg *mp;
+unsigned char *peer_id = buf + 2;
 
 
-	if (callbacks.accept_cb(*(unsigned int*)(buf+2)))
+	if (callbacks.accept_cb(peer_id))
 		{
 		struct PICA_chaninfo *_chnl;
 		
@@ -349,12 +384,12 @@ struct PICA_proto_msg *mp;
 		
 		if (mp)
 			{
-			*(unsigned int*)(mp->tail) = *(unsigned int*)(buf+2);
+			memcpy(mp->tail, peer_id, PICA_ID_SIZE);
 			}
 		else
 			return 0;
 		
-		ret = add_chaninfo( ci, &_chnl, *(unsigned int*)(buf+2), 0);
+		ret = add_chaninfo( ci, &_chnl, peer_id, 0);
 
 		if (!ret)
 			return 0; //ERR_CHECK - кончилась память
@@ -378,11 +413,11 @@ struct PICA_proto_msg *mp;
 		}
 	else
 		{
-		mp = c2n_writebuf_push( ci, PICA_PROTO_CONNDENY, PICA_PROTO_CONNDENY_SIZE);
+		mp = c2n_writebuf_push(ci, PICA_PROTO_CONNDENY, PICA_PROTO_CONNDENY_SIZE);
 	
 		if (mp)
 			{
-			*(unsigned int*)(mp->tail) = *(unsigned int*)(buf+2);
+			memcpy(mp->tail, peer_id, PICA_ID_SIZE);
 			}
 		else
 			return 0;//ERR_CHECK
@@ -394,19 +429,20 @@ static unsigned int procmsg_NOTFOUND(unsigned char* buf,unsigned int nb,void* p)
 {
 struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
 struct PICA_chaninfo *ipt,*rq=0;
+unsigned char *peer_id = buf + 2;
 
 //puts("procmsg_NOTFOUND");//debug
 
 ipt=ci->chan_list_end;
 while(ipt)
 	{
-	if (ipt->peer_id==*(unsigned int*)(buf+2))
+	if (memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
 		{
 		rq=ipt;
 		break;
 		}
 	ipt=ipt->prev;
-	}		
+	}
 
 if (!rq)
 	return 0;// ERR_CHECK -левое сообщение, такой запрос не посылался
@@ -416,7 +452,7 @@ PICA_close_channel(rq);
 
 //puts("procmsg_NOTFOUND_chkp1");//debug
 
-callbacks.notfound_cb(*(unsigned int*)(buf+2));
+callbacks.notfound_cb(peer_id);
 return 1;
 }
 
@@ -424,12 +460,13 @@ static unsigned int procmsg_FOUND(unsigned char* buf,unsigned int nb,void* p)
 {
 struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
 struct PICA_chaninfo *ipt,*rq=0;
+unsigned char *peer_id = buf + 2;
 int ret;
 
 ipt=ci->chan_list_end;
 while(ipt)
 	{
-	if (ipt->peer_id==*(unsigned int*)(buf+2))
+	if (memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
 		{
 		rq=ipt;
 		break;
@@ -698,7 +735,7 @@ if (!cid->ctx)
     goto error_ret_2;
 	}
 
-if (!PICA_get_id_from_cert(cert_file, &cid->id))
+if (!PICA_get_id_from_cert(cert_file, cid->id))
     {
     ret_err=PICA_ERRINVCERT;
     goto error_ret_3;
@@ -707,7 +744,7 @@ if (!PICA_get_id_from_cert(cert_file, &cid->id))
 if (password_cb)
     {
     SSL_CTX_set_default_passwd_cb(cid->ctx, password_cb);
-    SSL_CTX_set_default_passwd_cb_userdata(cid->ctx,&cid->id);
+    SSL_CTX_set_default_passwd_cb_userdata(cid->ctx,cid->id);
     }
 
 ret=SSL_CTX_use_certificate_file(cid->ctx,cert_file,SSL_FILETYPE_PEM);
@@ -894,20 +931,15 @@ return ret_err;
 
 //создает ИСХОДЯЩИЙ логический зашифрованный канал связи с указанным собеседником, если тот доступен
 // в данный момент.
-
-int PICA_create_channel(struct PICA_conninfo *ci,unsigned int uid,struct PICA_chaninfo **chn)
+int PICA_create_channel(struct PICA_conninfo *ci,const unsigned char *peer_id,struct PICA_chaninfo **chn)
 {
 struct PICA_proto_msg *mp;
 struct PICA_chaninfo *chnl;
-char* DN_str;
-unsigned char buf[12];
-int ret,err_ret;
 
 if (!(ci && chn))
 	return PICA_ERRINVARG;
 
-
-if (!add_chaninfo(ci,chn,uid,1))
+if (!add_chaninfo(ci, chn, peer_id, PICA_CHANNEL_OUTGOING))
 	return PICA_ERRNOMEM;
 
 chnl=*chn;
@@ -916,17 +948,13 @@ mp = c2n_writebuf_push( ci, PICA_PROTO_CONNREQOUTG, PICA_PROTO_CONNREQOUTG_SIZE)
 		
 	if (mp)
 		{
-		*(unsigned int*)(mp->tail)=uid;
+		memcpy(mp->tail, peer_id, PICA_ID_SIZE);
 		}
 	else
 		 return PICA_ERRNOMEM;
 
 
 return PICA_OK;
-
-//сделать нормальную обработку ошибок - со стековой последовательностью деинициализирующих процедур (!!??)
-// в этой функции и в предыдущей
-
 }
 
 int PICA_read(struct PICA_conninfo *ci,int timeout)
