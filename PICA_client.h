@@ -169,7 +169,7 @@ extern "C" {
 #endif
 
 //read certificate from cert_file in PEM format, store id in buffer pointed by id 
-int PICA_get_id_from_cert(const char *cert_file, unsigned char *id); 
+int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id); 
 int PICA_client_init(struct PICA_client_callbacks *clcbs);
 
 int PICA_new_connection

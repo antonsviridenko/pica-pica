@@ -13,48 +13,48 @@ int _outgoing_chnl=0;
 
 unsigned char buf[64*1024];
 
-int accept_cb(unsigned int id)
+int accept_cb(const unsigned char *id)
 {
-printf("accept_cb: %u\n",id);
+printf("accept_cb: %s\n",PICA_id_to_base64(id, NULL));
 return 1;
 }
 
 //получение сообщения.
-void newmsg_cb(unsigned int peer_id,char* msgbuf,unsigned int nb,int type)
+void newmsg_cb(const unsigned char *peer_id,char* msgbuf,unsigned int nb,int type)
 {
 memcpy(buf,msgbuf,nb);
 buf[nb]=0;
-printf(" %u: ",peer_id);
+printf(" %s: ",PICA_id_to_base64(peer_id, NULL));
 puts(buf);
 }
 //получение подтверждения о доставке сообщения
-void msgok_cb(unsigned int peer_id)
+void msgok_cb(const unsigned char *peer_id)
 {
 puts("[V]");
 }
 //создание канала с собеседником
-void channel_established_cb(unsigned int peer_id)
+void channel_established_cb(const unsigned char *peer_id)
 {
 puts("channel_established_cb");
 }
 
-void channel_failed_cb(unsigned int peer_id)
+void channel_failed_cb(const unsigned char *peer_id)
 {
-printf("Failed to create channel to %u\n",peer_id);
+printf("Failed to create channel to %s\n",PICA_id_to_base64(peer_id, NULL));
 chn=0;
 }
 
 //входящий запрос на создание канала от пользователя с номером caller_id
 //<<int accept_cb(unsigned int caller_id);
 //запрошенный пользователь не найден, в оффлайне или отказался от общения
-void notfound_cb(unsigned int callee_id)
+void notfound_cb(const unsigned char *callee_id)
 {
 puts("notfound_cb");
 }
 
-void channel_closed_cb(unsigned int peer_id, int reason)
+void channel_closed_cb(const unsigned char *peer_id, int reason)
 {
-printf("channel_closed_cb( peer_id = %u, reason = %i)\n", peer_id, reason);
+printf("channel_closed_cb( peer_id = %s, reason = %i)\n", PICA_id_to_base64(peer_id, NULL), reason);
 }
 
 void nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port)
@@ -79,9 +79,9 @@ switch(type)
 		}
 }
 
-int peer_cert_verify_cb(unsigned int peer_id, const char *cert_pem, unsigned int nb)
+int peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_pem, unsigned int nb)
 {
-    printf("peer's certificate (%u): \n%.*s\n", peer_id, nb,cert_pem);
+    printf("peer's certificate (%s): \n%.*s\n", PICA_id_to_base64(peer_id, NULL), nb,cert_pem);
     return 1;
 }
 
@@ -100,7 +100,7 @@ struct PICA_client_callbacks cbs = {
 int main(int argc,char** argv)
 {
 int ret;
-unsigned int peer_id;
+unsigned char peer_id[PICA_ID_SIZE];
 
 if (argc<4)
 	{
@@ -139,8 +139,13 @@ return 1;
 
 if (argc==5)
 	{
-	peer_id=atoi(argv[4]);
-	printf("Creating channel to %u...\n",peer_id);
+	if (PICA_id_from_base64(argv[4], peer_id) == NULL)
+	{
+	    puts("invalid peer_id");
+	    return 1;
+	}
+
+	printf("Creating channel to %s...\n",PICA_id_to_base64(peer_id, NULL));
 	
 	ret=PICA_create_channel(c,peer_id,&chn);
 		//sleep(17);//timeout test

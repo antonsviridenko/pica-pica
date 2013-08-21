@@ -24,7 +24,27 @@ return 1;
 
 unsigned char *PICA_id_from_base64(const unsigned char *buf, unsigned char *id)
 {
+BIO *biomem, *b64;
+static char localidbuf[PICA_ID_SIZE];
+int inlen, bread = 0;
+unsigned char *idbuf = id;
 
+b64 = BIO_new(BIO_f_base64());
+BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+biomem = BIO_new_mem_buf(buf, -1);
+biomem = BIO_push(b64, biomem);
+
+if (idbuf == NULL)
+	idbuf = localidbuf;
+
+bread = BIO_read(biomem, idbuf, PICA_ID_SIZE);
+
+if (bread != PICA_ID_SIZE)
+	idbuf = NULL;
+
+BIO_free_all(biomem);
+
+return idbuf;
 }
 
 char *PICA_id_to_base64(const unsigned char *id, char *buf)
@@ -48,7 +68,10 @@ if (outputbuf == NULL)
 
 memcpy(outputbuf, sourcebuf, b64len);
 
+*strchr(outputbuf, '\n')='\0';
 outputbuf[b64len] = '\0';
 
 BIO_free_all(biomem);
+
+return outputbuf;
 }

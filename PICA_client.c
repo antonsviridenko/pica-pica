@@ -718,7 +718,7 @@ if (!cid->ctx)
     goto error_ret_2;
 	}
 
-if (!PICA_get_id_from_cert(cert_file, cid->id))
+if (!PICA_get_id_from_cert_file(cert_file, cid->id))
     {
     ret_err=PICA_ERRINVCERT;
     goto error_ret_3;
