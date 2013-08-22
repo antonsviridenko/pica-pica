@@ -211,18 +211,26 @@ PICA_debug1("received CONNID");
 caller_id = buf + 2;
 callee_id = buf + 2 + PICA_ID_SIZE;
 
-//PICA_debug1("CONNID: caller_id=%u callee_id=%u",caller_id,callee_id);
+{
+char caller_id_buf[2 * PICA_ID_SIZE], callee_id_buf[2 * PICA_ID_SIZE];
+PICA_debug1("CONNID: caller_id=%s callee_id=%s",PICA_id_to_base64(caller_id, caller_id_buf),PICA_id_to_base64(callee_id, callee_id_buf));
+}
 
 link=cclink_list_search(caller_id, callee_id);
 
 if (!link)
+	{
+	PICA_debug3("corresponding cclink not found");
 	return 0;
-
+	}
 
 if (link->state!=PICA_CCLINK_LOCAL_WAITCONNCLE && link->state!=PICA_CCLINK_LOCAL_WAITCONNCLR
 	&& link->state!=PICA_CCLINK_N2NCLR_WAITCONNCLR  && link->state!=PICA_CCLINK_N2NCLE_WAITCONNCLE)
+	{
+	PICA_debug2("found cclink is not in expected state");
 	return 0;
-
+	}
+	
 {
 struct client *c;
 //проверка IP адреса.
@@ -266,7 +274,7 @@ if (link->state==PICA_CCLINK_N2NCLE_WAITCONNCLE)
 		return 0;
 		}
 	}
-
+PICA_debug3("CONNID processed successfully");
 cclink_activate(link,nc->sck);
 newconn_free(nc);
 return 1;
@@ -1356,7 +1364,7 @@ return 1;
 void newconn_close(struct newconn* nc)
 {
 CLOSE(nc->sck);
-PICA_debug2("closed socket %i", nc->sck);
+PICA_debug3("newconn_close(): nc = %p closed socket %i", nc, nc->sck);
 
 nc->sck=0;
 nc->pos=0;
@@ -2141,7 +2149,6 @@ for (i=0;i<MAX_NEWCONNS;i++)
 	
 		if(!PICA_processdatastream(newconns[i].buf,&(newconns[i].pos),newconns+i  /*arg*/,_msginfo_newconn, MSGINFO_MSGSNUM(_msginfo_newconn) ))
 			{
-			//puts("processdatastream error\n");//debug
 			newconn_close(newconns+i);
 			}
 		//FD_CLR(newconns[i].sck,readfds);

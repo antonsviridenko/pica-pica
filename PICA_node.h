@@ -67,9 +67,9 @@
 
 #define PICA_NETWORKNAME "TESTNET" // TEMP //CONF
 
-#define NEWCONN_BUFSIZE 64
-//#define CL_RBUFSIZE 32
-//#define CL_WBUFSIZE 128
+#define NEWCONN_BUFSIZE 58 //FIXME this is the size of CONNID packet, this packet is followed by TLS session negotiation data.
+						//TLS data must not be interpreted as some PICA packet by PICA_processdatastream(),
+						//so buffer size is limited by the size of CONNID.
 
 #define DEFAULT_BUF_SIZE 4096
 
