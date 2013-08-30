@@ -124,8 +124,41 @@ if (!x)
 return PICA_id_from_X509(x, id);
 }
 
-static int verify_callback(int preverify_ok, X509_STORE_CTX *x509_ctx)
+static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 { //return 1 for self-signed certificates
+char    buf[256];
+X509   *err_cert;
+int     err, depth;
+SSL    *ssl;
+
+err_cert = X509_STORE_CTX_get_current_cert(ctx);
+err = X509_STORE_CTX_get_error(ctx);
+depth = X509_STORE_CTX_get_error_depth(ctx);
+
+
+X509_NAME_oneline(X509_get_subject_name(err_cert), buf, 256);
+
+if (err == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT && depth == 0)
+    preverify_ok = 1;
+
+if (!preverify_ok) {
+               printf("verify error:num=%d:%s:depth=%d:%s\n", err,
+                        X509_verify_cert_error_string(err), depth, buf);
+           }
+
+
+           /*
+            * At this point, err contains the last verification error. We can use
+            * it for something special
+            */
+           if (!preverify_ok && (err == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT))
+           {
+             X509_NAME_oneline(X509_get_issuer_name(ctx->current_cert), buf, 256);
+             printf("issuer= %s\n", buf);
+           }
+
+
+
     return preverify_ok;
 }
 
@@ -246,8 +279,8 @@ ret=SSL_accept(chnl->ssl);
 
 if (ret!=1)
 	{
-	//printf("ret=%i of SSL_connect or accept\n",ret);//debug
-	//printf("SSL_get_error says:%i\n",SSL_get_error(chnl->ssl,ret));//debug
+    //printf("ret=%i of SSL_connect or accept\n",ret);//debug
+    //printf("SSL_get_error says:%i\n",SSL_get_error(chnl->ssl,ret));//debug
 	err_ret=PICA_ERRSSL;
 	goto error_ret_;
 	}

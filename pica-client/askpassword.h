@@ -14,7 +14,7 @@ public:
 
 private:
     void emit_sig();
-    static QMap<quint32,QString> idpasswd;
+    static QMap<QByteArray,QString> idpasswd;
     static QMutex passwd_mutex;
 
 signals:

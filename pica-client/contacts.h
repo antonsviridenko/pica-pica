@@ -11,25 +11,25 @@ class Contacts
 public:
     struct ContactRecord
     {
-        quint32 id;
+        QByteArray id;
         QString name;
     };
 
-    Contacts(QString storage, quint32 user_account_id);
+    Contacts(QString storage, QByteArray user_account_id);
 
-    void Add(quint32 id);
-    void Delete(quint32 id);
+    void Add(QByteArray id);
+    void Delete(QByteArray id);
     QList<ContactRecord> GetContacts();
-    QString GetContactCert(quint32 id);
-    QString GetContactName(quint32 id);
-    void SetContactCert(quint32 id, QString &cert_pem);
-    void SetContactName(quint32 id, QString name);
+    QString GetContactCert(QByteArray id);
+    QString GetContactName(QByteArray id);
+    void SetContactCert(QByteArray id, QString &cert_pem);
+    void SetContactName(QByteArray id, QString name);
     QString GetLastError();
     bool isOK();
 private:
     QSqlDatabase dbconn;
     QSqlError lasterr;
-    quint32 account_id_;
+    QByteArray account_id_;
 };
 
 #endif // CONTACTS_H

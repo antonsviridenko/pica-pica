@@ -18,20 +18,20 @@ signals:
     
 public slots:
     void msg_to_peer(QString msg, ChatWindow *sender_window);
-    void msg_from_peer(quint32 from, QString msg);
+    void msg_from_peer(QByteArray from, QString msg);
 
     void chatwindow_closed(ChatWindow *sender_window);
-    void start_chat(quint32 peer_id);
+    void start_chat(QByteArray peer_id);
 
-    void delivery_failed(quint32 to, QString msg);
-    void delivered(quint32 to);
+    void delivery_failed(QByteArray to, QString msg);
+    void delivered(QByteArray to);
 
-    void scary_cert_message(quint32 peer_id, QString received_cert, QString stored_cert);
+    void scary_cert_message(QByteArray peer_id, QString received_cert, QString stored_cert);
     void notification(QString text);
 private:
-    QMap<quint32,ChatWindow*> chatwindows;
+    QMap<QByteArray,ChatWindow*> chatwindows;
 
-    void create_chatwindow(quint32 peer_id);
+    void create_chatwindow(QByteArray peer_id);
     
 };
 

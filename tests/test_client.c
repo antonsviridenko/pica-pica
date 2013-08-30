@@ -125,7 +125,7 @@ PICA_client_init(&cbs);
 printf("making connection...\n");
 
 //PICA_new_connection(const char *nodeaddr, unsigned int port, const char *CA_file, const char *cert_file, const char *pkey_file, const char* password, struct PICA_conninfo **ci)
-ret=PICA_new_connection(argv[1], atoi(argv[2]), "trusted_CA.pem", argv[3],argv[3],NULL,&c);
+ret=PICA_new_connection(argv[1], atoi(argv[2]), /*"trusted_CA.pem"*/ argv[3], argv[3],argv[3],NULL,&c);
 
 ERR_print_errors_fp(stdout);
 

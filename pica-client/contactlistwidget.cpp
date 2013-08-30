@@ -27,7 +27,7 @@ ContactListWidget::ContactListWidget(QWidget *parent) :
 
     connect(this, SIGNAL(itemDoubleClicked(QListWidgetItem*)), this, SLOT(start_chat()));
 
-    setContactsStorage(new Contacts(config_dbname, account_id));
+    setContactsStorage(new Contacts(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE)));
 }
 
 ContactListWidget::~ContactListWidget()
@@ -63,9 +63,9 @@ void ContactListWidget::setContactsStorage(Contacts *ct)
 
     for (int i=0;i<contact_records.size();i++)
     {
-        addItem(QString("(%1) ").arg(contact_records[i].id)+contact_records[i].name);
+        addItem(QString("(%1) ").arg(contact_records[i].id.toBase64()+contact_records[i].name));
         wgitem_to_recs[this->item(i)]=&contact_records[i];
-        this->item(i)->setStatusTip(QString().setNum(contact_records[i].id));
+        this->item(i)->setStatusTip(contact_records[i].id.toBase64());
     }
 }
 
@@ -76,9 +76,9 @@ void ContactListWidget::add_contact()
 
     if (ok && !input.isEmpty())
     {
-        quint32 user_id=input.toUInt(&ok);
+        QByteArray user_id = QByteArray::fromBase64(input.toAscii()).left(PICA_ID_SIZE);
 
-        if (!ok)
+        if (user_id.size() != PICA_ID_SIZE)
         {
             QMessageBox mbx;
             mbx.setIcon(QMessageBox::Warning);
@@ -92,7 +92,7 @@ void ContactListWidget::add_contact()
             {
                 QMessageBox mbx;
                 mbx.setIcon(QMessageBox::Warning);
-                mbx.setText(tr("User \"(%1) %2\" already exists").arg(user_id).arg(contact_records[i].name));
+                mbx.setText(tr("User \"(%1) %2\" already exists").arg(user_id.toBase64().constData()).arg(contact_records[i].name));
                 mbx.exec();
                 return;
             }
@@ -113,7 +113,7 @@ void ContactListWidget::add_contact()
             return;
         }
 
-        addItem(QString("(%1) ").arg(user_id));
+        addItem(QString("(%1) ").arg(user_id.toBase64().constData()));
         contact_records.append(r);
         wgitem_to_recs[this->item(this->count()-1)]=&contact_records.last();
 
@@ -132,7 +132,7 @@ mbx.setDefaultButton(QMessageBox::No);
 
 if (QMessageBox::Yes==mbx.exec())
     {
-        quint32 rm_id;
+        QByteArray rm_id;
         QListWidgetItem *rm_ptr;
 
         storage->Delete(rm_id = wgitem_to_recs[currentItem()]->id);

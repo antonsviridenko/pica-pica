@@ -25,9 +25,9 @@ class ChatWindow : public QWidget
 {
     Q_OBJECT
 public:
-    explicit ChatWindow(quint32 peer_id);
+    explicit ChatWindow(QByteArray peer_id);
 
-    quint32 getPeerId() { return peer_id_;};
+    QByteArray getPeerId() { return peer_id_;};
 
 signals:
     void msg_input(QString msg, ChatWindow *sender_window);
@@ -42,7 +42,7 @@ public slots:
 private:
     QTextEdit *chatw;
     TextSend *sendtextw;
-    quint32 peer_id_;
+    QByteArray peer_id_;
     QList<int> undelivered_msgs;
     History hist;
     QMenuBar *menu;
@@ -52,7 +52,7 @@ private:
     QString peer_name_;
     QString my_name_;
 
-    void put_message(QString msg, quint32 id, bool is_me);
+    void put_message(QString msg, QByteArray id, bool is_me);
     int draw_message(QString msg, QString nickname, QString datetime, QString color, bool is_delivered);
     void print_history(QList<History::HistoryRecord> H);
 

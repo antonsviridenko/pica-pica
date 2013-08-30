@@ -11,7 +11,7 @@ class Accounts
 public:
     struct AccountRecord
     {
-        quint32 id;
+        QByteArray id;
         QString name;
         QString cert_file;
         QString pkey_file;
@@ -20,9 +20,9 @@ public:
 
     Accounts(QString storage);
     void Add(AccountRecord& acc);
-    void Delete(quint32 id);
+    void Delete(QByteArray id);
     QList<AccountRecord> GetAccounts();
-    QString GetName(quint32 id);
+    QString GetName(QByteArray id);
     bool isOK();
     QString GetLastError();
 

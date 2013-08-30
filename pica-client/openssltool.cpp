@@ -20,12 +20,16 @@ QString OpenSSLTool::NameFromCertFile(QString cert_file)
         return QString();
 
     QByteArray result = openssl.readAll();
-    QRegExp rx("CN = [0-9]+\\#([^\\s\\#]+)");
-
+        QRegExp rxOld("CN = [0-9]+\\#([^\\s\\#]+)");
+    QRegExp rx("CN = ([^\\s\\#]+)");
 
     QString name=QString::fromUtf8( result.constData());
 
-    if (name.contains(rx))
+    if (name.contains(rxOld))
+    {
+    name=rxOld.cap(1);
+    }
+    else if (name.contains(rx))
     {
     name=rx.cap(1);
     }
@@ -48,12 +52,16 @@ QString OpenSSLTool::NameFromCertString(QString cert_pem)
         return QString();
 
     QByteArray result = openssl.readAll();
-    QRegExp rx("CN = [0-9]+\\#([^\\s\\#]+)");
-
+    QRegExp rxOld("CN = [0-9]+\\#([^\\s\\#]+)");
+    QRegExp rx("CN = ([^\\s\\#]+)");
 
     QString name=QString::fromUtf8( result.constData());
 
-    if (name.contains(rx))
+    if (name.contains(rxOld))
+    {
+    name=rxOld.cap(1);
+    }
+    else if (name.contains(rx))
     {
     name=rx.cap(1);
     }

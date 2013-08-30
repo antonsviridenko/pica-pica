@@ -4,7 +4,7 @@
 #include <QInputDialog>
 
 QMutex AskPassword::passwd_mutex;
-QMap<quint32,QString> AskPassword::idpasswd;
+QMap<QByteArray,QString> AskPassword::idpasswd;
 
 AskPassword::AskPassword(QObject *parent) :
     QObject(parent)
@@ -15,7 +15,7 @@ AskPassword::AskPassword(QObject *parent) :
 int AskPassword::ask_password_cb(char *buf, int size, int rwflag, void *userdata)
 {
     QString pswd;
-    quint32 id = *((quint32*)userdata);
+    QByteArray id = QByteArray((const char*) userdata, PICA_ID_SIZE);
 
     passwd_mutex.lock();
 
@@ -44,9 +44,9 @@ void AskPassword::password_dialog()
 {
     bool ok;
     QString title = QObject::tr("Enter private key passphrase");
-    QString text = QObject::tr(QString("Passphrase for (%1)").arg(account_id).toUtf8().constData());
+    QString text = QObject::tr(QString("Passphrase for (%1)").arg(QByteArray((const char*)account_id, PICA_ID_SIZE).toBase64().constData()).toUtf8().constData());
     QString psw = QInputDialog::getText((QWidget*)mainwindow,title,text,QLineEdit::Password,QString(),&ok);
     if (ok)
-        idpasswd[account_id] = psw;
+        idpasswd[QByteArray((const char*)account_id, PICA_ID_SIZE)] = psw;
 }
 

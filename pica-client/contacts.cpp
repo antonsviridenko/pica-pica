@@ -3,7 +3,7 @@
 
 //#include <QMessageBox>
 
-Contacts::Contacts(QString storage, quint32 user_account_id)
+Contacts::Contacts(QString storage, QByteArray user_account_id)
     : account_id_(user_account_id)
 {
     dbconn=QSqlDatabase::addDatabase("QSQLITE");
@@ -35,7 +35,7 @@ QString Contacts::GetLastError()
     return lasterr.text();
 }
 
-void Contacts::Add(quint32 id)
+void Contacts::Add(QByteArray id)
 {
     QSqlQuery query;
 
@@ -47,7 +47,7 @@ void Contacts::Add(quint32 id)
     lasterr=query.lastError();
 }
 
-void Contacts::Delete(quint32 id)
+void Contacts::Delete(QByteArray id)
 {
     QSqlQuery query;
 
@@ -76,7 +76,7 @@ QList<Contacts::ContactRecord> Contacts::GetContacts()
 
     while(query.next())
     {
-        r.id=query.value(0).toUInt();
+        r.id=query.value(0).toByteArray();
         r.name=query.value(1).toString();
         //CSTRL.append(" ("+query.value(0).toString()+") "+query.value(1).toString());
         L<<r;
@@ -85,7 +85,7 @@ QList<Contacts::ContactRecord> Contacts::GetContacts()
     return L;
 }
 
-QString Contacts::GetContactCert(quint32 id)
+QString Contacts::GetContactCert(QByteArray id)
 {
     QSqlQuery query;
 
@@ -104,7 +104,7 @@ QString Contacts::GetContactCert(quint32 id)
     return query.value(0).toString();
 }
 
-QString Contacts::GetContactName(quint32 id)
+QString Contacts::GetContactName(QByteArray id)
 {
     QSqlQuery query;
 
@@ -123,7 +123,7 @@ QString Contacts::GetContactName(quint32 id)
     return query.value(0).toString();
 }
 
-void Contacts::SetContactCert(quint32 id, QString &cert_pem)
+void Contacts::SetContactCert(QByteArray id, QString &cert_pem)
 {
     QSqlQuery query;
 
@@ -137,7 +137,7 @@ void Contacts::SetContactCert(quint32 id, QString &cert_pem)
 
 }
 
-void Contacts::SetContactName(quint32 id, QString name)
+void Contacts::SetContactName(QByteArray id, QString name)
 {
     QSqlQuery query;
 

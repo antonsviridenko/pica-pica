@@ -34,7 +34,7 @@ void Accounts::Add(AccountRecord &acc)
     lasterr=query.lastError();
 }
 
-void Accounts::Delete(quint32 id)
+void Accounts::Delete(QByteArray id)
 {
     QSqlQuery query;
 
@@ -61,7 +61,7 @@ QList<Accounts::AccountRecord> Accounts::GetAccounts()
 
     while(query.next())
     {
-        r.id = query.value(0).toUInt();
+        r.id = query.value(0).toByteArray();
         r.name = query.value(1).toString();
         r.cert_file = query.value(2).toString();
         r.pkey_file = query.value(3).toString();
@@ -73,7 +73,7 @@ QList<Accounts::AccountRecord> Accounts::GetAccounts()
     return L;
 }
 
-QString Accounts::GetName(quint32 id)
+QString Accounts::GetName(QByteArray id)
 {
     QSqlQuery query;
 

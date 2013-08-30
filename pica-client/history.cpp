@@ -1,7 +1,7 @@
 #include "history.h"
 #include <QDebug>
 
-History::History(QString storage, quint32 my_id)
+History::History(QString storage, QByteArray my_id)
     : me_(my_id)
 {
     dbconn=QSqlDatabase::addDatabase("QSQLITE");
@@ -20,7 +20,7 @@ History::History(QString storage, quint32 my_id)
     //check result, if foreign keys support is on
 }
 
-void History::Add(quint32 peer_id, QString message, bool is_me)
+void History::Add(QByteArray peer_id, QString message, bool is_me)
 {
     QSqlQuery query;
 
@@ -50,7 +50,7 @@ void History::Add(quint32 peer_id, QString message, bool is_me)
     lasterr=query.lastError();
 }
 
-void History::SetDelivered(quint32 peer_id)
+void History::SetDelivered(QByteArray peer_id)
 {
     QSqlQuery query;
 
@@ -66,7 +66,7 @@ void History::SetDelivered(quint32 peer_id)
     lasterr=query.lastError();
 }
 
-QList<History::HistoryRecord> History::GetMessages(quint32 peer_id, quint32 start_timestamp, quint32 end_timestamp)
+QList<History::HistoryRecord> History::GetMessages(QByteArray peer_id, quint32 start_timestamp, quint32 end_timestamp)
 {
     QList<HistoryRecord> L;
     HistoryRecord r;
@@ -90,7 +90,7 @@ QList<History::HistoryRecord> History::GetMessages(quint32 peer_id, quint32 star
 
     while(query.next())
     {
-        r.peer_id =      query.value(0).toUInt();
+        r.peer_id =      query.value(0).toByteArray();
         r.is_me =        query.value(1).toBool();
         r.is_delivered = query.value(2).toBool();
         r.timestamp =    query.value(3).toUInt();
@@ -102,9 +102,9 @@ QList<History::HistoryRecord> History::GetMessages(quint32 peer_id, quint32 star
     return L;
 }
 
-QMap<quint32, QList<QString> >  History::GetUndeliveredMessages()
+QMap<QByteArray, QList<QString> >  History::GetUndeliveredMessages()
 {
-    QMap<quint32, QList<QString> > M;
+    QMap<QByteArray, QList<QString> > M;
     QSqlQuery query;
 
     query.setForwardOnly(true);
@@ -122,7 +122,7 @@ QMap<quint32, QList<QString> >  History::GetUndeliveredMessages()
 
     while(query.next())
     {
-        M[query.value(0).toUInt()] << query.value(1).toString();
+        M[query.value(0).toByteArray()] << query.value(1).toString();
     }
 
     return M;

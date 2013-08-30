@@ -3,7 +3,7 @@
 #include <QGridLayout>
 #include <QLabel>
 
-ForgedCertDialog::ForgedCertDialog(quint32 peer_id, QString received_cert, QString stored_cert, QWidget *parent) :
+ForgedCertDialog::ForgedCertDialog(QByteArray peer_id, QString received_cert, QString stored_cert, QWidget *parent) :
     QDialog(parent),
     received_cert_(received_cert),
     stored_cert_(stored_cert)
@@ -14,7 +14,7 @@ ForgedCertDialog::ForgedCertDialog(quint32 peer_id, QString received_cert, QStri
 "Previously stored and currently present certificates for user %1 do not match.\n\
 This means that probably someone is trying to eavesdrop your communication\n\
 using man-in-the-middle attack or impersonate the user.\n\
-Connection aborted.").arg(peer_id));
+Connection aborted.").arg(peer_id.toBase64().constData()));
 
     btOK = new QPushButton(tr("OK"));
     btShow_stored_cert = new QPushButton(tr("View Stored Certificate..."));

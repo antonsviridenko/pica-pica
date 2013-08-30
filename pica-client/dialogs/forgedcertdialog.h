@@ -9,7 +9,7 @@ class ForgedCertDialog : public QDialog
 {
     Q_OBJECT
 public:
-    explicit ForgedCertDialog(quint32 peer_id, QString received_cert, QString stored_cert, QWidget *parent = 0);
+    explicit ForgedCertDialog(QByteArray peer_id, QString received_cert, QString stored_cert, QWidget *parent = 0);
 
 private:
     QString received_cert_;

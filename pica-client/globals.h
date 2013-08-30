@@ -10,13 +10,15 @@
 
 #endif
 
+#include "../PICA_id.h"
+
 //variables are defined in main.cpp
 extern class QString config_dir;
 extern class QString config_dbname;
 extern class QString config_defaultCA;
 extern class SkyNet *skynet;
 extern class MainWindow *mainwindow;
-extern unsigned int account_id;
+extern unsigned char account_id[PICA_ID_SIZE];
 extern class AskPassword *askpassword;
 extern class MsgUIRouter *msguirouter;
 extern class QIcon picapica_ico_sit;

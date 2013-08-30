@@ -9,6 +9,7 @@
 #include "openssltool.h"
 #include <QMessageBox>
 #include <QApplication>
+#include <cstring>
 
 AccountsWindow::AccountsWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -66,7 +67,7 @@ void AccountsWindow::LoadAccounts()
     else
     {
         for (int i=0;i<L.count();i++)
-            cb_accounts->addItem(QString("(%1) %2").arg(L[i].id).arg(L[i].name),L[i].id);
+            cb_accounts->addItem(QString("(%1) %2").arg(L[i].id.toBase64().constData()).arg(L[i].name),L[i].id);
 
         bt_login->setEnabled(true);
     }
@@ -75,13 +76,12 @@ void AccountsWindow::LoadAccounts()
 void AccountsWindow::login_click()
 {
 
-    account_id = (cb_accounts->itemData(cb_accounts->currentIndex())).toUInt();
-
+    memcpy(account_id,(cb_accounts->itemData(cb_accounts->currentIndex())).toByteArray().constData(), PICA_ID_SIZE);
     int L_index;
 
     for (int i=0;i<L.count();i++)
     {
-        if (L[i].id==account_id)
+        if (L[i].id== QByteArray((const char*)account_id, PICA_ID_SIZE))
         {
             L_index = i;
             break;
@@ -108,12 +108,12 @@ void AccountsWindow::login_click()
 
 void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, bool copyfiles)
 {
-    quint32 id;
+    QByteArray id(PICA_ID_SIZE, 0);
     int ret;
 
-    ret = PICA_get_id_from_cert(CertFilename.toUtf8().constData(),&id);
+    ret = PICA_get_id_from_cert_file(CertFilename.toUtf8().constData(), (unsigned char*)id.data());
 
-    if (0 == id || 0 == ret)
+    if (0 == ret)
     {
         QMessageBox mbx;
         mbx.setText("Invalid certificate");
@@ -124,16 +124,16 @@ void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, b
     QString name = OpenSSLTool::NameFromCertFile(CertFilename);
 
     Accounts::AccountRecord rec;
-    QString certfilename,pkeyfilename;
+    QString certfilename, pkeyfilename;
 
     if (copyfiles)
     {
         QDir dir(config_dir);
-        dir.mkdir(QString::number(id));
-        dir.cd(QString::number(id));
+        dir.mkdir(name + id.toHex().constData());
+        dir.cd(name + id.toHex().constData());
 
-        certfilename=dir.absolutePath()+"/"+QString::number(id)+"_cert.pem";
-        pkeyfilename=dir.absolutePath()+"/"+QString::number(id)+"_pkey.pem";
+        certfilename=dir.absolutePath()+"/" + id.toHex().constData() + "_cert.pem";
+        pkeyfilename=dir.absolutePath()+"/" + id.toHex().constData() + "_pkey.pem";
 
         QFile::copy(CertFilename,certfilename);
         QFile::copy(PkeyFilename,pkeyfilename);
@@ -148,7 +148,7 @@ void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, b
     rec.name=name;
     rec.cert_file=certfilename;
     rec.pkey_file=pkeyfilename;
-    rec.CA_file= config_defaultCA;
+    rec.CA_file= certfilename;//config_defaultCA;
 
     accounts.Add(rec);
 
@@ -188,10 +188,10 @@ void AccountsWindow::add_click()
 
 void AccountsWindow::delete_click()
 {
-    quint32 id = (cb_accounts->itemData(cb_accounts->currentIndex())).toUInt();
+    QByteArray id = (cb_accounts->itemData(cb_accounts->currentIndex())).toByteArray();
 
     if (QMessageBox::No==
-            QMessageBox::question(this,tr("Deleting account"),tr("Are you sure you want to delete account %1 ?").arg(id),QMessageBox::Yes,QMessageBox::No))
+            QMessageBox::question(this,tr("Deleting account"),tr("Are you sure you want to delete account %1 ?").arg(id.toBase64().constData()),QMessageBox::Yes,QMessageBox::No))
         return;
 
     //TODO ask user if he wants to wipe certificate and private key too

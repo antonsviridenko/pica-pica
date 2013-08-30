@@ -10,8 +10,8 @@
 #include <QDateTime>
 #include <QMessageBox>
 
-ChatWindow::ChatWindow(quint32 peer_id) :
-    QWidget(0), peer_id_(peer_id), hist(config_dbname, account_id)
+ChatWindow::ChatWindow(QByteArray peer_id) :
+    QWidget(0), peer_id_(peer_id), hist(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE))
 {
     QVBoxLayout *layout;
 
@@ -33,7 +33,7 @@ ChatWindow::ChatWindow(quint32 peer_id) :
 
     setLayout(layout);
 
-    setWindowTitle(QString::number(peer_id));
+    setWindowTitle(peer_id.toBase64());
     setWindowIcon(picapica_ico_sit);
 
     QWidget::setAttribute(Qt::WA_DeleteOnClose);
@@ -60,24 +60,24 @@ ChatWindow::ChatWindow(quint32 peer_id) :
     layout->insertSpacing(0, menu->size().height());
 
     {
-        Contacts ct(config_dbname, account_id);
+        Contacts ct(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE));
         peer_name_ = ct.GetContactName(peer_id_);
 
         if (peer_name_.isEmpty())
-            peer_name_ = QString::number(peer_id_);
+            peer_name_ = peer_id_.toBase64();
 
     }
     {
         Accounts ac(config_dbname);
-        my_name_ = ac.GetName(account_id);
+        my_name_ = ac.GetName(QByteArray((const char*)account_id, PICA_ID_SIZE));
 
         if (my_name_.isEmpty())
-            my_name_ = QString::number(account_id);
+            my_name_ = QByteArray((const char*)account_id, PICA_ID_SIZE).toBase64();
     }
 
 }
 
-void ChatWindow::put_message(QString msg, quint32 id, bool is_me)
+void ChatWindow::put_message(QString msg, QByteArray id, bool is_me)
 {
     QString color, name;
     QTextCharFormat fmt;
@@ -95,7 +95,7 @@ void ChatWindow::put_message(QString msg, quint32 id, bool is_me)
         if (id == peer_id_)
             name = peer_name_;
         else
-            name = QString::number(id);
+            name = id.toBase64();
     }
 
     pos = draw_message(msg, name, QDateTime::currentDateTime().toString(), color, false);
@@ -159,7 +159,7 @@ void ChatWindow::print_history(QList<History::HistoryRecord> H)
             if (r.peer_id == peer_id_)
                 name = peer_name_;
             else
-                name = QString::number(r.peer_id);
+                name = r.peer_id.toBase64();
         }
 
         dt.setTime_t(r.timestamp);
@@ -210,7 +210,7 @@ void ChatWindow::msg_informational(QString text)
 
 void ChatWindow::send_message()
 {
-    put_message(sendtextw->toPlainText(), account_id, true);
+    put_message(sendtextw->toPlainText(), QByteArray((const char*)account_id, PICA_ID_SIZE), true);
     hist.Add(peer_id_, sendtextw->toPlainText(), true);
 
     if (!hist.isOK())

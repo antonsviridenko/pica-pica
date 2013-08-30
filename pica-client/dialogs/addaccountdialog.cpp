@@ -68,9 +68,9 @@ void AddAccountDialog::OK()
             return;
         }
 
-        quint32 id;
+        QByteArray id(PICA_ID_SIZE, 0);
 
-        if (!PICA_get_id_from_cert(cert_filename->text().toUtf8().constData(),&id))
+        if (!PICA_get_id_from_cert_file(cert_filename->text().toUtf8().constData(), (unsigned char*)id.data()))
         {
             QMessageBox mbx;
             mbx.setText(tr("Invalid certificate file"));

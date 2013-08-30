@@ -17,7 +17,7 @@ QString config_dir;
 QString config_dbname;
 SkyNet *skynet;
 MainWindow *mainwindow;
-unsigned int account_id;
+unsigned char account_id[PICA_ID_SIZE];
 class AskPassword *askpassword;
 class MsgUIRouter *msguirouter;
 
@@ -59,7 +59,7 @@ static bool create_database()
 
     query.exec("create table accounts \
                (\
-                   id int primary key, \
+                   id blob primary key, \
                    name varchar(64), \
                    cert_file varchar(255) not null, \
                    pkey_file varchar(255) not null, \
@@ -71,10 +71,10 @@ static bool create_database()
 
     query.exec("create table contacts \
                (\
-                   id int,\
+                   id blob,\
                    name varchar(64), \
                    cert_pem text(2048), \
-                   account_id int not null, \
+                   account_id blob not null, \
                    primary key(id, account_id),\
                    foreign key(account_id) references accounts(id) on delete cascade\
                 );");
@@ -101,8 +101,8 @@ static bool create_database()
      query.exec("create table history \
                 (\
                     id integer primary key autoincrement, \
-                    contact_id int not null, \
-                    account_id int not null, \
+                    contact_id blob not null, \
+                    account_id blob not null, \
                     timestamp int not null, \
                     is_me int not null, \
                     is_delivered int not null, \
@@ -124,7 +124,7 @@ static bool create_database()
      if (query.lastError().isValid())
              goto showerror;
 
-     query.exec("insert into schema_version values (1, strftime('%s','now'));"); //current schema version. update when needed
+     query.exec("insert into schema_version values (2, strftime('%s','now'));"); //current schema version. update when needed
 
     if (query.lastError().isValid())
     showerror:

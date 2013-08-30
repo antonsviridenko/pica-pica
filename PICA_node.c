@@ -153,7 +153,28 @@ struct PICA_msginfo _msginfo_newconn[]={
 {PICA_PROTO_NODECONNREQ,PICA_MSG_FIXED_SIZE,PICA_PROTO_NODECONNREQ_SIZE,procmsg_NODECONNREQ}
 };
 
+static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
+{ //return 1 for self-signed certificates
+char    buf[256];
+X509   *err_cert;
+int     err, depth;
 
+err_cert = X509_STORE_CTX_get_current_cert(ctx);
+err = X509_STORE_CTX_get_error(ctx);
+depth = X509_STORE_CTX_get_error_depth(ctx);
+
+X509_NAME_oneline(X509_get_subject_name(err_cert), buf, 256);
+
+if (err == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT && depth == 0)
+    preverify_ok = 1;
+
+if (!preverify_ok) 
+{
+PICA_info("certificate verification error:num=%d:%s:depth=%d:%s\n", err, X509_verify_cert_error_string(err), depth, buf);
+}
+
+    return preverify_ok;
+}
 
 unsigned int procmsg_INITREQ(unsigned char* buf,unsigned int size,void* ptr)
 {
@@ -352,18 +373,25 @@ struct client *i,*o;//i - указатель на вызывающего кли�
 unsigned char *callee_id;
 struct PICA_proto_msg *mp;
 
-PICA_debug1("received CONNREQOUTG");
-
 i=(struct client *)ptr;
+
+PICA_debug1("received CONNREQOUTG from %s", PICA_id_to_base64(i->id, NULL));
 
 callee_id = buf+2;
 
 if ((o = client_tree_search(callee_id)))
 	{
-	#warning "duplicated connections" // сделать проверку на наличие уже имеющегося соединения между клиентами
-	// и если оно есть, то разрывать его, либо... ???? надо подумать
+	if (cclink_list_search(i->id, callee_id))
+		{
+		PICA_info("duplicate request for existing channel is ignored");
+		return 1;
+		}
 
-	#warning "self" // а еще - если клиент вызывает сам себя?
+	if (memcmp(i->id, callee_id, PICA_ID_SIZE) == 0)
+		{
+		PICA_info("request to create channel to self is ignored");
+		return 1;
+		}
 
 	//отправить o _CONNREQINC
 	if ((mp = client_wbuf_push(o,PICA_PROTO_CONNREQINC,PICA_PROTO_CONNREQINC_SIZE)))
@@ -1325,7 +1353,7 @@ ret = SSL_CTX_load_verify_locations(ctx, nodecfg.CA_cert_file, 0);
 if (!ret)
 	PICA_fatal("call to SSL_CTX_load_verify_locations failed(). Check if %s exists and is accesible", nodecfg.CA_cert_file);
 
-SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback);
 
 return 1;
 }

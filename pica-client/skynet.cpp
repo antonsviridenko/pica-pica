@@ -30,7 +30,7 @@ PICA_client_init(&cbs);
 
 nodelink = NULL;
 
-connect(this, SIGNAL(PeerCertificateReceived(quint32,QString,bool*)), this, SLOT(verify_peer_cert(quint32,QString,bool*)),Qt::DirectConnection);
+connect(this, SIGNAL(PeerCertificateReceived(QByteArray,QString,bool*)), this, SLOT(verify_peer_cert(QByteArray,QString,bool*)),Qt::DirectConnection);
 
 }
 
@@ -60,12 +60,12 @@ void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread
         emit BecameSelfAware();
 
     //restore old peer connections, if any
-    QList<quint32> c2c_peer_ids;
+    QList<QByteArray> c2c_peer_ids;
 
     //load undelivered messages from history
     if (msgqueues.isEmpty())
     {
-        History h(config_dbname, account_id);
+        History h(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE));
 
         msgqueues = h.GetUndeliveredMessages();
     }
@@ -78,7 +78,7 @@ void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread
         write_mutex.lock();
         struct PICA_chaninfo *chan = NULL;
 
-        ret = PICA_create_channel(nodelink, c2c_peer_ids[i], &chan);
+        ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), &chan);
 
         qDebug()<<"restoring channel to "<<c2c_peer_ids[i]<<" ret ="<<ret<<"\n";
         write_mutex.unlock();
@@ -95,12 +95,12 @@ void SkyNet::node_status_changed(QString addr, quint16 port, bool alive)
     nodes.UpdateStatus(nr, alive);
 }
 
-void SkyNet::verify_peer_cert(quint32 peer_id, QString cert_pem, bool *verified)
+void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified)
 {
 //    ViewCertDialog vcd;
 //    vcd.SetCert(cert_pem);
 //    vcd.exec();
-    Contacts cnt(config_dbname, account_id);
+    Contacts cnt(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE));
     QString stored_cert;
 
     if ((stored_cert = cnt.GetContactCert(peer_id)).isEmpty())
@@ -148,7 +148,7 @@ void SkyNet::timerEvent(QTimerEvent *e)
 {
 if (self_aware)
     {
-    QList<quint32> c2c_peer_ids = msgqueues.keys();
+    QList<QByteArray> c2c_peer_ids = msgqueues.keys();
 
     write_mutex.lock();
 
@@ -160,7 +160,7 @@ if (self_aware)
 
         struct PICA_chaninfo *chan = NULL;
 
-        ret = PICA_create_channel(nodelink, c2c_peer_ids[i], &chan);
+        ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), &chan);
 
         qDebug()<<"restoring channel to "<<c2c_peer_ids[i]<<" ret ="<<ret<<" in timer event\n";
 
@@ -213,7 +213,7 @@ bool SkyNet::isSelfAware()
     return self_aware;
 }
 
-void SkyNet::SendMessage(quint32 to, QString msg)
+void SkyNet::SendMessage(QByteArray to, QString msg)
 {
 int ret = PICA_OK;
 struct PICA_chaninfo *iptr;
@@ -242,7 +242,7 @@ if ( (iptr = find_active_chan(to)) )
     {
         struct PICA_chaninfo *chan = NULL;
 
-        ret = PICA_create_channel(nodelink, to, &chan);
+        ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), &chan);
 
         QList<QString> l;
         l.append(msg);
@@ -257,7 +257,7 @@ write_mutex.unlock();//>>
 
 }
 
-void SkyNet::flush_msgqueue(quint32 to)
+void SkyNet::flush_msgqueue(QByteArray to)
 {
     struct PICA_chaninfo *chan;
     int ret;
@@ -288,7 +288,7 @@ void SkyNet::flush_msgqueue(quint32 to)
     }
 }
 
-struct PICA_chaninfo * SkyNet::find_active_chan(quint32 peer_id)
+struct PICA_chaninfo * SkyNet::find_active_chan(QByteArray peer_id)
 {
 if (!nodelink)
   return NULL;
@@ -297,7 +297,7 @@ struct PICA_chaninfo *iptr = nodelink->chan_list_head;
 
 while(iptr)
     {
-    if (iptr->state == PICA_CHANSTATE_ACTIVE && iptr->peer_id == peer_id)
+    if (iptr->state == PICA_CHANSTATE_ACTIVE && QByteArray((const char*)iptr->peer_id, PICA_ID_SIZE) == peer_id)
         break;
 
         iptr = iptr->next;
@@ -306,9 +306,9 @@ while(iptr)
 return iptr;
 }
 
-QList<quint32> SkyNet::filter_existing_chans(QList<quint32> peer_ids)
+QList<QByteArray> SkyNet::filter_existing_chans(QList<QByteArray> peer_ids)
 {
-    QList<quint32> ret = peer_ids;
+    QList<QByteArray> ret = peer_ids;
 
     if (!nodelink)
       return ret;
@@ -317,8 +317,8 @@ QList<quint32> SkyNet::filter_existing_chans(QList<quint32> peer_ids)
 
     while(iptr)
         {
-        if (peer_ids.contains(iptr->peer_id))
-            ret.removeOne(iptr->peer_id);
+        if (peer_ids.contains(QByteArray((const char*)iptr->peer_id, PICA_ID_SIZE)))
+            ret.removeOne((const char*)iptr->peer_id);
 
         iptr = iptr->next;
         }
@@ -326,22 +326,22 @@ QList<quint32> SkyNet::filter_existing_chans(QList<quint32> peer_ids)
     return ret;
 }
 
-void SkyNet::emit_Delivered(quint32 to)
+void SkyNet::emit_Delivered(QByteArray to)
 {
 emit Delivered(to);
 }
 
-void SkyNet::emit_MessageReceived(quint32 from, QString msg)
+void SkyNet::emit_MessageReceived(QByteArray from, QString msg)
 {
 emit MessageReceived(from, msg);
 }
 
-void SkyNet::emit_UnableToDeliver(quint32 to, QString msg)
+void SkyNet::emit_UnableToDeliver(QByteArray to, QString msg)
 {
 emit UnableToDeliver(to, msg);
 }
 
-void SkyNet::emit_PeerCertificateReceived(quint32 peer_id, QString cert_pem, bool *verified)
+void SkyNet::emit_PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified)
 {
     emit PeerCertificateReceived(peer_id, cert_pem, verified);
 }
@@ -351,36 +351,36 @@ void SkyNet::emit_PeerCertificateReceived(quint32 peer_id, QString cert_pem, boo
 //all callbacks are executed in separate thread, created in Nodethread instance, REMEMBER THAT !!!
 // write_mutex is locked
 
-void SkyNet::newmsg_cb(unsigned int peer_id, char *msgbuf, unsigned int nb, int type)
+void SkyNet::newmsg_cb(const unsigned char *peer_id, char *msgbuf, unsigned int nb, int type)
 {
 QString msg = QString::fromUtf8(msgbuf, nb);
 
-skynet->emit_MessageReceived(peer_id, msg);
+skynet->emit_MessageReceived(QByteArray((const char*)peer_id, PICA_ID_SIZE), msg);
 }
 
-void SkyNet::msgok_cb(unsigned int peer_id)
+void SkyNet::msgok_cb(const unsigned char *peer_id)
 {
-skynet->emit_Delivered(peer_id);
+skynet->emit_Delivered(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
-void SkyNet::channel_established_cb(unsigned int peer_id)
+void SkyNet::channel_established_cb(const unsigned char *peer_id)
 {
-skynet->flush_msgqueue(peer_id);
+skynet->flush_msgqueue(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
-void SkyNet::channel_failed(unsigned int peer_id)
+void SkyNet::channel_failed(const unsigned char *peer_id)
 {
-    qDebug()<<"channel failed ("<<peer_id<<")\n";
+    qDebug()<<"channel failed ("<<QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64()<<")\n";
 }
 
-int SkyNet::accept_cb(unsigned int caller_id)
+int SkyNet::accept_cb(const unsigned char *caller_id)
 {
 return 1; //implement black list
 }
 
-void SkyNet::notfound_cb(unsigned int callee_id)
+void SkyNet::notfound_cb(const unsigned char *callee_id)
 {
-  qDebug()<<"not found ("<<callee_id<<")\n";
+  qDebug()<<"not found ("<<QByteArray((const char*)callee_id, PICA_ID_SIZE).toBase64()<<")\n";
 
   /*
   if (skynet->msgqueues.contains(callee_id))
@@ -395,9 +395,9 @@ void SkyNet::notfound_cb(unsigned int callee_id)
   */
 }
 
-void SkyNet::channel_closed_cb(unsigned int peer_id, int reason)
+void SkyNet::channel_closed_cb(const unsigned char *peer_id, int reason)
 {
-    qDebug()<<"channel closed ("<<peer_id<<")\n";
+    qDebug()<<"channel closed ("<<QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64()<<")\n";
 
 }
 
@@ -407,11 +407,11 @@ void SkyNet::nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigne
     skynet->nodes.Add(nr);
 }
 
-int SkyNet::peer_cert_verify_cb(unsigned int peer_id, const char *cert_pem, unsigned int nb)
+int SkyNet::peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_pem, unsigned int nb)
 {
     bool verified = true;
 
-    skynet->emit_PeerCertificateReceived(peer_id, QString::fromAscii(cert_pem, nb), &verified);
+    skynet->emit_PeerCertificateReceived(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString::fromAscii(cert_pem, nb), &verified);
 
     if (!verified)
         return 0;

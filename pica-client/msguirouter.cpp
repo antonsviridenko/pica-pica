@@ -17,15 +17,15 @@
 MsgUIRouter::MsgUIRouter(QObject *parent) :
     QObject(parent)
 {
-    connect(skynet, SIGNAL(MessageReceived(quint32,QString)), this, SLOT(msg_from_peer(quint32,QString)));
-    connect(skynet, SIGNAL(UnableToDeliver(quint32,QString)), this, SLOT(delivery_failed(quint32,QString)));
-    connect(skynet, SIGNAL(Delivered(quint32)), this, SLOT(delivered(quint32)));
-    connect(skynet, SIGNAL(CertificateForged(quint32,QString,QString)), this, SLOT(scary_cert_message(quint32,QString,QString)));
+    connect(skynet, SIGNAL(MessageReceived(QByteArray,QString)), this, SLOT(msg_from_peer(QByteArray,QString)));
+    connect(skynet, SIGNAL(UnableToDeliver(QByteArray,QString)), this, SLOT(delivery_failed(QByteArray,QString)));
+    connect(skynet, SIGNAL(Delivered(QByteArray)), this, SLOT(delivered(QByteArray)));
+    connect(skynet, SIGNAL(CertificateForged(QByteArray,QString,QString)), this, SLOT(scary_cert_message(QByteArray,QString,QString)));
     connect(skynet, SIGNAL(ErrMsgFromNode(QString)), this, SLOT(notification(QString)));
 
 }
 
-void MsgUIRouter::create_chatwindow(quint32 peer_id)
+void MsgUIRouter::create_chatwindow(QByteArray peer_id)
 {
     ChatWindow *cw;
 
@@ -39,7 +39,7 @@ void MsgUIRouter::create_chatwindow(quint32 peer_id)
     cw->show();
 }
 
-void MsgUIRouter::msg_from_peer(quint32 from, QString msg)
+void MsgUIRouter::msg_from_peer(QByteArray from, QString msg)
 {
 
     if ( ! chatwindows.contains(from))
@@ -56,7 +56,7 @@ void MsgUIRouter::msg_to_peer(QString msg, ChatWindow *sender_window)
     skynet->SendMessage(sender_window->getPeerId(), msg);
 }
 
-void MsgUIRouter::start_chat(quint32 peer_id)
+void MsgUIRouter::start_chat(QByteArray peer_id)
 {
     if ( ! chatwindows.contains(peer_id))
     {
@@ -73,7 +73,7 @@ void MsgUIRouter::chatwindow_closed(ChatWindow *sender_window)
     chatwindows.remove(sender_window->getPeerId());
 }
 
-void MsgUIRouter::delivery_failed(quint32 to, QString msg)
+void MsgUIRouter::delivery_failed(QByteArray to, QString msg)
 {
 //  if (chatwindows.contains(to))
 //  {
@@ -81,7 +81,7 @@ void MsgUIRouter::delivery_failed(quint32 to, QString msg)
 //  }
 }
 
-void MsgUIRouter::delivered(quint32 to)
+void MsgUIRouter::delivered(QByteArray to)
 {
   if (chatwindows.contains(to))
   {
@@ -89,13 +89,13 @@ void MsgUIRouter::delivered(quint32 to)
   }
   else
   {
-      History h(config_dbname, account_id);
+      History h(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE));
 
       h.SetDelivered(to);
   }
 }
 
-void MsgUIRouter::scary_cert_message(quint32 peer_id, QString received_cert, QString stored_cert)
+void MsgUIRouter::scary_cert_message(QByteArray peer_id, QString received_cert, QString stored_cert)
 {
     ForgedCertDialog fcd(peer_id, received_cert, stored_cert);
     fcd.exec();
