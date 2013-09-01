@@ -45,7 +45,9 @@ void AskPassword::password_dialog()
 {
     bool ok;
     QString title = QObject::tr("Enter private key passphrase");
-    QString text = QObject::tr(QString("Passphrase for (%1)").arg(Accounts::GetCurrentAccount().id.toBase64().constData()).toUtf8().constData());
+    QString text = QObject::tr(QString("Passphrase for account %1 \n (%2)")
+        .arg(Accounts::GetCurrentAccount().name)
+        .arg(Accounts::GetCurrentAccount().id.toBase64().constData()).toUtf8().constData());
     QString psw = QInputDialog::getText((QWidget*)mainwindow,title,text,QLineEdit::Password,QString(),&ok);
     if (ok)
         idpasswd[Accounts::GetCurrentAccount().id] = psw;
