@@ -63,9 +63,10 @@ void ContactListWidget::setContactsStorage(Contacts *ct)
 
     for (int i=0;i<contact_records.size();i++)
     {
-        addItem(QString("(%1) ").arg(contact_records[i].id.toBase64()+contact_records[i].name));
+        addItem(QString("(%1...) %2").arg(contact_records[i].id.toBase64().left(8).constData()).arg(contact_records[i].name));
         wgitem_to_recs[this->item(i)]=&contact_records[i];
         this->item(i)->setStatusTip(contact_records[i].id.toBase64());
+        this->item(i)->setToolTip(contact_records[i].id.toBase64().constData());
     }
 }
 

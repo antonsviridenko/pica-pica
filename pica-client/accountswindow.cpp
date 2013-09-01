@@ -29,6 +29,13 @@ AccountsWindow::AccountsWindow(QWidget *parent) :
          f= bt_login->font();
          f.setBold(true);
          bt_login->setFont(f);
+
+         f = cb_accounts->font();
+         f.setStyleHint(QFont::Monospace);
+         f.setFixedPitch(true);
+         f.setBold(true);
+         f.setFamily("Liberation Mono");
+         cb_accounts->setFont(f);
      }
 
      layout->addWidget(cb_accounts);
@@ -67,7 +74,7 @@ void AccountsWindow::LoadAccounts()
     else
     {
         for (int i=0;i<L.count();i++)
-            cb_accounts->addItem(QString("(%1) %2").arg(L[i].id.toBase64().constData()).arg(L[i].name),L[i].id);
+            cb_accounts->addItem(QString("%1 (%2...)").arg(L[i].name).arg(L[i].id.toBase64().left(8).constData()),L[i].id);
 
         bt_login->setEnabled(true);
     }
