@@ -2,6 +2,7 @@
 #include "globals.h"
 #include <string.h>
 #include <QInputDialog>
+#include "accounts.h"
 
 QMutex AskPassword::passwd_mutex;
 QMap<QByteArray,QString> AskPassword::idpasswd;
@@ -44,9 +45,9 @@ void AskPassword::password_dialog()
 {
     bool ok;
     QString title = QObject::tr("Enter private key passphrase");
-    QString text = QObject::tr(QString("Passphrase for (%1)").arg(QByteArray((const char*)account_id, PICA_ID_SIZE).toBase64().constData()).toUtf8().constData());
+    QString text = QObject::tr(QString("Passphrase for (%1)").arg(Accounts::GetCurrentAccount().id.toBase64().constData()).toUtf8().constData());
     QString psw = QInputDialog::getText((QWidget*)mainwindow,title,text,QLineEdit::Password,QString(),&ok);
     if (ok)
-        idpasswd[QByteArray((const char*)account_id, PICA_ID_SIZE)] = psw;
+        idpasswd[Accounts::GetCurrentAccount().id] = psw;
 }
 

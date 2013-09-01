@@ -17,7 +17,6 @@ QString config_dir;
 QString config_dbname;
 SkyNet *skynet;
 MainWindow *mainwindow;
-unsigned char account_id[PICA_ID_SIZE];
 class AskPassword *askpassword;
 class MsgUIRouter *msguirouter;
 

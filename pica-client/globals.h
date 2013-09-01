@@ -18,7 +18,6 @@ extern class QString config_dbname;
 extern class QString config_defaultCA;
 extern class SkyNet *skynet;
 extern class MainWindow *mainwindow;
-extern unsigned char account_id[PICA_ID_SIZE];
 extern class AskPassword *askpassword;
 extern class MsgUIRouter *msguirouter;
 extern class QIcon picapica_ico_sit;

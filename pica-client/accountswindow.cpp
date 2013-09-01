@@ -82,13 +82,11 @@ void AccountsWindow::LoadAccounts()
 
 void AccountsWindow::login_click()
 {
-
-    memcpy(account_id,(cb_accounts->itemData(cb_accounts->currentIndex())).toByteArray().constData(), PICA_ID_SIZE);
     int L_index;
 
     for (int i=0;i<L.count();i++)
     {
-        if (L[i].id== QByteArray((const char*)account_id, PICA_ID_SIZE))
+        if (L[i].id == cb_accounts->itemData(cb_accounts->currentIndex()))
         {
             L_index = i;
             break;
@@ -105,6 +103,9 @@ void AccountsWindow::login_click()
         return;
       }
     }
+
+    Accounts::SetCurrentAccount(L[L_index]);
+
     skynet->Join(L[L_index]);
 
     mainwindow = new MainWindow();

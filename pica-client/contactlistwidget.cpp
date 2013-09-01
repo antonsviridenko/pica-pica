@@ -27,7 +27,7 @@ ContactListWidget::ContactListWidget(QWidget *parent) :
 
     connect(this, SIGNAL(itemDoubleClicked(QListWidgetItem*)), this, SLOT(start_chat()));
 
-    setContactsStorage(new Contacts(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE)));
+    setContactsStorage(new Contacts(config_dbname, Accounts::GetCurrentAccount().id));
 }
 
 ContactListWidget::~ContactListWidget()

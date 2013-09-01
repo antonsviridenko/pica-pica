@@ -89,7 +89,7 @@ void MsgUIRouter::delivered(QByteArray to)
   }
   else
   {
-      History h(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE));
+      History h(config_dbname, Accounts::GetCurrentAccount().id);
 
       h.SetDelivered(to);
   }

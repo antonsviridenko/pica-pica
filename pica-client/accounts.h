@@ -28,9 +28,15 @@ public:
 
     static bool CheckFiles(AccountRecord& acc, QString &error_string);
 
+    static AccountRecord &GetCurrentAccount();
+    static void SetCurrentAccount(AccountRecord &rec);
+
 private:
+    static AccountRecord current_account;
     QSqlDatabase dbconn;
     QSqlError lasterr;
+
+
 };
 
 #endif // ACCOUNTS_H

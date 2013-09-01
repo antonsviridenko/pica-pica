@@ -65,7 +65,7 @@ void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread
     //load undelivered messages from history
     if (msgqueues.isEmpty())
     {
-        History h(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE));
+        History h(config_dbname, Accounts::GetCurrentAccount().id);
 
         msgqueues = h.GetUndeliveredMessages();
     }
@@ -100,7 +100,7 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 //    ViewCertDialog vcd;
 //    vcd.SetCert(cert_pem);
 //    vcd.exec();
-    Contacts cnt(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE));
+    Contacts cnt(config_dbname, Accounts::GetCurrentAccount().id);
     QString stored_cert;
 
     if ((stored_cert = cnt.GetContactCert(peer_id)).isEmpty())

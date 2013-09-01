@@ -11,7 +11,7 @@
 #include <QMessageBox>
 
 ChatWindow::ChatWindow(QByteArray peer_id) :
-    QWidget(0), peer_id_(peer_id), hist(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE))
+    QWidget(0), peer_id_(peer_id), hist(config_dbname, Accounts::GetCurrentAccount().id)
 {
     QVBoxLayout *layout;
 
@@ -60,7 +60,7 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
     layout->insertSpacing(0, menu->size().height());
 
     {
-        Contacts ct(config_dbname, QByteArray((const char*)account_id, PICA_ID_SIZE));
+        Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
         peer_name_ = ct.GetContactName(peer_id_);
 
         if (peer_name_.isEmpty())
@@ -69,10 +69,10 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
     }
     {
         Accounts ac(config_dbname);
-        my_name_ = ac.GetName(QByteArray((const char*)account_id, PICA_ID_SIZE));
+        my_name_ = ac.GetName(Accounts::GetCurrentAccount().id);
 
         if (my_name_.isEmpty())
-            my_name_ = QByteArray((const char*)account_id, PICA_ID_SIZE).toBase64();
+            my_name_ = Accounts::GetCurrentAccount().id.toBase64();
     }
 
 }
@@ -210,7 +210,7 @@ void ChatWindow::msg_informational(QString text)
 
 void ChatWindow::send_message()
 {
-    put_message(sendtextw->toPlainText(), QByteArray((const char*)account_id, PICA_ID_SIZE), true);
+    put_message(sendtextw->toPlainText(), Accounts::GetCurrentAccount().id, true);
     hist.Add(peer_id_, sendtextw->toPlainText(), true);
 
     if (!hist.isOK())

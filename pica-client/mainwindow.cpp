@@ -86,7 +86,7 @@ void MainWindow::SetStatus(bool connected)
     {
         status->setCurrentIndex(0);
         setWindowTitle(tr("Pica Pica Messenger - ") +
-            QByteArray((const char*)account_id, PICA_ID_SIZE).toBase64().left(8) + "...");
+            Accounts::GetCurrentAccount().id.toBase64().left(8) + "...");
     }
     else
     {

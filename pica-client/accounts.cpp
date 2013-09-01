@@ -1,6 +1,18 @@
 #include "accounts.h"
 #include <QFile>
 
+Accounts::AccountRecord Accounts::current_account;
+
+Accounts::AccountRecord & Accounts::GetCurrentAccount()
+{
+    return Accounts::current_account;
+}
+
+void Accounts::SetCurrentAccount(Accounts::AccountRecord &rec)
+{
+    Accounts::current_account = rec;
+}
+
 Accounts::Accounts(QString storage)
 {
     dbconn=QSqlDatabase::addDatabase("QSQLITE");
