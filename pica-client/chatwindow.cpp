@@ -14,6 +14,7 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
     QWidget(0), peer_id_(peer_id), hist(config_dbname, Accounts::GetCurrentAccount().id)
 {
     QVBoxLayout *layout;
+    QString title;
 
     layout = new QVBoxLayout;
 
@@ -33,7 +34,6 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
 
     setLayout(layout);
 
-    setWindowTitle(peer_id.toBase64());
     setWindowIcon(picapica_ico_sit);
 
     QWidget::setAttribute(Qt::WA_DeleteOnClose);
@@ -63,6 +63,8 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
         Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
         peer_name_ = ct.GetContactName(peer_id_);
 
+        title = peer_name_;
+
         if (peer_name_.isEmpty())
             peer_name_ = peer_id_.toBase64();
 
@@ -74,7 +76,8 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
         if (my_name_.isEmpty())
             my_name_ = Accounts::GetCurrentAccount().id.toBase64();
     }
-
+    title = QObject::tr("Chat with ") + title + " - " + peer_id_.toBase64();
+    setWindowTitle(title);
 }
 
 void ChatWindow::put_message(QString msg, QByteArray id, bool is_me)
