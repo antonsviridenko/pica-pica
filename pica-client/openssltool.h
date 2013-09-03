@@ -13,8 +13,9 @@ public:
     static QString NameFromCertString(QString cert_pem);
     static QString CertTextFromString(QString cert_pem);
 
-    bool GenRSAKeySignal(quint32 numbits, QString keyfile, QObject *receiver, const char *finished_slot);
-    bool GenCSRSignal(QString csr_file, QString keyfile, QString subject, QObject *receiver, const char *finished_slot);
+    bool GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpassword,
+        QString password, QObject *receiver, const char *finished_slot);
+    bool GenCertSignal(QString cert_file, QString keyfile, QString keypassword, QString subject, QObject *receiver, const char *finished_slot);
 
     QString ReadStdErr();
     QString ReadStdOut();

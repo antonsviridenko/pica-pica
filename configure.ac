@@ -66,7 +66,7 @@ AS_IF([test "x$SQLITE3" != xyes],  [ AC_MSG_ERROR(["sqlite3 program not found"])
 #pica-client tests
 AS_IF([test "x$PICA_CLIENT_ENABLED" = "xyes"],[
 #AC_PROG_CXX
-PKG_CHECK_MODULES([QT_DEPENDENCIES], [QtCore QtGui QtSql QtNetwork])
+PKG_CHECK_MODULES([QT_DEPENDENCIES], [QtCore QtGui QtSql])
 AC_SUBST([QT_DEPENDENCIES_CFLAGS])
 AC_SUBST([QT_DEPENDENCIES_LIBS])
 AC_CHECK_PROGS([UIC], [uic uic-qt4], [notfound])

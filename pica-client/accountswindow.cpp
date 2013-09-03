@@ -20,7 +20,7 @@ AccountsWindow::AccountsWindow(QWidget *parent) :
 
      cb_accounts = new QComboBox();
      bt_login = new QPushButton(tr("Log In"));
-     bt_registernew = new QPushButton(tr("Register New Account..."));
+     bt_registernew = new QPushButton(tr("Create New Account..."));
      bt_addimport = new QPushButton(tr("Add (Import) existing account..."));
      bt_delete = new QPushButton(tr("Delete Account"));
 

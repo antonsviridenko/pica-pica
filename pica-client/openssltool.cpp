@@ -92,12 +92,24 @@ QString OpenSSLTool::CertTextFromString(QString cert_pem)
     return QString::fromUtf8(openssl.readAllStandardOutput().constData());
 }
 
-bool OpenSSLTool::GenRSAKeySignal(quint32 numbits, QString keyfile, QObject *receiver, const char *finished_slot)
+bool OpenSSLTool::GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpassword, QString password, QObject *receiver, const char *finished_slot)
 {
-    openssl_.start("openssl", QStringList()<<"genrsa"<<"-out"<<keyfile<<QString::number(numbits));
+    if (!setpassword)
+    {
+        openssl_.start("openssl", QStringList()<<"genrsa"<<"-out"<<keyfile<<QString::number(numbits));
+    }
+    else
+    {
+        openssl_.start("openssl", QStringList()<<"genrsa"<<"-out"<<keyfile<<"-passout"<<"stdin"<<"-idea"<<QString::number(numbits));
+    }
 
     if (!openssl_.waitForStarted())
         return false;
+
+    if (setpassword)
+    {
+        openssl_.write((password + "\n").toAscii().constData());
+    }
 
     openssl_.disconnect(&openssl_, SIGNAL(finished(int,QProcess::ExitStatus)), 0, 0);
     openssl_.connect(&openssl_, SIGNAL(finished(int,QProcess::ExitStatus)),receiver, finished_slot);
@@ -105,7 +117,8 @@ bool OpenSSLTool::GenRSAKeySignal(quint32 numbits, QString keyfile, QObject *rec
     return true;
 }
 
-bool OpenSSLTool::GenCSRSignal(QString csr_file, QString keyfile, QString subject, QObject *receiver, const char *finished_slot)
+bool OpenSSLTool::GenCertSignal(QString cert_file, QString keyfile, QString keypassword,
+                                    QString subject, QObject *receiver, const char *finished_slot)
 {
     openssl_.start("openssl",
                    QStringList()
@@ -113,16 +126,21 @@ bool OpenSSLTool::GenCSRSignal(QString csr_file, QString keyfile, QString subjec
 #ifdef WIN32
 						<<"-config"<<"openssl.cnf"
 #endif
-                        <<"-out"<<csr_file
+                        <<"-out"<<cert_file
                         <<"-key"<<keyfile
                         <<"-subj"<<"/CN=" + subject
                         <<"-new"
+                        <<"-x509"
                         <<"-days"<<"3680"
                         <<"-utf8"
-                        <<"-batch");
+                        <<"-batch"
+                        <<"-passin"
+                        <<"stdin");
 
     if (!openssl_.waitForStarted())
         return false;
+
+    openssl_.write((keypassword + "\n").toAscii().constData());
 
     openssl_.disconnect(&openssl_, SIGNAL(finished(int,QProcess::ExitStatus)), 0, 0);
     openssl_.connect(&openssl_, SIGNAL(finished(int,QProcess::ExitStatus)),receiver, finished_slot);

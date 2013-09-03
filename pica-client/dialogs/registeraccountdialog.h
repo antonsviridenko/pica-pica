@@ -5,9 +5,8 @@
 #include <QPushButton>
 #include <QLineEdit>
 #include <QLabel>
+#include <QCheckBox>
 #include <QRegExpValidator>
-#include <QtNetwork>
-#include <QTcpSocket>
 #include "../openssltool.h"
 
 class RegisterAccountDialog : public QDialog
@@ -19,14 +18,16 @@ public:
     QString GetPkeyFilename();
     
 private:
-    QPushButton *btOK;
+    //QPushButton *btOK;
     QPushButton *btRegister;
     QLineEdit *nickname;
     QLabel *lbStatus;
+    QCheckBox *cbSetPassword;
+    QLineEdit *password;
+    QLineEdit *repeatPassword;
 
     QRegExpValidator *vld;
     OpenSSLTool ost;
-    QTcpSocket sock;
     QByteArray cert_buf;
 
     QString CertFilename_;
@@ -34,14 +35,12 @@ private:
 signals:
     
 public slots:
-    void OK();
+    //void OK();
     void Register();
+    void setPasswordClick();
 
-    void stageGenCSR(int,QProcess::ExitStatus);
-    void stageConnect(int,QProcess::ExitStatus);
-    void stageGetCert();
-    void stageReadCert();
-    void showError();
+    void stageSignCert(int retval, QProcess::ExitStatus);
+    void stageFinished(int retval, QProcess::ExitStatus);
 };
 
 #endif // REGISTERACCOUNTDIALOG_H
