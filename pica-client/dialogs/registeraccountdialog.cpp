@@ -77,6 +77,8 @@ void RegisterAccountDialog::setPasswordClick()
         layout()->itemAt(3)->widget()->hide();
         layout()->itemAt(5)->widget()->hide();
     }
+
+    adjustSize();
 }
 
 //void RegisterAccountDialog::OK()
