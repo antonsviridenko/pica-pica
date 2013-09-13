@@ -1342,7 +1342,7 @@ if (ret_comm == -1)
 //PICA_rand_seed();
 //#endif
 
-ctx = SSL_CTX_new(TLSv1_method());
+ctx = SSL_CTX_new(TLSv1_2_method());
 
 if (!ctx)
 	PICA_fatal("unable to create SSL_CTX object");

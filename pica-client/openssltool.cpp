@@ -158,5 +158,25 @@ QString OpenSSLTool::ReadStdOut()
     return QString::fromUtf8(openssl_.readAllStandardOutput().constData());
 }
 
+bool OpenSSLTool::GenDHParam(quint32 numbits, QString output_file)
+{//openssl dhparam -5 4096
+    openssl_.start("openssl",
+                   QStringList()
+                        <<"dhparam"
+                        <<"-out"<<output_file
+                        <<"-5"
+                        <<QString::number(numbits));
+
+    if (!openssl_.waitForStarted())
+        return false;
+
+    if (!openssl_.waitForFinished(-1))
+        return false;
+
+    if (openssl_.exitCode() != 0)
+        return false;
+
+    return true;
+}
 
 

@@ -173,13 +173,14 @@ int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id);
 int PICA_client_init(struct PICA_client_callbacks *clcbs);
 
 int PICA_new_connection
-	( const char *nodeaddr,
-	  unsigned int port, 
-	  const char *CA_file,
-	  const char *cert_file, 
-	  const char *pkey_file, 
-          int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
-	  struct PICA_conninfo **ci);
+    (const char *nodeaddr,
+      unsigned int port,
+      const char *CA_file,
+      const char *cert_file,
+      const char *pkey_file,
+      const char *dh_param_file,
+      int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
+      struct PICA_conninfo **ci);
 
 int PICA_create_channel(struct PICA_conninfo *ci,const unsigned char *peer_id,struct PICA_chaninfo **chn);
 int PICA_read_c2n(struct PICA_conninfo *ci);

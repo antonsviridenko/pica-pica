@@ -17,6 +17,8 @@ public:
         QString password, QObject *receiver, const char *finished_slot);
     bool GenCertSignal(QString cert_file, QString keyfile, QString keypassword, QString subject, QObject *receiver, const char *finished_slot);
 
+    bool GenDHParam(quint32 numbits, QString output_file);
+
     QString ReadStdErr();
     QString ReadStdOut();
 

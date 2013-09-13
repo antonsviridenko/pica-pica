@@ -11,6 +11,7 @@
 #include <QMessageBox>
 #include <QString>
 #include <QIcon>
+#include "openssltool.h"
 
 //globals
 QString config_dir;
@@ -238,6 +239,20 @@ static bool create_config_dir()
     }
     else
         update_database();
+
+    if (!QFile::exists(config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE))
+    {
+        OpenSSLTool osslt;
+        msgBox.setText(QString(QObject::tr("Diffie-Hellman parameters will be generated. Please wait. This process can take several minutes...")));
+        msgBox.exec();
+
+        if (!osslt.GenDHParam(4096, config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE))
+        {
+            msgBox.setText(QString(QObject::tr("Failed to generate Diffie-Hellman parameters")));
+            msgBox.exec();
+            return false;
+        }
+    }
 
     return true;
 }

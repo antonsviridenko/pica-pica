@@ -2,7 +2,7 @@
 #include "PICA_proto.h"
 #include "PICA_msgproc.h"
 #include "PICA_common.h"
-
+#include <openssl/dh.h>
 //#ifdef NO_RAND_DEV
 //#include "PICA_rand_seed.h"
 //#endif
@@ -721,12 +721,16 @@ int PICA_new_connection(const char *nodeaddr,
                         const char *CA_file,
                         const char *cert_file,
                         const char *pkey_file,
+                        const char *dh_param_file,
                         int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
                         struct PICA_conninfo **ci)
 {
 int ret,ret_err;
 struct PICA_conninfo *cid;
 struct sockaddr_in a;
+DH *dh = NULL;
+FILE *dh_file = NULL;
+
 
 if (!(nodeaddr && CA_file && cert_file && pkey_file && ci))
 	return PICA_ERRINVARG;
@@ -743,13 +747,29 @@ if (!cid->read_buf)
     goto error_ret_1;
     }
 
-cid->ctx=SSL_CTX_new(TLSv1_method());//(3)
+cid->ctx=SSL_CTX_new(TLSv1_2_method());//(3)
 
 if (!cid->ctx)
 	{
 	ret_err=PICA_ERRSSL;
     goto error_ret_2;
 	}
+
+dh_file = fopen(dh_param_file, "r");
+
+if (dh_file)
+    {
+    dh = PEM_read_DHparams(dh_file, NULL, NULL, NULL);
+    fclose(dh_file);
+    }
+
+if (1 != SSL_CTX_set_tmp_dh(cid->ctx, dh))
+{
+    ret_err = PICA_ERRSSL;
+    goto error_ret_2;
+}
+
+DH_free (dh);
 
 if (!PICA_get_id_from_cert_file(cert_file, cid->id))
     {
@@ -780,6 +800,14 @@ if (ret!=1)
 ret=SSL_CTX_load_verify_locations(cid->ctx,CA_file,0/*"trustedCA/"*/);
 //printf("loadverifylocations ret=%i\n",ret);//debug
 SSL_CTX_set_client_CA_list(cid->ctx,SSL_load_client_CA_file(CA_file));
+
+ret = SSL_CTX_set_cipher_list(cid->ctx,"DHE-RSA-CAMELLIA256-SHA"/*:DHE-RSA-AES256-SHA256"*/);
+
+if (ret != 1)
+{
+    ret_err = PICA_ERRSSL;
+    goto error_ret_2;
+}
 
 
 cid->ssl_comm=SSL_new(cid->ctx);//(4)

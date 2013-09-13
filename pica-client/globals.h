@@ -3,6 +3,7 @@
 
 #define PICA_CLIENT_STORAGEDB "pica-client.sqlite"
 #define PICA_CLIENT_CONFIGDIR ".pica-client"
+#define PICA_CLIENT_DHPARAMFILE "dhparam4096.pem"
 
 #ifndef PICA_INSTALLPREFIX
 
