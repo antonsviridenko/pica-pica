@@ -137,7 +137,7 @@ void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, b
     if (copyfiles)
     {
         QDir dir(config_dir);
-        dir.mkdir(name + id.toHex().constData());
+        dir.mkdir(name + '_' + id.toHex().constData());
         dir.cd(name + id.toHex().constData());
 
         certfilename=dir.absolutePath()+"/" + id.toHex().constData() + "_cert.pem";
