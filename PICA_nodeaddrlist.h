@@ -4,10 +4,17 @@
 #define PICA_NODEADDRLIST_H
 
 #ifndef WIN32
+
 #include <netinet/in.h>
+
 #else
+
+#define _WIN32_WINNT 0x501
 #include <winsock2.h>
 #include <ws2tcpip.h>
+
+typedef u_long in_addr_t;
+typedef u_short in_port_t;
 #endif
 
 #include <time.h>

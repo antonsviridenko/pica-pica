@@ -9,6 +9,8 @@
 
 #ifdef WIN32
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 
 #else
@@ -82,10 +84,14 @@ char portbuf[8];
 
 memset(&h,0,sizeof(struct addrinfo));
 
+#ifdef AI_ADDRCONFIG
 #ifdef AI_IDN
 #define H_AI_FLAGS (AI_ADDRCONFIG | AI_IDN)
 #else
 #define H_AI_FLAGS AI_ADDRCONFIG
+#endif
+#else
+#define H_AI_FLAGS 0
 #endif
 
 h.ai_flags=H_AI_FLAGS;

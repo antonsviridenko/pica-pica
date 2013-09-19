@@ -20,6 +20,12 @@
 #include "PICA_rand_seed.h"
 #endif
 
+#ifdef WIN32
+typedef u_long in_addr_t;
+typedef u_short in_port_t;
+typedef u_short uint16_t;
+#endif
+
 #define MAX_NEWCONNS 64
 
 #define NEWCONN_TIMEOUT 10 //sec
@@ -579,7 +585,7 @@ mp = nodelink_wbuf_push(n, PICA_PROTO_NEWNODE_IPV4, PICA_PROTO_NEWNODE_IPV4_SIZE
 if (mp)
 	{
 	*((in_addr_t*)(mp->tail))=inet_addr(nodecfg.announced_addr);
-	*((uint16_t*)(mp->tail+4))=(nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT));//CONF; 
+	*((in_port_t*)(mp->tail+4))=(nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT));//CONF; 
 	}
 else 
 	return 0;
@@ -619,7 +625,7 @@ PICA_debug1("received NEWNODE");
 switch (buf[0])
 	{
     	case PICA_PROTO_NEWNODE_IPV4:
-	PICA_debug1("NEWNODE_IPV4: ip %.16s port %hu\n",inet_ntoa(*(struct in_addr*)(buf+2)),ntohs(*(uint16_t*)(buf+6)));
+	PICA_debug1("NEWNODE_IPV4: ip %.16s port %hu\n",inet_ntoa(*(struct in_addr*)(buf+2)),ntohs(*(in_port_t*)(buf+6)));
 	{
 	struct PICA_nodeaddr_ipv4 na_ipv4;
 	
@@ -684,7 +690,7 @@ if (!nl_buf)
 //собственный адрес узла
 nl_buf[nl_size]=PICA_PROTO_NEWNODE_IPV4;
 *((in_addr_t*)(nl_buf+nl_size+1))=inet_addr(my_addr);
-*((uint16_t*)(nl_buf+nl_size+5))=(nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT));//CONF
+*((in_port_t*)(nl_buf+nl_size+5))=(nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT));//CONF
 nl_size+=PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 }
 
@@ -701,7 +707,7 @@ while(nlp && nl_size < 65532)//MAP
 		 
 		nl_buf[nl_size]=PICA_PROTO_NEWNODE_IPV4;
 		*((in_addr_t*)(nl_buf+nl_size+1)) = ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->addr;
-		*((uint16_t*)(nl_buf+nl_size+5)) = ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->port;
+		*((in_port_t*)(nl_buf+nl_size+5)) = ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->port;
 		nl_size += PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;//CONF 
 		break;
 		}
