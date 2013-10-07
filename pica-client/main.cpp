@@ -12,6 +12,7 @@
 #include <QString>
 #include <QIcon>
 #include "openssltool.h"
+#include "../PICA_client.h"
 
 //globals
 QString config_dir;
@@ -140,6 +141,7 @@ static bool create_database()
 static bool update_database()
 {
     QMessageBox msgBox;
+    int schema_ver;
 
     QSqlDatabase dbconn=QSqlDatabase::addDatabase("QSQLITE");
     dbconn.setDatabaseName(config_dbname);
@@ -196,16 +198,164 @@ static bool update_database()
 
         query.exec("insert into schema_version values (1, strftime('%s','now'));");
         //--------------------------------------------------
+        schema_ver = 1;
     }
     else
     {
-        //check latest version from schema_version, update if needed
+        query.exec("select max(ver) from schema_version");
+        query.next();
+
+        if (query.lastError().isValid())
+                goto showerror;
+
+        schema_ver = query.value(0).toInt();
+    }
+
+    if (schema_ver == 1)
+    {
+        query.exec("PRAGMA foreign_keys=OFF;");
+
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("alter table accounts rename to accounts_old_schemav1;");
+
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("alter table contacts rename to contacts_old_schemav1;");
+
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("alter table history rename to history_old_schemav1;");
+
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("create table accounts \
+               (\
+                   id blob primary key, \
+                   name varchar(64), \
+                   cert_file varchar(255) not null, \
+                   pkey_file varchar(255) not null, \
+                   ca_file varchar(255) default null \
+                   );"
+                   );
+
+                    if (query.lastError().isValid())
+                    goto showerror;
+
+        query.exec("create table contacts \
+                     (\
+                      id blob,\
+                      name varchar(64), \
+                      cert_pem text(2048), \
+                      account_id blob not null, \
+                      primary key(id, account_id),\
+                      foreign key(account_id) references accounts(id) on delete cascade\
+                      );"
+                      );
+
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("create table history \
+                (\
+                    id integer primary key autoincrement, \
+                    contact_id blob not null, \
+                    account_id blob not null, \
+                    timestamp int not null, \
+                    is_me int not null, \
+                    is_delivered int not null, \
+                    message text(65536) not null, \
+                    foreign key(account_id) references accounts(id) on delete cascade\
+                );"
+                 );
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("alter table accounts_old_schemav1 add column new_id blob;");
+        query.exec("alter table contacts_old_schemav1 add column new_id blob;");
+
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("select id, cert_file from accounts_old_schemav1");
+        if (query.lastError().isValid())
+            goto showerror;
+
+        while(query.next())
+        {
+            quint32 old_id;
+            QString cert_file;
+            QSqlQuery q;
+            QByteArray new_id(PICA_ID_SIZE, 0);
+
+            old_id = query.value(0).toUInt();
+            cert_file = query.value(1).toString();
+
+            if (PICA_get_id_from_cert_file(cert_file.toUtf8().constData(), (unsigned char*)new_id.data()))
+            {
+                QSqlQuery q;
+
+                q.prepare("update accounts_old_schemav1 set new_id = :new_id where id = :id");
+                q.bindValue(":new_id", new_id);
+                q.bindValue(":id", old_id);
+                q.exec();
+            }
+        }
+
+        query.exec("select id, cert_pem from contacts_old_schemav1");
+        if (query.lastError().isValid())
+            goto showerror;
+
+        while(query.next())
+        {
+            quint32 old_id;
+            QString cert_pem;
+            QSqlQuery q;
+            QByteArray new_id(PICA_ID_SIZE, 0);
+
+            old_id = query.value(0).toUInt();
+            cert_pem = query.value(1).toString();
+
+            if (PICA_get_id_from_cert_string(cert_pem.toUtf8().constData(), (unsigned char *)new_id.data()))
+            {
+                QSqlQuery q;
+
+                q.prepare("update contacts_old_schemav1 set new_id = :new_id where id = :id");
+                q.bindValue(":new_id", new_id);
+                q.bindValue(":id", old_id);
+                q.exec();
+            }
+        }
+
+
+        query.exec("insert into accounts select new_id, name, cert_file, pkey_file, ca_file from accounts_old_schemav1 where new_id is not null");
+
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("insert into contacts select c.new_id, c.name, c.cert_pem, a.new_id from accounts_old_schemav1 as a, contacts_old_schemav1 as c on c.account_id = a.id where c.new_id is not null and a.new_id is not null");
+
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("insert into history select h.id, c.new_id, a.new_id, h.timestamp, h.is_me, h.is_delivered, h.message \
+                    from history_old_schemav1 as h, accounts_old_schemav1 as a, contacts_old_schemav1 as c on h.contact_id = c.id and h.account_id = a.id and a.id = c.account_id order by h.id");
+
+        if (query.lastError().isValid())
+            goto showerror;
+
+        query.exec("insert into schema_version values (2, strftime('%s','now'));");
+        schema_ver = 2;
     }
 
 if (query.lastError().isValid())
 showerror:
     {
-        msgBox.setText(query.lastError().text());
+        msgBox.setText(query.lastError().text() + " " + query.lastQuery());
         msgBox.exec();
         return false;
     }

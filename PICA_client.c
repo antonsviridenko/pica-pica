@@ -124,6 +124,23 @@ if (!x)
 return PICA_id_from_X509(x, id);
 }
 
+int PICA_get_id_from_cert_string(const char *cert_pem, unsigned char *id)
+{
+X509 *x;
+BIO *biomem;
+
+biomem = BIO_new_mem_buf(cert_pem, -1);
+
+x = PEM_read_bio_X509(biomem, NULL, 0, NULL);
+
+if (!x)
+{
+    return 0;
+}
+
+return PICA_id_from_X509(x, id);
+}
+
 static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 { //return 1 for self-signed certificates
 char    buf[256];
