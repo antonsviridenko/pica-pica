@@ -11,8 +11,8 @@
 #include <QMessageBox>
 #include <QString>
 #include <QIcon>
-#include "openssltool.h"
 #include "../PICA_client.h"
+#include "dhparam.h"
 
 //globals
 QString config_dir;
@@ -32,8 +32,10 @@ class PicaSysTray *systray;
 //QString config_defaultCA("/home/root_jr/files/projects/picapica_wc/localhost/project_picapica/trunk/tests/trusted_CA.pem");
 #ifndef WIN32
 QString config_defaultCA(PICA_INSTALLPREFIX"/share/pica-client/CA.pem");
+QString config_defaultDHParam(PICA_INSTALLPREFIX"/share/pica-client/"PICA_CLIENT_DHPARAMFILE);
 #else
 QString config_defaultCA("share\\CA.pem");
+QString config_defaultDHParam("share\\pica-client\\"PICA_CLIENT_DHPARAMFILE);
 #endif
 
 static bool create_database()
@@ -390,7 +392,7 @@ static bool create_config_dir()
     else
         update_database();
 
-    if (!QFile::exists(config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE))
+    /*if (!QFile::exists(config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE))
     {
         OpenSSLTool osslt;
         msgBox.setText(QString(QObject::tr("Diffie-Hellman parameters will be generated. Please wait. This process can take several minutes...")));
@@ -401,6 +403,39 @@ static bool create_config_dir()
             msgBox.setText(QString(QObject::tr("Failed to generate Diffie-Hellman parameters")));
             msgBox.exec();
             return false;
+        }
+    }*/
+
+    QString dh_error_message;
+
+    if (!DHParam::VerifyGenerated(NULL))
+    {
+        QMessageBox dhmsgBox;
+        dhmsgBox.setText(QObject::tr("Do you want to generate new Diffie-Hellman parameter file?"));
+        dhmsgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+        dhmsgBox.setDefaultButton(QMessageBox::No);
+        dhmsgBox.setInformativeText(QObject::tr("If you press \"Yes\", new Diffie-Hellman parameter generation will be started. It is a CPU intensive process and can take undetermined amount of time (1 - 20 minutes on modern computers). Default DH parameter file will be used for starting secure communications until the new DH parameter generation is finished.\nIf you press \"No\", default DH parameter file distributed with Pica Pica Messenger will be used for every communication session."));
+        switch (dhmsgBox.exec())
+        {
+        case QMessageBox::No:
+
+        DHParam::UseDefault();
+
+        break;
+
+        case QMessageBox::Yes:
+
+        DHParam::StartNewDHParamGeneration(&dh_error_message);
+
+        break;
+        }
+
+        if (!DHParam::VerifyDefault(&dh_error_message))
+        {
+            msgBox.setText(dh_error_message);
+            msgBox.setIcon(QMessageBox::Warning);
+            msgBox.setStandardButtons(QMessageBox::Ok);
+            msgBox.exec();
         }
     }
 

@@ -158,7 +158,7 @@ QString OpenSSLTool::ReadStdOut()
     return QString::fromUtf8(openssl_.readAllStandardOutput().constData());
 }
 
-bool OpenSSLTool::GenDHParam(quint32 numbits, QString output_file)
+bool OpenSSLTool::GenDHParamSignal(quint32 numbits, QString output_file, QObject *receiver, const char *finished_slot)
 {//openssl dhparam -5 4096
     openssl_.start("openssl",
                    QStringList()
@@ -170,11 +170,8 @@ bool OpenSSLTool::GenDHParam(quint32 numbits, QString output_file)
     if (!openssl_.waitForStarted())
         return false;
 
-    if (!openssl_.waitForFinished(-1))
-        return false;
-
-    if (openssl_.exitCode() != 0)
-        return false;
+    openssl_.disconnect(&openssl_, SIGNAL(finished(int,QProcess::ExitStatus)), 0, 0);
+    openssl_.connect(&openssl_, SIGNAL(finished(int,QProcess::ExitStatus)), receiver, finished_slot);
 
     return true;
 }

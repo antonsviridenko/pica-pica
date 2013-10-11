@@ -32,7 +32,8 @@ SOURCES += main.cpp\
     dialogs/registeraccountdialog.cpp \
     openssltool.cpp \
     history.cpp \
-    ../PICA_id.c
+    ../PICA_id.c \
+    dhparam.cpp
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -58,7 +59,8 @@ HEADERS  += mainwindow.h \
     dialogs/registeraccountdialog.h \
     openssltool.h \
     history.h \
-    ../PICA_id.h
+    ../PICA_id.h \
+    dhparam.h
 
 
 DEFINES = PICA_MULTITHREADED

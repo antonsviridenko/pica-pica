@@ -2,6 +2,7 @@
 #include "mainwindow.h"
 #include "../PICA_proto.h"
 #include "globals.h"
+#include "dhparam.h"
 
 QMutex NodeThread::finished_mutex;
 
@@ -27,7 +28,7 @@ void NodeThread::run()
                               user_account.CA_file.toUtf8().constData(),
                               user_account.cert_file.toUtf8().constData(),
                               user_account.pkey_file.toUtf8().constData(),
-                              (config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE).toUtf8().constData(),
+                              DHParam::GetDHParamFilename().toUtf8().constData(),
                               AskPassword::ask_password_cb,
                               &ci);
 
