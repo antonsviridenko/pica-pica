@@ -18,6 +18,7 @@ public:
     QAction *delcontactAct;
     QAction *startchatAct;
     QAction *viewcertAct;
+    QAction *showidAct;
 protected:
     void contextMenuEvent(QContextMenuEvent *event);
 
@@ -39,6 +40,7 @@ private slots:
     void del_contact();
     void start_chat();
     void view_cert();
+    void show_id();
 
     //void debug_onmsginput(QString msg, ChatWindow *sender_window);//debug remove after debug
 };

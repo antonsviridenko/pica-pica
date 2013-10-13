@@ -25,6 +25,9 @@ ContactListWidget::ContactListWidget(QWidget *parent) :
     viewcertAct = new QAction(tr("&View Certificate"), this);
     connect(viewcertAct, SIGNAL(triggered()), this, SLOT(view_cert()));
 
+    showidAct = new QAction(tr("Show Pica Pica &ID"), this);
+    connect(showidAct, SIGNAL(triggered()), this, SLOT(show_id()));
+
     connect(this, SIGNAL(itemDoubleClicked(QListWidgetItem*)), this, SLOT(start_chat()));
 
     setContactsStorage(new Contacts(config_dbname, Accounts::GetCurrentAccount().id));
@@ -50,6 +53,9 @@ void ContactListWidget::contextMenuEvent(QContextMenuEvent *event)
 
     if (this->itemAt(event->pos()))
         menu.addAction(viewcertAct);
+
+    if (this->itemAt(event->pos()))
+        menu.addAction(showidAct);
 
     menu.exec(event->globalPos());
 }
@@ -181,6 +187,17 @@ void ContactListWidget::view_cert()
         mbx.setText(tr("Certificate is not stored for this contact yet"));
         mbx.exec();
     }
+}
+
+void ContactListWidget::show_id()
+{
+    QMessageBox mbx;
+    mbx.setTextFormat(Qt::RichText);
+    mbx.setText(tr("Contact name: <b>%1</b><br>Pica Pica ID: <b>%2</b>")
+                .arg(wgitem_to_recs[currentItem()]->name)
+                .arg(wgitem_to_recs[currentItem()]->id.toBase64().constData()));
+
+    mbx.exec();
 }
 
 void ContactListWidget::Reload()

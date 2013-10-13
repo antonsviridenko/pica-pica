@@ -106,6 +106,9 @@ void MainWindow::createMenus()
     contactsMenu->addSeparator();
     contactsMenu->addAction(action_center->ExitAct());
 
+    accountMenu=menuBar()->addMenu(tr("&Account"));
+    accountMenu->addAction(action_center->ShowMyIDAct());
+
     nodesMenu=menuBar()->addMenu(tr("&Nodes"));
 
     helpMenu=menuBar()->addMenu(tr("&Help"));

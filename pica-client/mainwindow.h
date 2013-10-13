@@ -38,6 +38,7 @@ private:
     QMenu *contactsMenu;
     QMenu *helpMenu;
     QMenu *nodesMenu;
+    QMenu *accountMenu;
 
     bool status_change_disable_flag;
     void SetStatus(bool connected);

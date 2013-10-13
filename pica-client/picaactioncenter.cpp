@@ -4,6 +4,7 @@
 #include "skynet.h"
 #include <QApplication>
 #include "../PICA_proto.h"
+#include "accounts.h"
 
 #include <QMessageBox>
 
@@ -17,6 +18,9 @@ PicaActionCenter::PicaActionCenter(QObject *parent) :
     aboutAct = new QAction(tr("A&bout"),this);
     aboutAct->setStatusTip(tr("About Pica Pica Messenger"));
     connect(aboutAct,SIGNAL(triggered()),this,SLOT(about()));
+
+    showmyidAct = new QAction(tr("Show My Pica Pica ID"), this);
+    connect(showmyidAct, SIGNAL(triggered()), this, SLOT(showmyid()));
 }
 
 void PicaActionCenter::about()
@@ -42,4 +46,14 @@ void PicaActionCenter::exit()
 
     skynet->Exit();
     QApplication::instance()->quit();
+}
+
+void PicaActionCenter::showmyid()
+{
+    QMessageBox mbx;
+    mbx.setTextFormat(Qt::RichText);
+    mbx.setText(tr("Account: <b>%1</b><br>Pica Pica ID: <b>%2</b>")
+                .arg(Accounts::GetCurrentAccount().name)
+                .arg(Accounts::GetCurrentAccount().id.toBase64().constData()));
+    mbx.exec();
 }
