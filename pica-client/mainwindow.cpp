@@ -47,6 +47,7 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(skynet, SIGNAL(LostSelfAwareness()), this, SLOT(set_offline()));
     connect(status, SIGNAL(currentIndexChanged(int)), this, SLOT(status_changed(int)));
     connect(bt_showhide_notifications, SIGNAL(clicked()), this, SLOT(showhide_click()));
+    connect(skynet, SIGNAL(ContactsUpdated()), contact_list, SLOT(Reload()));
 }
 
 MainWindow::~MainWindow()

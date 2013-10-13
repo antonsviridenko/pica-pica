@@ -35,14 +35,43 @@ QString Contacts::GetLastError()
     return lasterr.text();
 }
 
-void Contacts::Add(QByteArray id)
+bool Contacts::Exists(QByteArray id)
 {
     QSqlQuery query;
 
-    query.prepare("insert into contacts (id, name, cert_pem, account_id) values (:id, NULL, NULL, :account_id)");
-    query.bindValue(":id",id);
+    query.setForwardOnly(true);
+    query.prepare("select count(*) from contacts where account_id=:account_id and id=:id");
     query.bindValue(":account_id",account_id_);
+    query.bindValue(":id", id);
     query.exec();
+    lasterr=query.lastError();
+
+    query.next();
+    if (query.value(0).toInt() == 1)
+        return true;
+
+    return false;
+}
+
+void Contacts::Add(QByteArray id, ContactType type)
+{
+    QSqlQuery query;
+
+    if (!Exists(id))
+    {
+        query.prepare("insert into contacts (id, name, cert_pem, account_id) values (:id, NULL, NULL, :account_id)");
+        query.bindValue(":id",id);
+        query.bindValue(":account_id",account_id_);
+        query.exec();
+    }
+    else
+    {
+        query.prepare("update contacts set type=:type where id=:id and account_id=:account_id");
+        query.bindValue(":type", type);
+        query.bindValue(":id", id);
+        query.bindValue(":account_id", account_id_);
+        query.exec();
+    }
 
     lasterr=query.lastError();
 }
@@ -59,15 +88,16 @@ void Contacts::Delete(QByteArray id)
     lasterr=query.lastError();
 }
 
-QList<Contacts::ContactRecord> Contacts::GetContacts()
+QList<Contacts::ContactRecord> Contacts::GetContacts(ContactType type)
 {
     QList<ContactRecord> L;
     ContactRecord r;
     QSqlQuery query;
 
     query.setForwardOnly(true);
-    query.prepare("select id, name from contacts where account_id=:account_id");
+    query.prepare("select id, name from contacts where account_id=:account_id and type=:type");
     query.bindValue(":account_id",account_id_);
+    query.bindValue(":type", type);
     query.exec();
     lasterr=query.lastError();
 

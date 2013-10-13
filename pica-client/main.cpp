@@ -78,6 +78,7 @@ static bool create_database()
                    name varchar(64), \
                    cert_pem text(2048), \
                    account_id blob not null, \
+                   type int not null default 1, \
                    primary key(id, account_id),\
                    foreign key(account_id) references accounts(id) on delete cascade\
                 );");
@@ -254,6 +255,7 @@ static bool update_database()
                       name varchar(64), \
                       cert_pem text(2048), \
                       account_id blob not null, \
+                      type int not null default 1, \
                       primary key(id, account_id),\
                       foreign key(account_id) references accounts(id) on delete cascade\
                       );"
@@ -339,7 +341,7 @@ static bool update_database()
         if (query.lastError().isValid())
             goto showerror;
 
-        query.exec("insert into contacts select c.new_id, c.name, c.cert_pem, a.new_id from accounts_old_schemav1 as a, contacts_old_schemav1 as c on c.account_id = a.id where c.new_id is not null and a.new_id is not null");
+        query.exec("insert into contacts select c.new_id, c.name, c.cert_pem, a.new_id, 1 from accounts_old_schemav1 as a, contacts_old_schemav1 as c on c.account_id = a.id where c.new_id is not null and a.new_id is not null");
 
         if (query.lastError().isValid())
             goto showerror;

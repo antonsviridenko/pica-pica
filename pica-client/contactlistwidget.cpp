@@ -182,3 +182,8 @@ void ContactListWidget::view_cert()
         mbx.exec();
     }
 }
+
+void ContactListWidget::Reload()
+{
+    setContactsStorage(storage);
+}

@@ -103,6 +103,11 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
     Contacts cnt(config_dbname, Accounts::GetCurrentAccount().id);
     QString stored_cert;
 
+
+    if (!cnt.Exists(peer_id) && cnt.isOK())
+    {
+        cnt.Add(peer_id, Contacts::temporary);
+    }
     if ((stored_cert = cnt.GetContactCert(peer_id)).isEmpty())
     {
         cnt.SetContactCert(peer_id, cert_pem);
@@ -110,6 +115,8 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
         QString name = OpenSSLTool::NameFromCertString(cert_pem);
 
         cnt.SetContactName(peer_id, name);
+
+        emit ContactsUpdated();
     }
     else
     {//compare certificates

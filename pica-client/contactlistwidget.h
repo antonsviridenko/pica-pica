@@ -31,6 +31,9 @@ private:
 
 signals:
 
+public slots:
+    void Reload();
+
 private slots:
     void add_contact();
     void del_contact();

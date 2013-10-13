@@ -31,6 +31,7 @@ signals:
     void PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified);
     void CertificateForged(QByteArray peer_id, QString received_cert, QString stored_cert);
     void ErrMsgFromNode(QString msg);
+    void ContactsUpdated();
 
 private:
     Nodes nodes;
