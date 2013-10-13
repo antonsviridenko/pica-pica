@@ -79,7 +79,7 @@ void ContactListWidget::setContactsStorage(Contacts *ct)
 void ContactListWidget::add_contact()
 {
     bool ok;
-    QString input=QInputDialog::getText(this,tr("Add New Contact"),tr("User ID: "),QLineEdit::Normal,NULL,&ok);
+    QString input=QInputDialog::getText(this,tr("Add New Contact"),tr("Pica Pica ID: "),QLineEdit::Normal,NULL,&ok);
 
     if (ok && !input.isEmpty())
     {
