@@ -35,7 +35,7 @@ QString config_defaultCA(PICA_INSTALLPREFIX"/share/pica-client/CA.pem");
 QString config_defaultDHParam(PICA_INSTALLPREFIX"/share/pica-client/"PICA_CLIENT_DHPARAMFILE);
 #else
 QString config_defaultCA("share\\CA.pem");
-QString config_defaultDHParam("share\\pica-client\\"PICA_CLIENT_DHPARAMFILE);
+QString config_defaultDHParam("share\\"PICA_CLIENT_DHPARAMFILE);
 #endif
 
 static bool create_database()
