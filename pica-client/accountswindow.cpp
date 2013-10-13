@@ -166,6 +166,13 @@ void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, b
         mbx.setText(accounts.GetLastError());
         mbx.exec();
     }
+    else
+    {
+        QMessageBox mbx;
+        mbx.setTextFormat(Qt::RichText);
+        mbx.setText(tr("New account<br> Pica Pica ID: <b>%1</b><br> is created.").arg(id.toBase64().constData()));
+        mbx.exec();
+    }
     LoadAccounts();
 }
 

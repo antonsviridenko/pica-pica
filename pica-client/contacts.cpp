@@ -59,9 +59,10 @@ void Contacts::Add(QByteArray id, ContactType type)
 
     if (!Exists(id))
     {
-        query.prepare("insert into contacts (id, name, cert_pem, account_id) values (:id, NULL, NULL, :account_id)");
+        query.prepare("insert into contacts (id, name, cert_pem, account_id, type) values (:id, NULL, NULL, :account_id, :type)");
         query.bindValue(":id",id);
         query.bindValue(":account_id",account_id_);
+        query.bindValue(":type", type);
         query.exec();
     }
     else
