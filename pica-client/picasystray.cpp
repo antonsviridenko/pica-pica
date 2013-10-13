@@ -1,6 +1,13 @@
 #include "picasystray.h"
 #include "globals.h"
 #include "picaactioncenter.h"
+#include "accounts.h"
+
+#ifdef PACKAGE_VERSION
+#define VERSION_STRING "v"PACKAGE_VERSION
+#else
+#define VERSION_STRING ""
+#endif
 
 PicaSysTray::PicaSysTray(QObject *parent) :
     QObject(parent)
@@ -13,6 +20,7 @@ PicaSysTray::PicaSysTray(QObject *parent) :
 
     systray_ = new QSystemTrayIcon(picapica_ico_sit);
     systray_->setContextMenu(systrayMenu_);
+    systray_->setToolTip("Pica Pica Messenger "VERSION_STRING);
     systray_->show();
 
     connect(systray_, SIGNAL(activated(QSystemTrayIcon::ActivationReason)), this, SLOT(systray_activated(QSystemTrayIcon::ActivationReason)));
@@ -31,6 +39,7 @@ void PicaSysTray::systray_activated(QSystemTrayIcon::ActivationReason r)
 void PicaSysTray::skynet_became_self_aware()
 {
     systray_->setIcon(picapica_ico_fly);
+    systray_->setToolTip(Accounts::GetCurrentAccount().name + " - Pica Pica Messenger "VERSION_STRING);
 }
 
 void PicaSysTray::skynet_lost_self_awareness()
