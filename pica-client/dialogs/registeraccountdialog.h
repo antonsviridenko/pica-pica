@@ -25,6 +25,9 @@ private:
     QCheckBox *cbSetPassword;
     QLineEdit *password;
     QLineEdit *repeatPassword;
+    QLabel *lbPassword ;
+    QLabel *lbRepeatPassword;
+    QCheckBox *cbUseDevRandom;
 
     QRegExpValidator *vld;
     OpenSSLTool ost;
@@ -34,10 +37,11 @@ private:
     QString PkeyFilename_;
 signals:
     
-public slots:
+private slots:
     //void OK();
     void Register();
     void setPasswordClick();
+    void useDevRandomClick();
 
     void stageSignCert(int retval, QProcess::ExitStatus);
     void stageFinished(int retval, QProcess::ExitStatus);

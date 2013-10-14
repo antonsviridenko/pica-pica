@@ -92,16 +92,22 @@ QString OpenSSLTool::CertTextFromString(QString cert_pem)
     return QString::fromUtf8(openssl.readAllStandardOutput().constData());
 }
 
-bool OpenSSLTool::GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpassword, QString password, QObject *receiver, const char *finished_slot)
+bool OpenSSLTool::GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpassword, QString password, QString rand, QObject *receiver, const char *finished_slot)
 {
-    if (!setpassword)
-    {
-        openssl_.start("openssl", QStringList()<<"genrsa"<<"-out"<<keyfile<<QString::number(numbits));
-    }
-    else
-    {
-        openssl_.start("openssl", QStringList()<<"genrsa"<<"-out"<<keyfile<<"-passout"<<"stdin"<<"-idea"<<QString::number(numbits));
-    }
+    QStringList args;
+
+    args <<"genrsa"<<"-out"<<keyfile;
+
+    if (setpassword)
+        args <<"-passout"<<"stdin"<<"-idea";
+
+    if (!rand.isEmpty())
+        args << "-rand"<<rand;
+
+    args <<QString::number(numbits);
+
+    openssl_.start("openssl", args);
+
 
     if (!openssl_.waitForStarted())
         return false;

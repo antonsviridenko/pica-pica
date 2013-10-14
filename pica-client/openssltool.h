@@ -14,7 +14,7 @@ public:
     static QString CertTextFromString(QString cert_pem);
 
     bool GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpassword,
-        QString password, QObject *receiver, const char *finished_slot);
+        QString password, QString rand,QObject *receiver, const char *finished_slot);
     bool GenCertSignal(QString cert_file, QString keyfile, QString keypassword, QString subject, QObject *receiver, const char *finished_slot);
 
     bool GenDHParamSignal(quint32 numbits, QString output_file, QObject *receiver, const char *finished_slot);
