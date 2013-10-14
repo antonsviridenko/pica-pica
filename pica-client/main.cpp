@@ -347,7 +347,7 @@ static bool update_database()
             goto showerror;
 
         query.exec("insert into history select h.id, c.new_id, a.new_id, h.timestamp, h.is_me, h.is_delivered, h.message \
-                    from history_old_schemav1 as h, accounts_old_schemav1 as a, contacts_old_schemav1 as c on h.contact_id = c.id and h.account_id = a.id and a.id = c.account_id order by h.id");
+                    from history_old_schemav1 as h, accounts_old_schemav1 as a, contacts_old_schemav1 as c on h.contact_id = c.id and h.account_id = a.id and a.id = c.account_id order by h.id where c.new_id is not null and a.new_id is not null");
 
         if (query.lastError().isValid())
             goto showerror;
