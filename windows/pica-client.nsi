@@ -36,6 +36,7 @@ Section "" ;No components page, name is not important
   File  "share\CA.pem"
   File  "share\picapica-icon-fly.png"
   File  "share\picapica-icon-sit.png"
+  File  "share\dhparam4096.pem"
   SetOutPath "$INSTDIR\sqldrivers"
   File  "sqldrivers\qsqlite4.dll"
   
@@ -74,6 +75,7 @@ Section "Uninstall"
   Delete "$INSTDIR\share\CA.pem"
   Delete "$INSTDIR\share\picapica-icon-fly.png"
   Delete "$INSTDIR\share\picapica-icon-sit.png"
+  Delete "$INSTDIR\share\dhparam4096.pem"
   Delete "$INSTDIR\sqldrivers\qsqlite4.dll"
   RMDir $INSTDIR\share
   RMDir $INSTDIR\sqldrivers
