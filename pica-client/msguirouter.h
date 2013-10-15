@@ -2,7 +2,7 @@
 #define MSGUIROUTER_H
 
 #include <QObject>
-#include <QList>
+#include <QLinkedList>
 #include <QMap>
 #include "chatwindow.h"
 #include "skynet.h"
@@ -28,8 +28,11 @@ public slots:
 
     void scary_cert_message(QByteArray peer_id, QString received_cert, QString stored_cert);
     void notification(QString text);
+
+    void trayicon_dclick();
 private:
     QMap<QByteArray,ChatWindow*> chatwindows;
+    QLinkedList<QByteArray> blinkqueue;
 
     void create_chatwindow(QByteArray peer_id);
     

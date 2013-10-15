@@ -2,7 +2,8 @@
 #include "dialogs/forgedcertdialog.h"
 #include "history.h"
 #include "mainwindow.h"
-
+#include "picasystray.h"
+#include "globals.h"
 
 /*
   этот класс должен обеспечивать связь между приёмом-отправкой сообщений и их отображением в пользовательском интерфейсе.
@@ -11,8 +12,7 @@
   класса SkyNet) либо помигать иконкой в трее, либо создать новое окно чата, либо развернуть уже имеющееся, либо помигать
   свернутым окном на таскбаре. Это поведение может настраиваться, настройки хранить в базе и загружать в конструкторе из
   базы sqlite. Например, данный класс должен управлять экземплярами ChatWindow, создавать новые при необходимости либо
-  активировать имеющиеся. Также этот класс должен обеспечивать хранение отложенных сообщений (когда собеседник недоступен).
-  Можно придумать название получше
+  активировать имеющиеся.
  */
 MsgUIRouter::MsgUIRouter(QObject *parent) :
     QObject(parent)
@@ -22,7 +22,34 @@ MsgUIRouter::MsgUIRouter(QObject *parent) :
     connect(skynet, SIGNAL(Delivered(QByteArray)), this, SLOT(delivered(QByteArray)));
     connect(skynet, SIGNAL(CertificateForged(QByteArray,QString,QString)), this, SLOT(scary_cert_message(QByteArray,QString,QString)));
     connect(skynet, SIGNAL(ErrMsgFromNode(QString)), this, SLOT(notification(QString)));
+    connect(systray, SIGNAL(doubleclicked()), this, SLOT(trayicon_dclick()));
 
+}
+
+void MsgUIRouter::trayicon_dclick()
+{
+    if (blinkqueue.isEmpty())
+    {
+        mainwindow->showNormal();
+        mainwindow->activateWindow();
+        mainwindow->raise();
+    }
+    else
+    {
+        QByteArray blinker_id = blinkqueue.takeLast();
+
+        if (chatwindows.contains(blinker_id))
+        {
+            chatwindows[blinker_id]->showNormal();
+            chatwindows[blinker_id]->activateWindow();
+            chatwindows[blinker_id]->raise();
+        }
+
+        if (blinkqueue.isEmpty())
+        {
+            systray->StopBlinking();
+        }
+    }
 }
 
 void MsgUIRouter::create_chatwindow(QByteArray peer_id)
@@ -49,6 +76,11 @@ void MsgUIRouter::msg_from_peer(QByteArray from, QString msg)
 
     chatwindows[from]->msg_from_peer(msg);
 
+    if (!chatwindows[from]->isActiveWindow())
+        {
+            blinkqueue.append(from);
+            systray->StartBlinking();
+        }
 }
 
 void MsgUIRouter::msg_to_peer(QString msg, ChatWindow *sender_window)
@@ -65,6 +97,8 @@ void MsgUIRouter::start_chat(QByteArray peer_id)
     else
     {
         chatwindows[peer_id]->showNormal();
+        chatwindows[peer_id]->activateWindow();
+        chatwindows[peer_id]->raise();
     }
 }
 

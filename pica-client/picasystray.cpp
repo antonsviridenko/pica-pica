@@ -10,7 +10,7 @@
 #endif
 
 PicaSysTray::PicaSysTray(QObject *parent) :
-    QObject(parent)
+    QObject(parent), emptyicon_(32,32)
 {
     systrayMenu_ = new QMenu();
 
@@ -26,13 +26,16 @@ PicaSysTray::PicaSysTray(QObject *parent) :
     connect(systray_, SIGNAL(activated(QSystemTrayIcon::ActivationReason)), this, SLOT(systray_activated(QSystemTrayIcon::ActivationReason)));
     connect(skynet, SIGNAL(BecameSelfAware()), this, SLOT(skynet_became_self_aware()));
     connect(skynet, SIGNAL(LostSelfAwareness()), this, SLOT(skynet_lost_self_awareness()));
+
+    emptyicon_.fill(Qt::transparent);
+
 }
 
 void PicaSysTray::systray_activated(QSystemTrayIcon::ActivationReason r)
 {
     if (r == QSystemTrayIcon::DoubleClick && mainwindow!=NULL)
     {
-        mainwindow->showNormal();
+        emit doubleclicked();
     }
 }
 
@@ -45,4 +48,26 @@ void PicaSysTray::skynet_became_self_aware()
 void PicaSysTray::skynet_lost_self_awareness()
 {
     systray_->setIcon(picapica_ico_sit);
+}
+
+void PicaSysTray::StartBlinking()
+{
+    blink_ = systray_->icon();
+    timer_id_ = startTimer(300);
+}
+
+void PicaSysTray::StopBlinking()
+{
+    killTimer(timer_id_);
+    systray_->setIcon(blink_);
+}
+
+void PicaSysTray::timerEvent(QTimerEvent *event)
+{
+static int blinker;
+
+    blinker++ % 2 ? systray_->setIcon(blink_)
+         :
+         systray_->setIcon(QIcon(emptyicon_));
+
 }
