@@ -36,7 +36,7 @@ void MsgUIRouter::trayicon_dclick()
     }
     else
     {
-        QByteArray blinker_id = blinkqueue.takeLast();
+        QByteArray blinker_id = blinkqueue.takeFirst();
 
         if (chatwindows.contains(blinker_id))
         {
@@ -78,8 +78,10 @@ void MsgUIRouter::msg_from_peer(QByteArray from, QString msg)
 
     if (!chatwindows[from]->isActiveWindow())
         {
+            if (blinkqueue.isEmpty())
+                systray->StartBlinking();
+
             blinkqueue.append(from);
-            systray->StartBlinking();
         }
 }
 
