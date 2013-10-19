@@ -24,6 +24,9 @@ static struct PICA_client_callbacks callbacks;
 
 #ifdef WIN32
 static HANDLE *mt_locks;
+
+#define inet_ntop PICA_inet_ntop //own implementation of inet_ntop() for WinXP compatibility
+
 #else
 static pthread_mutex_t *mt_locks;
 #endif
@@ -543,7 +546,7 @@ do
 				ntohs(*(uint16_t*)(buf + pos + 5))
 			  );
 		
-		pos +=7;
+        pos += PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 		break;
 		
 	    	case PICA_PROTO_NEWNODE_IPV6:
@@ -555,7 +558,7 @@ do
 				ntohs(*(uint16_t*)(buf + pos + 17))
 			  );
 		  
-		pos += 19;
+        pos += PICA_PROTO_NODELIST_ITEM_IPV6_SIZE;
 		break;
 		
 	    	case PICA_PROTO_NEWNODE_DNS:
@@ -1509,3 +1512,28 @@ if (cid->write_buf)
 
 free(cid);
 }
+
+#ifdef WIN32
+ const char *PICA_inet_ntop(int af, const void *src, char *dst, size_t size)
+{
+    unsigned char *chsrc = (unsigned char*)src;
+    switch(af)
+    {
+    case AF_INET:
+    sprintf(dst, "%u.%u.%u.%u", chsrc[0], chsrc[1], chsrc[2], chsrc[3]);
+    break;
+
+    case AF_INET6:
+    sprintf(dst, "%x%02x:%x%02x:%x%02x:%x%02x:%x%02x:%x%02x:%x%02x:%x%02x", chsrc[0], chsrc[1], chsrc[2], chsrc[3],
+                                                            chsrc[4], chsrc[5], chsrc[6], chsrc[7],
+                                                            chsrc[8], chsrc[9], chsrc[10], chsrc[11],
+                                                            chsrc[12],chsrc[13], chsrc[14], chsrc[15]);
+    break;
+
+    default:
+    return NULL;
+    }
+
+    return dst;
+}
+#endif
