@@ -25,6 +25,7 @@ static struct PICA_client_callbacks callbacks;
 #ifdef WIN32
 static HANDLE *mt_locks;
 
+const char *PICA_inet_ntop(int af, const void *src, char *dst, size_t size);
 #define inet_ntop PICA_inet_ntop //own implementation of inet_ntop() for WinXP compatibility
 
 #else
