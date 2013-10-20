@@ -79,9 +79,15 @@ void MsgUIRouter::msg_from_peer(QByteArray from, QString msg)
     if (!chatwindows[from]->isActiveWindow())
         {
             if (blinkqueue.isEmpty())
+            {
                 systray->StartBlinking();
+                blinkqueue.append(from);
+            }
+            else if (blinkqueue.last() != from)
+            {
+                blinkqueue.append(from);
+            }
 
-            blinkqueue.append(from);
         }
 }
 
