@@ -5,6 +5,7 @@
 #include <QApplication>
 #include "../PICA_proto.h"
 #include "accounts.h"
+#include "dialogs/showpicaiddialog.h"
 
 #include <QMessageBox>
 
@@ -50,10 +51,6 @@ void PicaActionCenter::exit()
 
 void PicaActionCenter::showmyid()
 {
-    QMessageBox mbx;
-    mbx.setTextFormat(Qt::RichText);
-    mbx.setText(tr("Account: <b>%1</b><br>Pica Pica ID: <b>%2</b>")
-                .arg(Accounts::GetCurrentAccount().name)
-                .arg(Accounts::GetCurrentAccount().id.toBase64().constData()));
-    mbx.exec();
+    ShowPicaIdDialog d(Accounts::GetCurrentAccount().name, Accounts::GetCurrentAccount().id, tr("My Current Account"));
+    d.exec();
 }

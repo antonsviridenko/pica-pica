@@ -95,6 +95,8 @@ pica-client/dialogs/registeraccountdialog.cpp \
 pica-client/dialogs/registeraccountdialog.h \
 pica-client/dialogs/viewcertdialog.cpp \
 pica-client/dialogs/viewcertdialog.h \
+pica-client/dialogs/showpicaiddialog.cpp \
+pica-client/dialogs/showpicaiddialog.h \
 PICA_client.c \
 PICA_client.h \
 PICA_msgproc.c \
@@ -117,6 +119,7 @@ moc_picasystray.cpp \
 moc_registeraccountdialog.cpp \
 moc_skynet.cpp \
 moc_viewcertdialog.cpp \
+moc_showpicaiddialog.cpp \
 moc_dhparam.cpp \
 ui_mainwindow.h
 

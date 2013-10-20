@@ -1,6 +1,7 @@
 #include "contactlistwidget.h"
 #include "globals.h"
 #include "dialogs/viewcertdialog.h"
+#include "dialogs/showpicaiddialog.h"
 #include "msguirouter.h"
 #include <QMenu>
 #include <QMessageBox>
@@ -191,13 +192,10 @@ void ContactListWidget::view_cert()
 
 void ContactListWidget::show_id()
 {
-    QMessageBox mbx;
-    mbx.setTextFormat(Qt::RichText);
-    mbx.setText(tr("Contact name: <b>%1</b><br>Pica Pica ID: <b>%2</b>")
-                .arg(wgitem_to_recs[currentItem()]->name)
-                .arg(wgitem_to_recs[currentItem()]->id.toBase64().constData()));
-
-    mbx.exec();
+    ShowPicaIdDialog d(wgitem_to_recs[currentItem()]->name,
+                        wgitem_to_recs[currentItem()]->id,
+                        tr("Contact's ID"));
+    d.exec();
 }
 
 void ContactListWidget::Reload()

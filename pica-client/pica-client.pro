@@ -33,7 +33,8 @@ SOURCES += main.cpp\
     openssltool.cpp \
     history.cpp \
     ../PICA_id.c \
-    dhparam.cpp
+    dhparam.cpp \
+    dialogs/showpicaiddialog.cpp
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -60,7 +61,8 @@ HEADERS  += mainwindow.h \
     openssltool.h \
     history.h \
     ../PICA_id.h \
-    dhparam.h
+    dhparam.h \
+    dialogs/showpicaiddialog.h
 
 
 DEFINES = PICA_MULTITHREADED

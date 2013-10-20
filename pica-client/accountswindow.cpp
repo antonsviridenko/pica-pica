@@ -4,6 +4,7 @@
 #include "globals.h"
 #include "dialogs/addaccountdialog.h"
 #include "dialogs/registeraccountdialog.h"
+#include "dialogs/showpicaiddialog.h"
 #include "../PICA_client.h"
 #include "skynet.h"
 #include "openssltool.h"
@@ -168,10 +169,8 @@ void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, b
     }
     else
     {
-        QMessageBox mbx;
-        mbx.setTextFormat(Qt::RichText);
-        mbx.setText(tr("New account<br> Pica Pica ID: <b>%1</b><br> is created.").arg(id.toBase64().constData()));
-        mbx.exec();
+        ShowPicaIdDialog d(name, id, tr("New account is created"));
+        d.exec();
     }
     LoadAccounts();
 }
