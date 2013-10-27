@@ -7,6 +7,8 @@
 #include <QMenuBar>
 #include <QAction>
 #include <QMenu>
+#include <QPushButton>
+#include <QLabel>
 #include "history.h"
 
 class TextSend : public QTextEdit
@@ -51,6 +53,11 @@ private:
     QAction *histAll;
     QString peer_name_;
     QString my_name_;
+    bool addcontactquestion;
+    QPushButton *btAddCtYes;
+    QPushButton *btAddCtNo;
+    QPushButton *btAddCtBlacklist;
+    QLabel *lbAddCtQuestion;
 
     void put_message(QString msg, QByteArray id, bool is_me);
     int draw_message(QString msg, QString nickname, QString datetime, QString color, bool is_delivered);
@@ -64,6 +71,11 @@ private slots:
     void show_history24h();
     void show_history1w();
     void show_historyAll();
+
+    void addct_yes();
+    void addct_no();
+    void addct_blacklist();
+    void addct_removequestion();
 };
 
 #endif // CHATWINDOW_H

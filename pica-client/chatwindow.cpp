@@ -10,11 +10,46 @@
 #include <QDateTime>
 #include <QMessageBox>
 
+
 ChatWindow::ChatWindow(QByteArray peer_id) :
     QWidget(0), peer_id_(peer_id), hist(config_dbname, Accounts::GetCurrentAccount().id)
 {
     QVBoxLayout *layout;
     QString title;
+
+
+
+    {
+        Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
+        peer_name_ = ct.GetContactName(peer_id_);
+
+        title = peer_name_;
+
+        if (peer_name_.isEmpty())
+            peer_name_ = peer_id_.toBase64();
+
+        QList<Contacts::ContactRecord>  L = ct.GetContacts(Contacts::temporary);
+        addcontactquestion = false;
+        for (int i = 0; i < L.size(); i++)
+        {
+            if (L[i].id == peer_id_)
+            {
+            addcontactquestion = true;
+            break;
+            }
+        }
+
+    }
+    {
+        Accounts ac(config_dbname);
+        my_name_ = ac.GetName(Accounts::GetCurrentAccount().id);
+
+        if (my_name_.isEmpty())
+            my_name_ = Accounts::GetCurrentAccount().id.toBase64();
+    }
+
+    title = QObject::tr("Chat with ") + title + " - " + peer_id_.toBase64();
+    setWindowTitle(title);
 
     layout = new QVBoxLayout;
 
@@ -32,6 +67,28 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
     layout->addWidget(chatw, 3);
     layout->addWidget(sendtextw, 1, Qt::AlignBottom);
 
+    if (addcontactquestion)
+    {
+        QHBoxLayout *hl = new QHBoxLayout();
+
+        lbAddCtQuestion = new QLabel(tr("Do you want to add \"%1\" to your contact list?").arg(peer_name_));
+        btAddCtYes = new QPushButton(tr("Yes"));
+        btAddCtNo = new QPushButton(tr("No"));
+        btAddCtBlacklist = new QPushButton(tr("Add to blacklist"));
+
+        layout->insertWidget(2, lbAddCtQuestion, Qt::AlignLeft);
+
+        hl->addWidget(btAddCtYes);
+        hl->addWidget(btAddCtNo);
+        hl->addWidget(btAddCtBlacklist);
+
+        layout->insertLayout(3, hl);
+
+        connect(btAddCtYes, SIGNAL(clicked()), this, SLOT(addct_yes()));
+        connect(btAddCtNo, SIGNAL(clicked()), this, SLOT(addct_no()));
+        connect(btAddCtBlacklist, SIGNAL(clicked()), this, SLOT(addct_blacklist()));
+    }
+
     setLayout(layout);
 
     setWindowIcon(picapica_ico_sit);
@@ -44,10 +101,6 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
     hist1week = new QAction(tr("Last &Week"), this);
     histAll = new QAction(tr("&All"), this);
 
-    connect(hist24h, SIGNAL(triggered()), this, SLOT(show_history24h()));
-    connect(hist1week, SIGNAL(triggered()), this, SLOT(show_history1w()));
-    connect(histAll,SIGNAL(triggered()), this, SLOT(show_historyAll()));
-
     {
         QMenu *m;
         m = menu->addMenu(tr("&History"));
@@ -56,28 +109,12 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
         m->addAction(hist1week);
         m->addAction(histAll);
     }
-
     layout->insertSpacing(0, menu->size().height());
 
-    {
-        Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
-        peer_name_ = ct.GetContactName(peer_id_);
+    connect(hist24h, SIGNAL(triggered()), this, SLOT(show_history24h()));
+    connect(hist1week, SIGNAL(triggered()), this, SLOT(show_history1w()));
+    connect(histAll,SIGNAL(triggered()), this, SLOT(show_historyAll()));
 
-        title = peer_name_;
-
-        if (peer_name_.isEmpty())
-            peer_name_ = peer_id_.toBase64();
-
-    }
-    {
-        Accounts ac(config_dbname);
-        my_name_ = ac.GetName(Accounts::GetCurrentAccount().id);
-
-        if (my_name_.isEmpty())
-            my_name_ = Accounts::GetCurrentAccount().id.toBase64();
-    }
-    title = QObject::tr("Chat with ") + title + " - " + peer_id_.toBase64();
-    setWindowTitle(title);
 }
 
 void ChatWindow::put_message(QString msg, QByteArray id, bool is_me)
@@ -269,3 +306,35 @@ void ChatWindow::show_historyAll()
     print_history(hist.GetMessages(peer_id_, 0, QDateTime::currentDateTime().toTime_t()));
 }
 
+void ChatWindow::addct_yes()
+{
+    Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
+
+    ct.Add(peer_id_, Contacts::regular);
+    addct_removequestion();
+}
+
+void ChatWindow::addct_no()
+{
+    addct_removequestion();
+}
+
+void ChatWindow::addct_blacklist()
+{
+    Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
+
+    ct.Add(peer_id_, Contacts::blacklisted);
+    addct_removequestion();
+}
+
+void ChatWindow::addct_removequestion()
+{
+    if (addcontactquestion)
+    {
+    delete btAddCtYes;
+    delete btAddCtNo;
+    delete btAddCtBlacklist;
+    delete lbAddCtQuestion;
+    addcontactquestion = false;
+    }
+}
