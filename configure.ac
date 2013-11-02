@@ -69,8 +69,8 @@ AS_IF([test "x$PICA_CLIENT_ENABLED" = "xyes"],[
 PKG_CHECK_MODULES([QT_DEPENDENCIES], [QtCore QtGui QtSql])
 AC_SUBST([QT_DEPENDENCIES_CFLAGS])
 AC_SUBST([QT_DEPENDENCIES_LIBS])
-AC_CHECK_PROGS([UIC], [uic uic-qt4], [notfound])
-AC_CHECK_PROGS([MOC], [moc moc-qt4], [notfound])
+AC_CHECK_PROGS([UIC], [uic uic-qt4 uic4], [notfound])
+AC_CHECK_PROGS([MOC], [moc moc-qt4 moc4], [notfound])
 #fail if not found ...
 AS_IF([test "x$UIC" = xnotfound],[AC_MSG_ERROR(["uic program not found. Please install Qt development package"])])
 AS_IF([test "x$MOC" = xnotfound],[AC_MSG_ERROR(["moc program not found. Please install Qt development package"])])
