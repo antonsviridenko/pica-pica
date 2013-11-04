@@ -844,15 +844,15 @@ if (!cid->ssl_comm)
 {
     struct addrinfo h,*r;
 
-#ifdef AI_IDN
-#define H_AI_FLAGS (AI_ADDRCONFIG | AI_IDN)
-#else
-#define H_AI_FLAGS AI_ADDRCONFIG
-#endif
-
     memset(&h,0,sizeof(struct addrinfo));
 
-    h.ai_flags=H_AI_FLAGS;
+    h.ai_flags=0;
+#ifdef AI_IDN
+    h.ai_flags = h.ai_flags | AI_IDN;
+#endif
+#ifdef AI_ADDRCONFIG
+    h.ai_flags = h.ai_flags | AI_ADDRCONFIG;
+#endif
     h.ai_family=AF_INET;//CONF
     h.ai_socktype=SOCK_STREAM;
     h.ai_protocol=IPPROTO_TCP;
