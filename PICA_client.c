@@ -41,6 +41,10 @@ static unsigned int procmsg_CLNODELIST(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_MSGUTF8(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_MSGOK(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_PINGREQ(unsigned char*,unsigned int,void*);
+static unsigned int procmsg_SENDFILEREQUEST(unsigned char*,unsigned int,void*);
+static unsigned int procmsg_ACCEPTEDFILE(unsigned char*,unsigned int,void*);
+static unsigned int procmsg_DENIEDFILE(unsigned char*,unsigned int,void*);
+static unsigned int procmsg_FILEFRAGMENT(unsigned char*,unsigned int,void*);
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_conninfo *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_chaninfo *chn, unsigned int msgid, unsigned int size);
@@ -50,13 +54,17 @@ const struct PICA_msginfo  c2n_messages[] = {
 	{PICA_PROTO_CONNREQINC, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNREQINC_SIZE, procmsg_CONNREQINC},
 	{PICA_PROTO_NOTFOUND, PICA_MSG_FIXED_SIZE, PICA_PROTO_NOTFOUND_SIZE, procmsg_NOTFOUND},
 	{PICA_PROTO_FOUND, PICA_MSG_FIXED_SIZE, PICA_PROTO_FOUND_SIZE, procmsg_FOUND},
-    {PICA_PROTO_CLNODELIST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CLNODELIST},
-    {PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ}
+	{PICA_PROTO_CLNODELIST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CLNODELIST},
+	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ}
 };//---!!! PING!!!
 
 const struct PICA_msginfo  c2c_messages[] = {
 	{PICA_PROTO_MSGUTF8, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MSGUTF8},
-	{PICA_PROTO_MSGOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_MSGOK_SIZE, procmsg_MSGOK}
+	{PICA_PROTO_MSGOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_MSGOK_SIZE, procmsg_MSGOK},
+	{PICA_PROTO_SENDFILEREQUEST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_SENDFILEREQUEST},
+	{PICA_PROTO_ACCEPTEDFILE, PICA_MSG_FIXED_SIZE, PICA_PROTO_ACCEPTEDFILE_SIZE, procmsg_ACCEPTEDFILE},
+	{PICA_PROTO_DENIEDFILE, PICA_MSG_FIXED_SIZE, PICA_PROTO_DENIEDFILE_SIZE, procmsg_DENIEDFILE},
+	{PICA_PROTO_FILEFRAGMENT, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_FILEFRAGMENT}
 };
 
 struct PICA_msginfo c2n_init_messages[] = {
@@ -632,6 +640,95 @@ if (mp)
     }
 else
     return 0;
+
+return 1;
+}
+
+static unsigned int procmsg_SENDFILEREQUEST(unsigned char* buf, unsigned int nb, void* p)
+{
+struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+struct PICA_proto_msg *mp;
+unsigned int reply;
+unsigned int replysize;
+
+if (chan->recvfilestate != PICA_CHANRECVFILESTATE_IDLE)
+	return 0;
+
+if (callbacks.accept_file_cb(chan->peer_id, *(uint64_t*)(buf + 4), buf + 12, *(uint16_t*)(buf + 2) - 8))
+	{
+	reply = PICA_PROTO_ACCEPTEDFILE;
+	replysize = PICA_PROTO_ACCEPTEDFILE_SIZE;
+
+	chan->recvfilestate  = PICA_CHANRECVFILESTATE_RECEIVING;
+	chan->recvfile_size = *(uint64_t*)(buf + 4);
+	chan->recvfile_pos = 0;
+	}
+else
+	{
+	reply = PICA_PROTO_DENIEDFILE;
+	reply = PICA_PROTO_DENIEDFILE_SIZE;
+	}
+
+mp = c2c_writebuf_push( chan, reply, replysize);
+
+if (mp)
+    {
+    RAND_bytes(mp->tail, 2);
+    }
+else
+    return 0;
+
+return 1;
+}
+
+static unsigned int procmsg_ACCEPTEDFILE(unsigned char* buf, unsigned int nb, void* p)
+{
+struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+
+if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENTREQ)
+    return 0;
+
+callbacks.accepted_file_cb(chan->peer_id);
+
+chan->sendfilestate = PICA_CHANSENDFILESTATE_SENDING;
+
+return 1;
+}
+
+static unsigned int procmsg_DENIEDFILE(unsigned char* buf, unsigned int nb, void* p)
+{
+struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+
+if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENTREQ)
+    return 0;
+
+callbacks.denied_file_cb(chan->peer_id);
+
+chan->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
+
+return 1;
+}
+
+static unsigned int procmsg_FILEFRAGMENT(unsigned char* buf, unsigned int nb, void* p)
+{
+struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+
+
+if (chan->recvfilestate != PICA_CHANRECVFILESTATE_RECEIVING)
+    return 0;
+
+if (nb - 4 !=  *(uint16_t*)(buf + 2))
+    return 0;
+
+chan->recvfile_pos += (nb - 4);
+
+if (chan->recvfile_pos == chan->recvfile_size)
+    chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
+
+if (chan->recvfile_pos > chan->recvfile_size) //received more than file_size
+    return 0;
+
+callbacks.file_fragment(chan->peer_id, buf + 4, nb - 4);
 
 return 1;
 }
@@ -1430,6 +1527,69 @@ if ((mp = c2c_writebuf_push(chn, PICA_PROTO_MSGUTF8, len + 4)))
 	}
 else
 	return PICA_ERRNOMEM;
+
+return PICA_OK;
+}
+
+int PICA_send_file_request(struct PICA_chaninfo *chn, const char *filename, uint64_t file_size)
+{
+struct PICA_proto_msg *mp;
+size_t namelen;
+
+if (chn->sendfilestate != PICA_CHANSENDFILESTATE_IDLE)
+	return PICA_ERRFILETRANSFERINPROGRESS;
+
+if (filename == NULL)
+	return PICA_ERRINVFILENAME;
+
+namelen = strlen(filename);
+
+if (namelen  == 0 || namelen > PICA_PROTO_C2CMSG_MAXFILENAMESIZE)
+	return PICA_ERRINVFILENAME;
+
+if ((mp = c2c_writebuf_push(chn, PICA_PROTO_SENDFILEREQUEST, namelen + 12)))
+	{
+    *((uint16_t*)mp->tail) = namelen + 8;
+    *((uint64_t*)(mp->tail + 2)) = file_size;
+
+	memcpy(mp->tail + 10, filename, namelen);
+	}
+else
+	return PICA_ERRNOMEM;
+
+chn->sendfilestate = PICA_CHANSENDFILESTATE_SENTREQ;
+chn->sendfile_size = file_size;
+chn->sendfile_pos = 0;
+
+return PICA_OK;
+}
+
+int PICA_send_file_fragment(struct PICA_chaninfo *chn, const char *buf, size_t fragment_size)
+{
+struct PICA_proto_msg *mp;
+
+if (buf == NULL || fragment_size > PICA_PROTO_C2CMSG_MAXDATASIZE)
+    return PICA_ERRINVARG;
+
+if (chn->sendfilestate != PICA_CHANSENDFILESTATE_SENDING)
+    return PICA_ERRFILETRANSFERNOTINPROGRESS;
+
+if ((mp = c2c_writebuf_push(chn, PICA_PROTO_FILEFRAGMENT, fragment_size + 4)))
+    {
+    *((uint16_t*)mp->tail) = fragment_size;
+
+    memcpy(mp->tail + 2, buf, fragment_size);
+    }
+else
+    return PICA_ERRNOMEM;
+
+chn->sendfile_pos += fragment_size;
+
+if (chn->sendfile_pos == chn->sendfile_size)
+    chn->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
+
+if (chn->sendfile_pos > chn->sendfile_size)
+    return PICA_ERRFILEFRAGMENTCROSSEDSIZE;
 
 return PICA_OK;
 }

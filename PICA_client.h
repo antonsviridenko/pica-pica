@@ -11,6 +11,7 @@
 #include <windows.h>
 
 typedef unsigned __int16 uint16_t;
+typedef unsigned __int64 uint64_t;
 
 #else
 
@@ -20,6 +21,7 @@ typedef unsigned __int16 uint16_t;
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <signal.h>
+#include <stdint.h>
 
 #ifdef PICA_MULTITHREADED
 #include <pthread.h>
@@ -71,6 +73,10 @@ typedef unsigned __int16 uint16_t;
 
 #define PICA_ERRPROTOOLD -14
 #define PICA_ERRPROTONEW -15
+#define PICA_ERRINVFILENAME -16
+#define PICA_ERRFILETRANSFERINPROGRESS -17
+#define PICA_ERRFILETRANSFERNOTINPROGRESS -18
+#define PICA_ERRFILEFRAGMENTCROSSEDSIZE -19
 
 //#define PICA_CHNMSGBUFLEN 104
 
@@ -82,6 +88,13 @@ typedef unsigned __int16 uint16_t;
 #define PICA_CHANSTATE_ACTIVE 13
 #define PICA_CONNSTATE_CONNECTING 17
 #define PICA_CONNSTATE_CONNECTED 19
+
+#define PICA_CHANSENDFILESTATE_IDLE 0
+#define PICA_CHANSENDFILESTATE_SENTREQ 20
+#define PICA_CHANSENDFILESTATE_SENDING 22
+
+#define PICA_CHANRECVFILESTATE_IDLE 0
+#define PICA_CHANRECVFILESTATE_RECEIVING 23
 
 #define PICA_CHAN_ACTIVATE_TIMEOUT 30
 
@@ -137,12 +150,18 @@ struct PICA_chaninfo *next;
 struct PICA_chaninfo *prev;
 int state;
 time_t timestamp;
+int sendfilestate;
+uint64_t sendfile_size;
+uint64_t sendfile_pos;
+int recvfilestate;
+uint64_t recvfile_size;
+uint64_t recvfile_pos;
 };
 
 struct PICA_client_callbacks
 {
 //получение сообщения.
-void (*newmsg_cb)(const unsigned char *peer_id,char* msgbuf,unsigned int nb,int type);
+void (*newmsg_cb)(const unsigned char *peer_id,const char* msgbuf,unsigned int nb,int type);
 //получение подтверждения о доставке сообщения
 void (*msgok_cb)(const unsigned char *peer_id);
 //создание канала с собеседником
@@ -160,6 +179,14 @@ void (*channel_closed_cb)(const unsigned char *peer_id, int reason);
 void (*nodelist_cb)(int type, void *addr_bin, const char *addr_str, unsigned int port);
 //сертификат собеседника в формате PEM. Функция должна сравнить предъявленный сертификат с сохранённым (если есть) и вернуть 1 при успешной проверке, 0 - при неуспешной
 int (*peer_cert_verify_cb)(const unsigned char *peer_id, const char *cert_pem, unsigned int nb);
+
+int (*accept_file_cb)(const unsigned char  *peer_id, uint64_t  file_size, const char *filename, unsigned int filename_size);
+
+void (*accepted_file_cb)(const unsigned char *peer_id);
+
+void (*denied_file_cb)(const unsigned char *peer_id);
+
+void (*file_fragment)(const unsigned char *peer_id, const char* buf,unsigned int nb);
 };
 
  	
@@ -192,6 +219,9 @@ int PICA_write(struct PICA_conninfo *ci);
 
 int PICA_send_msg(struct PICA_chaninfo *chn, char *buf,unsigned int len);
 int PICA_read_msg(struct PICA_chaninfo *chn,char *buf,unsigned int *n);
+
+int PICA_send_file_request(struct PICA_chaninfo *chn, const char *filename, uint64_t file_size);
+int PICA_send_file_fragment(struct PICA_chaninfo *chn, const char *buf, size_t fragment_size);
 
 void PICA_close_channel(struct PICA_chaninfo *chn);
 void PICA_close_connection(struct PICA_conninfo *cid);

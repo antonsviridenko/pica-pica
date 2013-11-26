@@ -358,7 +358,7 @@ void SkyNet::emit_PeerCertificateReceived(QByteArray peer_id, QString cert_pem, 
 //all callbacks are executed in separate thread, created in Nodethread instance, REMEMBER THAT !!!
 // write_mutex is locked
 
-void SkyNet::newmsg_cb(const unsigned char *peer_id, char *msgbuf, unsigned int nb, int type)
+void SkyNet::newmsg_cb(const unsigned char *peer_id, const char *msgbuf, unsigned int nb, int type)
 {
 QString msg = QString::fromUtf8(msgbuf, nb);
 

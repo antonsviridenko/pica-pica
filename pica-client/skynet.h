@@ -56,7 +56,7 @@ private:
     void emit_PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified);
 
     //получение сообщения.
-    static void newmsg_cb(const unsigned char *peer_id,char* msgbuf,unsigned int nb,int type);
+    static void newmsg_cb(const unsigned char *peer_id,const char* msgbuf,unsigned int nb,int type);
     //получение подтверждения о доставке сообщения
     static void msgok_cb(const unsigned char *peer_id);
     //создание канала с собеседником
