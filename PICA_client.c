@@ -1704,25 +1704,16 @@ return PICA_OK;
 int PICA_send_file_fragment(struct PICA_chaninfo *chn)
 {
 struct PICA_proto_msg *mp;
-char *buf;
+char buf[PICA_FILEFRAGMENTSIZE];
 size_t fragment_size;
-
-if (buf == NULL || fragment_size > PICA_PROTO_C2CMSG_MAXDATASIZE)
-    return PICA_ERRINVARG;
 
 if (chn->sendfilestate != PICA_CHANSENDFILESTATE_SENDING)
     return PICA_ERRFILETRANSFERNOTINPROGRESS;
-
-buf = (char*)malloc(PICA_FILEFRAGMENTSIZE);
-
-if (!buf)
-    return PICA_ERRNOMEM;
 
 fragment_size = fread(buf, 1, PICA_FILEFRAGMENTSIZE, chn->sendfile_stream);
 
 if (fragment_size == 0)
     {
-    free(buf);
     fclose(chn->sendfile_stream);
     chn->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
 
@@ -1740,11 +1731,9 @@ if ((mp = c2c_writebuf_push(chn, PICA_PROTO_FILEFRAGMENT, fragment_size + 4)))
     *((uint16_t*)mp->tail) = fragment_size;
 
     memcpy(mp->tail + 2, buf, fragment_size);
-    free(buf);
     }
 else
     {
-    free(buf);
     return PICA_ERRNOMEM;
     }
 
