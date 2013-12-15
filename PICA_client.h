@@ -15,8 +15,13 @@ typedef unsigned __int64 uint64_t;
 
 #else
 
+#define _FILE_OFFSET_BITS 64
+
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -40,6 +45,8 @@ typedef unsigned __int64 uint64_t;
 #include <openssl/bio.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
+
+#include <stdio.h>
 
 #ifdef PICA_MULTITHREADED
 
@@ -77,6 +84,8 @@ typedef unsigned __int64 uint64_t;
 #define PICA_ERRFILETRANSFERINPROGRESS -17
 #define PICA_ERRFILETRANSFERNOTINPROGRESS -18
 #define PICA_ERRFILEFRAGMENTCROSSEDSIZE -19
+#define PICA_ERRFILEOPEN -20
+#define PICA_ERRFILEIO -21
 
 //#define PICA_CHNMSGBUFLEN 104
 
@@ -84,6 +93,7 @@ typedef unsigned __int64 uint64_t;
 #define PICA_CHANWRITEBUFSIZE 4096
 #define PICA_CONNREADBUFSIZE 65536
 #define PICA_CONNWRITEBUFSIZE 4096
+#define PICA_FILEFRAGMENTSIZE 16384 //max size of TLS record
 
 #define PICA_CHANSTATE_ACTIVE 13
 #define PICA_CONNSTATE_CONNECTING 17
@@ -92,9 +102,12 @@ typedef unsigned __int64 uint64_t;
 #define PICA_CHANSENDFILESTATE_IDLE 0
 #define PICA_CHANSENDFILESTATE_SENTREQ 20
 #define PICA_CHANSENDFILESTATE_SENDING 22
+#define PICA_CHANSENDFILESTATE_PAUSED 23
 
 #define PICA_CHANRECVFILESTATE_IDLE 0
-#define PICA_CHANRECVFILESTATE_RECEIVING 23
+#define PICA_CHANRECVFILESTATE_RECEIVING 24
+#define PICA_CHANRECVFILESTATE_PAUSED 25
+
 
 #define PICA_CHAN_ACTIVATE_TIMEOUT 30
 
@@ -122,6 +135,7 @@ unsigned char *write_buf;
 unsigned int read_pos;
 unsigned int write_pos;
 unsigned int write_buflen;
+unsigned int write_sslbytestowrite;
 
 struct PICA_chaninfo *chan_list_head;
 struct PICA_chaninfo *chan_list_end;
@@ -145,6 +159,7 @@ unsigned char *write_buf;
 unsigned int read_pos;
 unsigned int write_pos;
 unsigned int write_buflen;
+unsigned int write_sslbytestowrite;
 
 struct PICA_chaninfo *next;
 struct PICA_chaninfo *prev;
@@ -153,9 +168,12 @@ time_t timestamp;
 int sendfilestate;
 uint64_t sendfile_size;
 uint64_t sendfile_pos;
+FILE *sendfile_stream;
+
 int recvfilestate;
 uint64_t recvfile_size;
 uint64_t recvfile_pos;
+FILE *recvfile_stream;
 };
 
 struct PICA_client_callbacks
@@ -186,7 +204,9 @@ void (*accepted_file_cb)(const unsigned char *peer_id);
 
 void (*denied_file_cb)(const unsigned char *peer_id);
 
-void (*file_fragment)(const unsigned char *peer_id, const char* buf,unsigned int nb);
+void (*file_progress)(const unsigned char *peer_id, uint64_t sent, uint64_t received);
+
+void (*file_control)(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd);
 };
 
  	
@@ -220,8 +240,8 @@ int PICA_write(struct PICA_conninfo *ci);
 int PICA_send_msg(struct PICA_chaninfo *chn, char *buf,unsigned int len);
 int PICA_read_msg(struct PICA_chaninfo *chn,char *buf,unsigned int *n);
 
-int PICA_send_file_request(struct PICA_chaninfo *chn, const char *filename, uint64_t file_size);
-int PICA_send_file_fragment(struct PICA_chaninfo *chn, const char *buf, size_t fragment_size);
+//filename - ASCII or UTF-8 encoded string
+int PICA_send_file(struct PICA_chaninfo *chn, const char *filename);
 
 void PICA_close_channel(struct PICA_chaninfo *chn);
 void PICA_close_connection(struct PICA_conninfo *cid);
