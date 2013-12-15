@@ -1875,7 +1875,7 @@ wlen = MultiByteToWideChar(CP_UTF8, 0, filename_utf8, -1, NULL, 0);
 if (wlen == 0 || wlen == 0xFFFD)
     return PICA_ERRINVFILENAME;
 
-wfilename = (whchar_t*)malloc(wlen * sizeof(wchar_t));
+wfilename = (wchar_t*)malloc(wlen * sizeof(wchar_t));
 
 if (!wfilename)
     return PICA_ERRNOMEM;
