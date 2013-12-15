@@ -153,26 +153,27 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 
 void SkyNet::timerEvent(QTimerEvent *e)
 {
-if (self_aware)
+    if (self_aware)
     {
-    QList<QByteArray> c2c_peer_ids = msgqueues.keys();
+        if (write_mutex.tryLock(10))
+        {
+            QList<QByteArray> c2c_peer_ids = msgqueues.keys();
 
-    write_mutex.lock();
+            c2c_peer_ids = filter_existing_chans(c2c_peer_ids);
 
-    c2c_peer_ids = filter_existing_chans(c2c_peer_ids);
+            for (int i = 0; i < c2c_peer_ids.size(); i++)
+            {
+                int ret;
 
-    for (int i = 0; i < c2c_peer_ids.size(); i++)
-    {
-        int ret;
+                struct PICA_chaninfo *chan = NULL;
 
-        struct PICA_chaninfo *chan = NULL;
+                ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), &chan);
 
-        ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), &chan);
+                qDebug()<<"restoring channel to "<<c2c_peer_ids[i]<<" ret ="<<ret<<" in timer event\n";
 
-        qDebug()<<"restoring channel to "<<c2c_peer_ids[i]<<" ret ="<<ret<<" in timer event\n";
-
-    }
-    write_mutex.unlock();
+            }
+            write_mutex.unlock();
+        }
     }
 else
     {
