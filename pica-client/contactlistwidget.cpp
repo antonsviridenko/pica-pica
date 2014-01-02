@@ -2,11 +2,13 @@
 #include "globals.h"
 #include "dialogs/viewcertdialog.h"
 #include "dialogs/showpicaiddialog.h"
+#include "dialogs/filetransferdialog.h"
 #include "msguirouter.h"
 #include <QMenu>
 #include <QMessageBox>
 #include <QContextMenuEvent>
 #include <QInputDialog>
+#include <QTimer>
 
 ContactListWidget::ContactListWidget(QWidget *parent) :
     QListWidget(parent)
@@ -29,6 +31,9 @@ ContactListWidget::ContactListWidget(QWidget *parent) :
     showidAct = new QAction(tr("Show Pica Pica &ID"), this);
     connect(showidAct, SIGNAL(triggered()), this, SLOT(show_id()));
 
+    sendfileAct = new QAction(tr("Send &File"), this);
+    connect(sendfileAct, SIGNAL(triggered()), this, SLOT(send_file()));
+
     connect(this, SIGNAL(itemDoubleClicked(QListWidgetItem*)), this, SLOT(start_chat()));
 
     setContactsStorage(new Contacts(config_dbname, Accounts::GetCurrentAccount().id));
@@ -50,14 +55,12 @@ void ContactListWidget::contextMenuEvent(QContextMenuEvent *event)
     menu.addAction(addcontactAct);
 
     if (this->itemAt(event->pos()))
+    {
         menu.addAction(startchatAct);
-
-    if (this->itemAt(event->pos()))
         menu.addAction(viewcertAct);
-
-    if (this->itemAt(event->pos()))
         menu.addAction(showidAct);
-
+        menu.addAction(sendfileAct);
+    }
     menu.exec(event->globalPos());
 }
 
@@ -201,4 +204,12 @@ void ContactListWidget::show_id()
 void ContactListWidget::Reload()
 {
     setContactsStorage(storage);
+}
+
+void ContactListWidget::send_file()
+{
+//FileTransferDialog *d = new FileTransferDialog("test", 138900713, FileTransferDialog::SENDING, this);
+
+//d->show();
+
 }

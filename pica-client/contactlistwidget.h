@@ -19,6 +19,7 @@ public:
     QAction *startchatAct;
     QAction *viewcertAct;
     QAction *showidAct;
+    QAction *sendfileAct;
 protected:
     void contextMenuEvent(QContextMenuEvent *event);
 
@@ -41,6 +42,7 @@ private slots:
     void start_chat();
     void view_cert();
     void show_id();
+    void send_file();
 
     //void debug_onmsginput(QString msg, ChatWindow *sender_window);//debug remove after debug
 };
