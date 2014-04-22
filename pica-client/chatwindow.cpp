@@ -219,11 +219,27 @@ void ChatWindow::msg_from_peer(QString msg)
 
 void ChatWindow::msg_delivered()
 {
-    QTextCursor c(chatw->document());
-    c.setPosition(undelivered_msgs.first());
-    c.deleteChar();
-    c.insertText("+");
-    undelivered_msgs.removeFirst();
+    if (undelivered_msgs.isEmpty())
+    {
+    // undelivered_msgs can be empty if new chatwindow instance was created
+    // and undelivered message from previous chat session is delivered
+    // after that.
+
+        QByteArray my_id = Accounts::GetCurrentAccount().id;
+        QMap<QByteArray, QList<QString> > undl = hist.GetUndeliveredMessages();
+
+        if (!undl[my_id].isEmpty())
+            put_message(undl[my_id].first(), my_id , true);
+    }
+
+    if (!undelivered_msgs.isEmpty())
+    {
+        QTextCursor c(chatw->document());
+        c.setPosition(undelivered_msgs.first());
+        c.deleteChar();
+        c.insertText("+");
+        undelivered_msgs.removeFirst();
+    }
 
     hist.SetDelivered(peer_id_);
 }
