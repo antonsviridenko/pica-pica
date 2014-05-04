@@ -4,6 +4,7 @@
 #include "dialogs/showpicaiddialog.h"
 #include "dialogs/filetransferdialog.h"
 #include "msguirouter.h"
+#include "filetransfercontroller.h"
 #include <QMenu>
 #include <QMessageBox>
 #include <QContextMenuEvent>
@@ -208,8 +209,5 @@ void ContactListWidget::Reload()
 
 void ContactListWidget::send_file()
 {
-//FileTransferDialog *d = new FileTransferDialog("test", 138900713, FileTransferDialog::SENDING, this);
-
-//d->show();
-
+    ftctrl->send_file(wgitem_to_recs[currentItem()]->id);
 }

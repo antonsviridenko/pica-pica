@@ -23,7 +23,12 @@ PICA_client_callbacks cbs = {
                             notfound_cb,
                             channel_closed_cb,
                             nodelist_cb,
-                            peer_cert_verify_cb
+                            peer_cert_verify_cb,
+                            accept_file_cb,
+                            accepted_file_cb,
+                            denied_file_cb,
+                            file_progress,
+                            file_control
                             };
 
 PICA_client_init(&cbs);
@@ -70,7 +75,14 @@ void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread
         msgqueues = h.GetUndeliveredMessages();
     }
 
-    c2c_peer_ids = msgqueues.keys();
+    //load file transfers to be completed
+    // sndfilequeues = ...
+
+    QMap<QByteArray, QList<QString> > queues = msgqueues;
+
+    queues.unite(sndfilequeues);
+
+    c2c_peer_ids = queues.uniqueKeys();
 
     for (int i = 0; i < c2c_peer_ids.size(); i++)
     {
@@ -157,7 +169,10 @@ void SkyNet::timerEvent(QTimerEvent *e)
     {
         if (write_mutex.tryLock(10))
         {
-            QList<QByteArray> c2c_peer_ids = msgqueues.keys();
+            QMap<QByteArray, QList<QString> > queues = msgqueues;
+            queues.unite(sndfilequeues);
+
+            QList<QByteArray> c2c_peer_ids = queues.uniqueKeys();
 
             c2c_peer_ids = filter_existing_chans(c2c_peer_ids);
 
@@ -221,6 +236,68 @@ bool SkyNet::isSelfAware()
     return self_aware;
 }
 
+void SkyNet::SendFile(QByteArray to, QString filepath)
+{
+int ret = PICA_OK;
+struct PICA_chaninfo *iptr;
+
+write_mutex.lock();//<<
+
+if ( (iptr = find_active_chan(to)) )
+    {
+        ret = PICA_send_file(iptr, filepath.toUtf8().data());
+
+        if (ret != PICA_OK)
+        {
+            //show error somewhere somehow
+        }
+
+        write_mutex.unlock();//>>
+        return;
+    }
+
+    if (sndfilequeues.contains(to))
+    {
+    //sending multiple files is not supported yet
+    }
+    else
+    {
+       struct PICA_chaninfo *chan = NULL;
+
+       ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), &chan);
+
+       QList<QString> l;
+       l.append(filepath);
+       sndfilequeues[to] = l;
+    }
+
+write_mutex.unlock();//>>
+
+    if (ret!= PICA_OK)
+    {
+    //report error
+    }
+}
+
+void SkyNet::AcceptFile(QByteArray from, QString filepath)
+{
+int ret = PICA_OK;
+struct PICA_chaninfo *iptr;
+
+write_mutex.lock();//<<
+if ( (iptr = find_active_chan(from)) )
+    {
+        ret = PICA_accept_file(iptr, filepath.toUtf8().data(), filepath.toUtf8().size());
+
+        qDebug() << "PICA_accept_file(" << filepath.toUtf8().data() << ", " << filepath.toUtf8().size() << ") returned " << ret << "\n";
+        if (ret != PICA_OK)
+        {
+            //show error somewhere somehow
+        }
+    }
+write_mutex.unlock();//>>
+}
+
 void SkyNet::SendMessage(QByteArray to, QString msg)
 {
 int ret = PICA_OK;
@@ -240,7 +317,6 @@ if ( (iptr = find_active_chan(to)) )
     write_mutex.unlock();//>>
     return;
 }
-
 
     if (msgqueues.contains(to))
     {
@@ -265,17 +341,18 @@ write_mutex.unlock();//>>
 
 }
 
-void SkyNet::flush_msgqueue(QByteArray to)
+void SkyNet::flush_queues(QByteArray to)
 {
     struct PICA_chaninfo *chan;
     int ret;
 
-    if (self_aware && msgqueues.contains(to))
+    if (self_aware && (msgqueues.contains(to) || sndfilequeues.contains(to)))
     {
         qDebug()<<"flushing "<<to<<" message queue\n";
 
         if ((chan = find_active_chan(to)))
         {
+            /////// messages
             while( !msgqueues[to].empty() )
             {
                 ret = PICA_send_msg(chan, msgqueues[to].first().toUtf8().data(), msgqueues[to].first().toUtf8().size());
@@ -292,6 +369,24 @@ void SkyNet::flush_msgqueue(QByteArray to)
 
             if (msgqueues[to].empty())
                 msgqueues.remove(to);
+
+
+           ///////// files
+           while (!sndfilequeues[to].empty())
+           {
+                ret = PICA_send_file(chan, sndfilequeues[to].first().toUtf8().data());
+
+                if (ret != PICA_OK)
+                {
+                    //report error somehow
+                    break;
+                }
+
+                sndfilequeues[to].removeFirst();
+           }
+
+           if (sndfilequeues[to].empty())
+                sndfilequeues.remove(to);
         }
     }
 }
@@ -354,6 +449,26 @@ void SkyNet::emit_PeerCertificateReceived(QByteArray peer_id, QString cert_pem, 
     emit PeerCertificateReceived(peer_id, cert_pem, verified);
 }
 
+void SkyNet::emit_IncomingFileRequestReceived(QByteArray peer_id, quint64 file_size, QString filename)
+{
+    emit IncomingFileRequestReceived(peer_id, file_size, filename);
+}
+
+void SkyNet::emit_OutgoingFileRequestAccepted(QByteArray peer_id)
+{
+    emit OutgoingFileRequestAccepted(peer_id);
+}
+
+void SkyNet::emit_OutgoingFileRequestDenied(QByteArray peer_id)
+{
+    emit OutgoingFileRequestDenied(peer_id);
+}
+
+void SkyNet::emit_FileProgress(QByteArray peer_id, quint64 bytes_sent, quint64 bytes_received)
+{
+    emit FileProgress(peer_id, bytes_sent, bytes_received);
+}
+
 //callbacks
 
 //all callbacks are executed in separate thread, created in Nodethread instance, REMEMBER THAT !!!
@@ -373,7 +488,7 @@ skynet->emit_Delivered(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 
 void SkyNet::channel_established_cb(const unsigned char *peer_id)
 {
-skynet->flush_msgqueue(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+skynet->flush_queues(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
 void SkyNet::channel_failed(const unsigned char *peer_id)
@@ -426,3 +541,35 @@ int SkyNet::peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_p
 
     return 1;
 }
+
+int SkyNet::accept_file_cb(const unsigned char *peer_id, uint64_t file_size, const char *filename, unsigned int filename_size)
+{
+    skynet->emit_IncomingFileRequestReceived(QByteArray((const char*)peer_id, PICA_ID_SIZE),
+                 file_size, QString::fromUtf8(filename, filename_size));
+
+    return 2;//??? accept later code
+}
+
+void SkyNet::accepted_file_cb(const unsigned char *peer_id)
+{
+    qDebug()<<"FILE: file was accepted by remote side\n";
+
+    skynet->emit_OutgoingFileRequestAccepted(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+}
+
+void SkyNet::denied_file_cb(const unsigned char *peer_id)
+{
+    skynet->emit_OutgoingFileRequestDenied(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+}
+
+void SkyNet::file_progress(const unsigned char *peer_id, uint64_t sent, uint64_t received)
+{
+    qDebug()<<"FILE: file progress" << sent << " sent " << received << "received\n";
+    skynet->emit_FileProgress(QByteArray((const char *)peer_id, PICA_ID_SIZE), sent, received);
+}
+
+void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd)
+{
+    //implement me
+}
+

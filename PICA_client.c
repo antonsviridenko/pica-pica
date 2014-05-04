@@ -3,9 +3,7 @@
 #include "PICA_msgproc.h"
 #include "PICA_common.h"
 #include <openssl/dh.h>
-//#ifdef NO_RAND_DEV
-//#include "PICA_rand_seed.h"
-//#endif
+#include <string.h>
 
 #define PICA_DEBUG // debug
 
@@ -653,12 +651,60 @@ else
 return 1;
 }
 
+int PICA_deny_file(struct PICA_chaninfo *chan)
+{
+struct PICA_proto_msg *mp;
+
+if (chan->recvfilestate != PICA_CHANRECVFILESTATE_WAITACCEPT)
+    return PICA_ERRINVARG;
+
+chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
+
+mp = c2c_writebuf_push(chan, PICA_PROTO_DENIEDFILE, PICA_PROTO_DENIEDFILE_SIZE);
+
+if (mp)
+    {
+    RAND_bytes(mp->tail, 2);
+    }
+else
+    return PICA_ERRNOMEM;
+
+return PICA_OK;
+}
+
+int PICA_accept_file(struct PICA_chaninfo *chan, char *filename, unsigned int filenamesize)
+{
+struct PICA_proto_msg *mp;
+int ret;
+
+if (chan->recvfilestate != PICA_CHANRECVFILESTATE_WAITACCEPT)
+    return PICA_ERRINVARG;
+
+//open file
+ret = PICA_recvfile_open_write(chan, filename, filenamesize);
+
+if (ret != PICA_OK)
+    return ret;
+
+mp = c2c_writebuf_push(chan, PICA_PROTO_ACCEPTEDFILE, PICA_PROTO_ACCEPTEDFILE_SIZE);
+
+if (mp)
+    {
+    RAND_bytes(mp->tail, 2);
+    }
+else
+    return PICA_ERRNOMEM;
+
+chan->recvfilestate  = PICA_CHANRECVFILESTATE_RECEIVING;
+
+return PICA_OK;
+}
+
 static unsigned int procmsg_SENDFILEREQUEST(unsigned char* buf, unsigned int nb, void* p)
 {
 struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
 struct PICA_proto_msg *mp;
-unsigned int reply;
-unsigned int replysize;
+int ret;
 
 char *filename = buf + 12;
 unsigned int filenamesize = *(uint16_t*)(buf + 2) - 8;
@@ -666,32 +712,27 @@ unsigned int filenamesize = *(uint16_t*)(buf + 2) - 8;
 if (chan->recvfilestate != PICA_CHANRECVFILESTATE_IDLE)
 	return 0;
 
-reply = PICA_PROTO_DENIEDFILE;
-reply = PICA_PROTO_DENIEDFILE_SIZE;
+chan->recvfilestate  = PICA_CHANRECVFILESTATE_WAITACCEPT;
+chan->recvfile_size = *(uint64_t*)(buf + 4);
+chan->recvfile_pos = 0;
 
+ret = callbacks.accept_file_cb(chan->peer_id, *(uint64_t*)(buf + 4), filename, filenamesize);
 
-if (callbacks.accept_file_cb(chan->peer_id, *(uint64_t*)(buf + 4), filename, filenamesize))
+if (ret > 0)
 	{
-	chan->recvfilestate  = PICA_CHANRECVFILESTATE_RECEIVING;
-	chan->recvfile_size = *(uint64_t*)(buf + 4);
-	chan->recvfile_pos = 0;
-
-    //open file
-    if (PICA_recvfile_open_write(chan, filename, filenamesize) == PICA_OK)
+    if (ret == 1)
         {
-            reply = PICA_PROTO_ACCEPTEDFILE;
-            replysize = PICA_PROTO_ACCEPTEDFILE_SIZE;
+        if (PICA_accept_file(chan, filename, filenamesize) != PICA_OK)
+            if (PICA_deny_file(chan) != PICA_OK)
+                return 0;
         }
+
 	}
-
-mp = c2c_writebuf_push( chan, reply, replysize);
-
-if (mp)
-    {
-    RAND_bytes(mp->tail, 2);
-    }
 else
-    return 0;
+    {
+    if (PICA_deny_file(chan) != PICA_OK)
+        return 0;
+    }
 
 return 1;
 }
@@ -743,6 +784,7 @@ if (fwrite(buf + 4, nb - 4, 1, chan->recvfile_stream) != 1)
     struct PICA_proto_msg *mp;
 
     fclose(chan->recvfile_stream);
+    chan->recvfile_stream = NULL;
 
     chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
 
@@ -763,6 +805,7 @@ if (chan->recvfile_pos == chan->recvfile_size)
     {
     chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
     fclose(chan->recvfile_stream);
+    chan->recvfile_stream = NULL;
     }
 
 if (chan->recvfile_pos > chan->recvfile_size) //received more than file_size
@@ -808,6 +851,7 @@ switch(sender_cmd)
     case PICA_PROTO_FILECONTROL_IOERROR:
     chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
     fclose(chan->recvfile_stream);
+    chan->recvfile_stream = NULL;
     break;
 
     case PICA_PROTO_FILECONTROL_VOID:
@@ -837,6 +881,7 @@ switch(receiver_cmd)
     case PICA_PROTO_FILECONTROL_IOERROR:
     chan->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
     fclose(chan->sendfile_stream);
+    chan->sendfile_stream = NULL;
     break;
 
     default:
@@ -1663,25 +1708,38 @@ else
 return PICA_OK;
 }
 
-int PICA_send_file(struct PICA_chaninfo *chn, const char *filename)
+int PICA_send_file(struct PICA_chaninfo *chn, const char *filepath)
 {
 struct PICA_proto_msg *mp;
 size_t namelen;
 uint64_t file_size;
 int ret;
+const char *filename;//file name part of the filepath
 
 if (chn->sendfilestate != PICA_CHANSENDFILESTATE_IDLE)
 	return PICA_ERRFILETRANSFERINPROGRESS;
 
-if (filename == NULL)
+if (filepath == NULL)
 	return PICA_ERRINVFILENAME;
+
+#ifndef WIN32
+filename = strrchr(filepath, '/');
+#else
+filename = strrchr(filepath, '\\');
+#endif
+
+if (filename)
+    filename++;
+else
+    filename = filepath;
+
 
 namelen = strlen(filename);
 
 if (namelen  == 0 || namelen > PICA_PROTO_C2CMSG_MAXFILENAMESIZE)
 	return PICA_ERRINVFILENAME;
 
-if ((ret = PICA_sendfile_open_read(chn, filename, &file_size)) != PICA_OK)
+if ((ret = PICA_sendfile_open_read(chn, filepath, &file_size)) != PICA_OK)
     return ret;
 
 if ((mp = c2c_writebuf_push(chn, PICA_PROTO_SENDFILEREQUEST, namelen + 12)))
@@ -1689,7 +1747,7 @@ if ((mp = c2c_writebuf_push(chn, PICA_PROTO_SENDFILEREQUEST, namelen + 12)))
     *((uint16_t*)mp->tail) = namelen + 8;
     *((uint64_t*)(mp->tail + 2)) = file_size;
 
-	memcpy(mp->tail + 10, filename, namelen);
+    memcpy(mp->tail + 10, filename, namelen);
 	}
 else
 	return PICA_ERRNOMEM;
@@ -1715,6 +1773,7 @@ fragment_size = fread(buf, 1, PICA_FILEFRAGMENTSIZE, chn->sendfile_stream);
 if (fragment_size == 0)
     {
     fclose(chn->sendfile_stream);
+    chn->sendfile_stream = NULL;
     chn->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
 
     if ((mp = c2c_writebuf_push(chn, PICA_PROTO_FILECONTROL, PICA_PROTO_FILECONTROL_SIZE)))
@@ -1743,6 +1802,7 @@ if (chn->sendfile_pos >= chn->sendfile_size)
     {
     chn->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
     fclose(chn->sendfile_stream);
+    chn->sendfile_stream = NULL;
     }
 
 if (chn->sendfile_pos > chn->sendfile_size)
@@ -1948,9 +2008,9 @@ if (chn->recvfile_stream == NULL)
 
 }
 #else
-chn->sendfile_stream = fopen(filename_utf8, "rb");
+chn->recvfile_stream = fopen(filename_utf8, "wb");
 
-if (chn->sendfile_stream == NULL)
+if (chn->recvfile_stream == NULL)
     return PICA_ERRFILEOPEN;
 #endif
 /////////////

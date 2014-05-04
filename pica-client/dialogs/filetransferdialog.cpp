@@ -3,7 +3,9 @@
 #include <QHBoxLayout>
 #include <stdlib.h>
 
-FileTransferDialog::FileTransferDialog(QString filename, quint64 size, TransferDirection drct, QWidget *parent) :
+FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, quint64 size,
+                                        TransferDirection drct, QWidget *parent) :
+    peer_id_(peer_id),
     QDialog(parent),
     dir_(drct),
     filename_(filename),
@@ -72,6 +74,12 @@ void FileTransferDialog::update(quint64 progress)
                      + bytestoHumanBase2(filesize_) + QString(" %1 %").arg((int)percents));
 
     pgbar->setValue(percents);
+
+    if (progress == filesize_)
+    {
+        leftbutton->setEnabled(false);
+        rightbutton->setEnabled(false);
+    }
 }
 
 void FileTransferDialog::leftbuttonclick()
@@ -82,7 +90,7 @@ void FileTransferDialog::leftbuttonclick()
         {
             leftbutton->setText("Pause");
             rightbutton->setText("Cancel");
-            emit acceptedFile();
+            emit acceptedFile(peer_id_);
             return;
         }
     }
@@ -90,12 +98,12 @@ void FileTransferDialog::leftbuttonclick()
     if (leftbutton->text() == tr("Pause"))
     {
         leftbutton->setText(tr("Resume"));
-        emit pausedFile();
+        emit pausedFile(peer_id_, this);
     }
     else if (leftbutton->text() == tr("Resume"))
     {
         leftbutton->setText(tr("Pause"));
-        emit resumedFile();
+        emit resumedFile(peer_id_, this);
     }
 }
 
@@ -105,14 +113,14 @@ void FileTransferDialog::rightbuttonclick()
     {
         if (rightbutton->text() == tr("Deny"))
         {
-            emit deniedFile();
+            emit deniedFile(peer_id_);
             return;
         }
     }
 
     if (rightbutton->text() == tr("Cancel"))
     {
-        emit cancelledFile();
+        emit cancelledFile(peer_id_, this);
     }
 }
 

@@ -35,7 +35,8 @@ SOURCES += main.cpp\
     ../PICA_id.c \
     dhparam.cpp \
     dialogs/showpicaiddialog.cpp \
-    dialogs/filetransferdialog.cpp
+    dialogs/filetransferdialog.cpp \
+    filetransfercontroller.cpp
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -64,7 +65,8 @@ HEADERS  += mainwindow.h \
     ../PICA_id.h \
     dhparam.h \
     dialogs/showpicaiddialog.h \
-    dialogs/filetransferdialog.h
+    dialogs/filetransferdialog.h \
+    filetransfercontroller.h
 
 
 DEFINES = PICA_MULTITHREADED

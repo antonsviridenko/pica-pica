@@ -107,7 +107,7 @@ typedef unsigned __int64 uint64_t;
 #define PICA_CHANRECVFILESTATE_IDLE 0
 #define PICA_CHANRECVFILESTATE_RECEIVING 24
 #define PICA_CHANRECVFILESTATE_PAUSED 25
-
+#define PICA_CHANRECVFILESTATE_WAITACCEPT 26
 
 #define PICA_CHAN_ACTIVATE_TIMEOUT 30
 
@@ -197,7 +197,7 @@ void (*channel_closed_cb)(const unsigned char *peer_id, int reason);
 void (*nodelist_cb)(int type, void *addr_bin, const char *addr_str, unsigned int port);
 //сертификат собеседника в формате PEM. Функция должна сравнить предъявленный сертификат с сохранённым (если есть) и вернуть 1 при успешной проверке, 0 - при неуспешной
 int (*peer_cert_verify_cb)(const unsigned char *peer_id, const char *cert_pem, unsigned int nb);
-
+// returns 0 if file is rejected, 1 if accepted, 2 if decision is postponed
 int (*accept_file_cb)(const unsigned char  *peer_id, uint64_t  file_size, const char *filename, unsigned int filename_size);
 
 void (*accepted_file_cb)(const unsigned char *peer_id);
@@ -241,7 +241,9 @@ int PICA_send_msg(struct PICA_chaninfo *chn, char *buf,unsigned int len);
 int PICA_read_msg(struct PICA_chaninfo *chn,char *buf,unsigned int *n);
 
 //filename - ASCII or UTF-8 encoded string
-int PICA_send_file(struct PICA_chaninfo *chn, const char *filename);
+int PICA_send_file(struct PICA_chaninfo *chn, const char *filepath);
+int PICA_accept_file(struct PICA_chaninfo *chan, char *filename, unsigned int filenamesize);
+int PICA_deny_file(struct PICA_chaninfo *chan);
 
 void PICA_close_channel(struct PICA_chaninfo *chn);
 void PICA_close_connection(struct PICA_conninfo *cid);

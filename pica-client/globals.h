@@ -27,4 +27,5 @@ extern class QIcon picapica_ico_sit;
 extern class QIcon picapica_ico_fly;
 extern class PicaActionCenter *action_center;
 extern class PicaSysTray *systray;
+extern class FileTransferController *ftctrl;
 #endif // GLOBALS_H

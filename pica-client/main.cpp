@@ -5,6 +5,7 @@
 #include "contacts.h"
 #include "skynet.h"
 #include "msguirouter.h"
+#include "filetransfercontroller.h"
 #include "picaactioncenter.h"
 #include "picasystray.h"
 #include <QDir>
@@ -27,6 +28,7 @@ QIcon picapica_ico_fly;
 
 class PicaActionCenter *action_center;
 class PicaSysTray *systray;
+class FileTransferController *ftctrl;
 
 // /usr/share/pica-client/pica-pica_CA.pem
 //QString config_defaultCA("/home/root_jr/files/projects/picapica_wc/localhost/project_picapica/trunk/tests/trusted_CA.pem");
@@ -475,6 +477,8 @@ int main(int argc, char *argv[])
     MsgUIRouter muir;
     msguirouter = &muir;
 
+    FileTransferController ftc;
+    ftctrl = &ftc;
 
     aw.show();
 

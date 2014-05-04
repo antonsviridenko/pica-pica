@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QTimer>
+#include <QByteArray>
 
 class FileTransferDialog : public QDialog
 {
@@ -17,8 +18,10 @@ public:
     RECEIVING
     };
 
-    explicit FileTransferDialog(QString filename, quint64 size, TransferDirection drct, QWidget *parent = 0);
+    explicit FileTransferDialog(QByteArray peer_id, QString filename, quint64 size,
+                                TransferDirection drct, QWidget *parent = 0);
 
+    TransferDirection getTransferDirection() {return dir_;};
 
 
 private:
@@ -30,6 +33,7 @@ private:
     QPushButton *leftbutton;
     QPushButton *rightbutton;
 
+    QByteArray peer_id_;
     TransferDirection dir_;
     QString filename_;
     quint64 filesize_;
@@ -44,11 +48,11 @@ private:
 
     QTimer *timer;
 signals:
-    void pausedFile();
-    void resumedFile();
-    void cancelledFile();
-    void acceptedFile();
-    void deniedFile();
+    void pausedFile(QByteArray peer_id, FileTransferDialog *sender);
+    void resumedFile(QByteArray peer_id, FileTransferDialog *sender);
+    void cancelledFile(QByteArray peer_id, FileTransferDialog *sender);
+    void acceptedFile(QByteArray peer_id);
+    void deniedFile(QByteArray peer_id);
 
 public slots:
     void update(quint64 progress);

@@ -20,6 +20,8 @@ public:
     void Exit();
 
     void SendMessage(QByteArray to, QString msg);
+    void SendFile(QByteArray to, QString filepath);
+    void AcceptFile(QByteArray from, QString filepath);
     Accounts::AccountRecord CurrentAccount() {return skynet_account;};
 
 signals:
@@ -32,6 +34,14 @@ signals:
     void CertificateForged(QByteArray peer_id, QString received_cert, QString stored_cert);
     void ErrMsgFromNode(QString msg);
     void ContactsUpdated();
+    void IncomingFileRequestReceived(QByteArray peer_id, quint64 file_size, QString filename);
+    void OutgoingFileRequestAccepted(QByteArray peer_id);
+    void OutgoingFileRequestDenied(QByteArray peer_id);
+    void FileProgress(QByteArray peer_id, quint64 bytes_sent, quint64 bytes_received);
+    void IncomingFilePaused(QByteArray peer_id);
+    void IncomingFileCancelled(QByteArray peer_id);
+    void IncomingFileIoError(QByteArray peer_id);
+    void IncomingFileResumed(QByteArray peer_id);
 
 private:
     Nodes nodes;
@@ -42,11 +52,12 @@ private:
     Accounts::AccountRecord skynet_account;
     QMutex write_mutex;
     QMap<QByteArray, QList<QString> > msgqueues;
+    QMap<QByteArray, QList<QString> > sndfilequeues;
     int timer_id;
 
     void timerEvent(QTimerEvent * e);
 
-    void flush_msgqueue(QByteArray to);
+    void flush_queues(QByteArray to);
     struct PICA_chaninfo *find_active_chan(QByteArray peer_id);
     QList<QByteArray> filter_existing_chans(QList<QByteArray> peer_ids);
 
@@ -54,6 +65,11 @@ private:
     void emit_UnableToDeliver(QByteArray to, QString msg);
     void emit_Delivered(QByteArray to);
     void emit_PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified);
+    void emit_IncomingFileRequestReceived(QByteArray peer_id, quint64 file_size, QString filename);
+    void emit_OutgoingFileRequestAccepted(QByteArray peer_id);
+    void emit_OutgoingFileRequestDenied(QByteArray peer_id);
+    void emit_FileProgress(QByteArray peer_id, quint64 bytes_sent, quint64 bytes_received);
+    //incoming/outgoing x paused, cancelled, io error
 
     //получение сообщения.
     static void newmsg_cb(const unsigned char *peer_id,const char* msgbuf,unsigned int nb,int type);
@@ -73,6 +89,16 @@ private:
     static void nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port);
 
     static int peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_pem, unsigned int nb);
+
+    static int accept_file_cb(const unsigned char  *peer_id, uint64_t file_size, const char *filename, unsigned int filename_size);
+
+    static void accepted_file_cb(const unsigned char *peer_id);
+
+    static void denied_file_cb(const unsigned char *peer_id);
+
+    static void file_progress(const unsigned char *peer_id, uint64_t sent, uint64_t received);
+
+    static void file_control(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd);
 
 private slots:
     void nodethread_finished();
