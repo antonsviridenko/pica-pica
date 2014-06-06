@@ -34,8 +34,9 @@ void PicaActionCenter::about()
     QMessageBox mbx;
     mbx.setWindowIcon(picapica_ico_sit);
     mbx.setIconPixmap(picapica_ico_sit.pixmap(32));
-    mbx.setText(tr("Pica Pica Messenger "VERSION_STRING"\n(c) 2012 - 2013 Anton Sviridenko\n\
-http://picapica.im\n\nContributors:\nDaniil Ustinov - bugfixes\n\n\
+    mbx.setTextFormat(Qt::RichText);
+    mbx.setText(tr("<b>Pica Pica Messenger "VERSION_STRING"<br>(c) 2012 - 2013 Anton Sviridenko</b><br>\
+<a href=http://picapica.im>http://picapica.im</a><br><br>Contributors:<br>Daniil Ustinov - bugfixes<br><br>\
 protocol version " PICA_PROTO_VER_STRING));
     mbx.exec();
 }
