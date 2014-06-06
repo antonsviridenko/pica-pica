@@ -79,6 +79,9 @@ void FileTransferDialog::update(quint64 progress)
     {
         leftbutton->setEnabled(false);
         rightbutton->setEnabled(false);
+
+        QWidget::setAttribute(Qt::WA_DeleteOnClose);
+        QWidget::setAttribute(Qt::WA_QuitOnClose, false);
     }
 }
 

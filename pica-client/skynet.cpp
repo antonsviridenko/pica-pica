@@ -298,6 +298,25 @@ if ( (iptr = find_active_chan(from)) )
 write_mutex.unlock();//>>
 }
 
+void SkyNet::DenyFile(QByteArray from)
+{
+int ret = PICA_OK;
+struct PICA_chaninfo *iptr;
+
+write_mutex.lock();//<<
+if ( (iptr = find_active_chan(from)) )
+    {
+        ret = PICA_deny_file(iptr);
+
+        qDebug() << "PICA_deny_file() returned " << ret << "\n";
+        if (ret != PICA_OK)
+        {
+            //show error somewhere somehow
+        }
+    }
+write_mutex.unlock();//>>
+}
+
 void SkyNet::SendMessage(QByteArray to, QString msg)
 {
 int ret = PICA_OK;

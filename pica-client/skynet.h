@@ -22,6 +22,7 @@ public:
     void SendMessage(QByteArray to, QString msg);
     void SendFile(QByteArray to, QString filepath);
     void AcceptFile(QByteArray from, QString filepath);
+    void DenyFile(QByteArray from);
     Accounts::AccountRecord CurrentAccount() {return skynet_account;};
 
 signals:

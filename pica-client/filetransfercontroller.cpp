@@ -79,6 +79,11 @@ void FileTransferController::file_accepted_by_me(QByteArray peer_id)
 
 void FileTransferController::file_denied_by_me(QByteArray peer_id)
 {
+    skynet->DenyFile(peer_id);
+
+    delete ftdialogs_in[peer_id];
+
+    ftdialogs_in.remove(peer_id);
 }
 
 void FileTransferController::file_cancelled_by_me(QByteArray peer_id, FileTransferDialog *from)
