@@ -12,7 +12,7 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
     filesize_(size)
 {
     QVBoxLayout *layout = new QVBoxLayout(this);
-    QHBoxLayout *btlayout = new QHBoxLayout(this);
+    QHBoxLayout *btlayout = new QHBoxLayout();
 
     lbFilename = new QLabel(this);
     lbProgressStatus = new QLabel(this);
