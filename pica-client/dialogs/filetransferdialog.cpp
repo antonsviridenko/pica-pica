@@ -18,6 +18,7 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
     lbProgressStatus = new QLabel(this);
     lbTransferSpeed = new QLabel(this);
     lbRemainingTime = new QLabel(this);
+    lbTransferStatus = new QLabel(this);
 
     pgbar = new QProgressBar(this);
     leftbutton = new QPushButton(this);
@@ -28,6 +29,7 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
     layout->addWidget(lbTransferSpeed);
     layout->addWidget(lbRemainingTime);
     layout->addWidget(pgbar);
+    layout->addWidget(lbTransferStatus);
     layout->addLayout(btlayout);
 
     btlayout->addWidget(leftbutton);
@@ -47,6 +49,7 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
 
         setWindowTitle(tr("Sending file %1").arg(filename_));
     }
+    setTransferStatus(WAITINGFORACCEPT);
 
     lbFilename->setText(filename_);
 
@@ -76,6 +79,53 @@ void FileTransferDialog::update(quint64 progress)
     pgbar->setValue(percents);
 
     if (progress == filesize_)
+    {
+        setTransferStatus(FINISHED);
+    }
+}
+
+void FileTransferDialog::setTransferStatus(TransferStatus st)
+{
+    bool isTerminalState = false;
+
+    switch(st)
+    {
+    case WAITINGFORACCEPT:
+    if (dir_ == SENDING)
+        lbTransferStatus->setText(tr("Waiting for peer to accept the file"));
+    else
+        lbTransferStatus->setText(tr("Waiting for acceptance"));
+    break;
+
+    case DENIED:
+    lbTransferStatus->setText(tr("Denied by peer"));
+    isTerminalState = true;
+    break;
+
+    case SENDINGFILE:
+    lbTransferStatus->setText(tr("Sending file"));
+    break;
+
+    case RECEIVINGFILE:
+    lbTransferStatus->setText(tr("Receiving file"));
+    break;
+
+    case PAUSED:
+    lbTransferStatus->setText(tr("Paused"));
+    break;
+
+    case CANCELLED:
+    lbTransferStatus->setText(tr("Cancelled"));
+    isTerminalState = true;
+    break;
+
+    case FINISHED:
+    lbTransferStatus->setText(tr("Finished"));
+    isTerminalState = true;
+    break;
+    }
+
+    if (isTerminalState)
     {
         leftbutton->setEnabled(false);
         rightbutton->setEnabled(false);

@@ -18,6 +18,17 @@ public:
     RECEIVING
     };
 
+    enum TransferStatus
+    {
+    WAITINGFORACCEPT,
+    DENIED,
+    SENDINGFILE,
+    RECEIVINGFILE,
+    PAUSED,
+    CANCELLED,
+    FINISHED
+    };
+
     explicit FileTransferDialog(QByteArray peer_id, QString filename, quint64 size,
                                 TransferDirection drct, QWidget *parent = 0);
 
@@ -29,6 +40,7 @@ private:
     QLabel *lbProgressStatus;
     QLabel *lbTransferSpeed;
     QLabel *lbRemainingTime;
+    QLabel *lbTransferStatus;
     QProgressBar *pgbar;
     QPushButton *leftbutton;
     QPushButton *rightbutton;
@@ -56,6 +68,7 @@ signals:
 
 public slots:
     void update(quint64 progress);
+    void setTransferStatus(enum TransferStatus st);
 
 private slots:
     void timeout();
