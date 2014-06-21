@@ -46,6 +46,7 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
     {
         leftbutton->setText(tr("Pause"));
         rightbutton->setText(tr("Cancel"));
+        leftbutton->setEnabled(false);
 
         setWindowTitle(tr("Sending file %1").arg(filename_));
     }
@@ -103,6 +104,7 @@ void FileTransferDialog::setTransferStatus(TransferStatus st)
     break;
 
     case SENDINGFILE:
+    leftbutton->setEnabled(true);
     lbTransferStatus->setText(tr("Sending file"));
     break;
 
