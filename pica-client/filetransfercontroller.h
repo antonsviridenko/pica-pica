@@ -29,7 +29,16 @@ public slots:
     void file_request(QByteArray peer_id, quint64 file_size, QString filename);
     void file_accepted_by_peer(QByteArray peer_id);
     void file_denied_by_peer(QByteArray peer_id);
-    //void file_control(QByteArray peer_id, )
+
+    void file_paused_incoming(QByteArray peer_id);
+    void file_resumed_incoming(QByteArray peer_id);
+    void file_cancelled_incoming(QByteArray peer_id);
+    void file_ioerror_incoming(QByteArray peer_id);
+
+    void file_paused_outgoing(QByteArray peer_id);
+    void file_resumed_outgoing(QByteArray peer_id);
+    void file_cancelled_outgoing(QByteArray peer_id);
+    void file_ioerror_outgoing(QByteArray peer_id);
 
     //from me (file transfer dialog shown to user) to remote peer
     void file_accepted_by_me(QByteArray peer_id);

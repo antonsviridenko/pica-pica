@@ -69,6 +69,9 @@ signals:
 public slots:
     void update(quint64 progress);
     void setTransferStatus(enum TransferStatus st);
+    void pausedByPeer();
+    void resumedByPeer();
+    void cancelledByPeer();
 
 private slots:
     void timeout();

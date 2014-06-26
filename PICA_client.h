@@ -244,6 +244,9 @@ int PICA_read_msg(struct PICA_chaninfo *chn,char *buf,unsigned int *n);
 int PICA_send_file(struct PICA_chaninfo *chn, const char *filepath);
 int PICA_accept_file(struct PICA_chaninfo *chan, char *filename, unsigned int filenamesize);
 int PICA_deny_file(struct PICA_chaninfo *chan);
+// if sending != 0 then pause sending file, else pause receiving of file
+int PICA_pause_file(struct PICA_chaninfo *chan, int sending);
+int PICA_resume_file(struct PICA_chaninfo *chan, int sending);
 
 void PICA_close_channel(struct PICA_chaninfo *chn);
 void PICA_close_connection(struct PICA_conninfo *cid);

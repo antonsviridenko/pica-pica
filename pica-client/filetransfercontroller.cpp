@@ -55,18 +55,61 @@ void FileTransferController::file_request(QByteArray peer_id, quint64 file_size,
 
 void FileTransferController::file_accepted_by_peer(QByteArray peer_id)
 {
+    connect(skynet, SIGNAL(OutgoingFilePaused(QByteArray)), this, SLOT(file_paused_outgoing(QByteArray)));
+    connect(skynet, SIGNAL(OutgoingFileResumed(QByteArray)), this, SLOT(file_resumed_outgoing(QByteArray)));
+    connect(skynet, SIGNAL(OutgoingFileCancelled(QByteArray)), this, SLOT(file_cancelled_outgoing(QByteArray)));
+    connect(skynet, SIGNAL(OutgoingFileIoError(QByteArray)), this, SLOT(file_ioerror_outgoing(QByteArray)));
 
+    ftdialogs_out[peer_id]->setTransferStatus(FileTransferDialog::SENDINGFILE);
 }
 
 void FileTransferController::file_denied_by_peer(QByteArray peer_id)
+{
+    ftdialogs_out[peer_id]->setTransferStatus(FileTransferDialog::DENIED);
+}
+
+void FileTransferController::file_paused_incoming(QByteArray peer_id)
+{
+    ftdialogs_in[peer_id]->pausedByPeer();
+}
+
+void FileTransferController::file_resumed_incoming(QByteArray peer_id)
+{
+    ftdialogs_in[peer_id]->resumedByPeer();
+}
+
+void FileTransferController::file_cancelled_incoming(QByteArray peer_id)
+{
+    ftdialogs_in[peer_id]->cancelledByPeer();
+}
+
+void FileTransferController::file_ioerror_incoming(QByteArray peer_id)
+{
+
+}
+
+void FileTransferController::file_paused_outgoing(QByteArray peer_id)
+{
+    ftdialogs_out[peer_id]->pausedByPeer();
+}
+
+void FileTransferController::file_resumed_outgoing(QByteArray peer_id)
+{
+    ftdialogs_out[peer_id]->resumedByPeer();
+}
+
+void FileTransferController::file_cancelled_outgoing(QByteArray peer_id)
+{
+    ftdialogs_out[peer_id]->cancelledByPeer();
+}
+
+void FileTransferController::file_ioerror_outgoing(QByteArray peer_id)
 {
 
 }
 
 void FileTransferController::file_accepted_by_me(QByteArray peer_id)
 {
-
-
     QString filePathToSave = QFileDialog::getSaveFileName(ftdialogs_in[peer_id], tr("Save received file to"),
                                  fnames[peer_id], tr("Any file (* *.*)"));
 
@@ -75,6 +118,13 @@ void FileTransferController::file_accepted_by_me(QByteArray peer_id)
     connect(ftdialogs_in[peer_id], SIGNAL(cancelledFile(QByteArray,FileTransferDialog*)), this, SLOT(file_cancelled_by_me(QByteArray,FileTransferDialog*)));
     connect(ftdialogs_in[peer_id], SIGNAL(pausedFile(QByteArray,FileTransferDialog*)), this, SLOT(file_paused_by_me(QByteArray,FileTransferDialog*)));
     connect(ftdialogs_in[peer_id], SIGNAL(resumedFile(QByteArray,FileTransferDialog*)), this, SLOT(file_resumed_by_me(QByteArray,FileTransferDialog*)));
+
+    connect(skynet, SIGNAL(IncomingFilePaused(QByteArray)), this, SLOT(file_paused_incoming(QByteArray)));
+    connect(skynet, SIGNAL(IncomingFileResumed(QByteArray)), this, SLOT(file_resumed_incoming(QByteArray)));
+    connect(skynet, SIGNAL(IncomingFileCancelled(QByteArray)), this, SLOT(file_cancelled_incoming(QByteArray)));
+    connect(skynet, SIGNAL(IncomingFileIoError(QByteArray)), this, SLOT(file_ioerror_incoming(QByteArray)));
+
+    ftdialogs_in[peer_id]->setTransferStatus(FileTransferDialog::RECEIVINGFILE);
 }
 
 void FileTransferController::file_denied_by_me(QByteArray peer_id)
@@ -93,12 +143,22 @@ void FileTransferController::file_cancelled_by_me(QByteArray peer_id, FileTransf
 
 void FileTransferController::file_paused_by_me(QByteArray peer_id, FileTransferDialog *from)
 {
+    bool sending = true;
 
+    if (from->getTransferDirection() == FileTransferDialog::RECEIVING)
+        sending = false;
+
+    skynet->PauseFile(peer_id, sending);
 }
 
 void FileTransferController::file_resumed_by_me(QByteArray peer_id, FileTransferDialog *from)
 {
+    bool sending = true;
 
+    if (from->getTransferDirection() == FileTransferDialog::RECEIVING)
+        sending = false;
+
+    skynet->ResumeFile(peer_id, sending);
 }
 
 void FileTransferController::send_file(QByteArray peer_id)

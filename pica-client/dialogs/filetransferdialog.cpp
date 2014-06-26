@@ -137,6 +137,23 @@ void FileTransferDialog::setTransferStatus(TransferStatus st)
     }
 }
 
+void FileTransferDialog::pausedByPeer()
+{
+    leftbutton->setEnabled(false);
+    setTransferStatus(PAUSED);
+}
+
+void FileTransferDialog::resumedByPeer()
+{
+    leftbutton->setEnabled(true);
+    setTransferStatus( dir_ == SENDING ? SENDINGFILE : RECEIVINGFILE);
+}
+
+void FileTransferDialog::cancelledByPeer()
+{
+    setTransferStatus(CANCELLED);
+}
+
 void FileTransferDialog::leftbuttonclick()
 {
     if (dir_ == RECEIVING)
@@ -154,11 +171,13 @@ void FileTransferDialog::leftbuttonclick()
     {
         leftbutton->setText(tr("Resume"));
         emit pausedFile(peer_id_, this);
+        setTransferStatus(PAUSED);
     }
     else if (leftbutton->text() == tr("Resume"))
     {
         leftbutton->setText(tr("Pause"));
         emit resumedFile(peer_id_, this);
+        setTransferStatus(dir_ == SENDING ? SENDINGFILE : RECEIVINGFILE);
     }
 }
 

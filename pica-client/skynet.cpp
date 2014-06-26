@@ -317,6 +317,43 @@ if ( (iptr = find_active_chan(from)) )
 write_mutex.unlock();//>>
 }
 
+void SkyNet::PauseFile(QByteArray peer_id, bool pause_sending)
+{
+int ret = PICA_OK;
+struct PICA_chaninfo *iptr;
+
+write_mutex.lock();//<<
+if ( (iptr = find_active_chan(peer_id)) )
+    {
+        qDebug() << "calling PICA_pause_file(" << iptr << "," << pause_sending << ")\n";
+        ret = PICA_pause_file(iptr, (int)pause_sending );
+
+        if (ret != PICA_OK)
+        {
+            qDebug() << "PICA_pause_file() returned " << ret << "\n";
+        }
+    }
+write_mutex.unlock();//>>
+}
+
+void SkyNet::ResumeFile(QByteArray peer_id, bool resume_sending)
+{
+int ret = PICA_OK;
+struct PICA_chaninfo *iptr;
+
+write_mutex.lock();//<<
+if ( (iptr = find_active_chan(peer_id)) )
+    {
+        ret = PICA_resume_file(iptr, (int)resume_sending );
+
+        if (ret != PICA_OK)
+        {
+            //show error somewhere somehow
+        }
+    }
+write_mutex.unlock();//>>
+}
+
 void SkyNet::SendMessage(QByteArray to, QString msg)
 {
 int ret = PICA_OK;
@@ -488,6 +525,46 @@ void SkyNet::emit_FileProgress(QByteArray peer_id, quint64 bytes_sent, quint64 b
     emit FileProgress(peer_id, bytes_sent, bytes_received);
 }
 
+void SkyNet::emit_IncomingFilePaused(QByteArray peer_id)
+{
+    emit IncomingFilePaused(peer_id);
+}
+
+void SkyNet::emit_IncomingFileCancelled(QByteArray peer_id)
+{
+    emit IncomingFileCancelled(peer_id);
+}
+
+void SkyNet::emit_IncomingFileIoError(QByteArray peer_id)
+{
+    emit IncomingFileIoError(peer_id);
+}
+
+void SkyNet::emit_IncomingFileResumed(QByteArray peer_id)
+{
+    emit IncomingFileResumed(peer_id);
+}
+
+void SkyNet::emit_OutgoingFilePaused(QByteArray peer_id)
+{
+    emit OutgoingFilePaused(peer_id);
+}
+
+void SkyNet::emit_OutgoingFileCancelled(QByteArray peer_id)
+{
+    emit OutgoingFileCancelled(peer_id);
+}
+
+void SkyNet::emit_OutgoingFileIoError(QByteArray peer_id)
+{
+    emit OutgoingFileIoError(peer_id);
+}
+
+void SkyNet::emit_OutgoingFileResumed(QByteArray peer_id)
+{
+    emit OutgoingFileResumed(peer_id);
+}
+
 //callbacks
 
 //all callbacks are executed in separate thread, created in Nodethread instance, REMEMBER THAT !!!
@@ -589,6 +666,50 @@ void SkyNet::file_progress(const unsigned char *peer_id, uint64_t sent, uint64_t
 
 void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd)
 {
-    //implement me
+    qDebug() << "file_control callback: sender_cmd=" << sender_cmd << ", receiver_cmd=" << receiver_cmd << "\n";
+
+
+    if (sender_cmd != PICA_PROTO_FILECONTROL_VOID && receiver_cmd == PICA_PROTO_FILECONTROL_VOID)
+    {
+        switch(sender_cmd)
+        {
+        case PICA_PROTO_FILECONTROL_PAUSE:
+        skynet->emit_IncomingFilePaused(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+        break;
+
+        case PICA_PROTO_FILECONTROL_RESUME:
+        skynet->emit_IncomingFileResumed(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+        break;
+
+        case PICA_PROTO_FILECONTROL_CANCEL:
+        skynet->emit_IncomingFileCancelled(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+        break;
+
+        case PICA_PROTO_FILECONTROL_IOERROR:
+        skynet->emit_IncomingFileIoError(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+        break;
+        }
+    }
+    else if (sender_cmd == PICA_PROTO_FILECONTROL_VOID && receiver_cmd != PICA_PROTO_FILECONTROL_VOID)
+    {
+        switch(receiver_cmd)
+        {
+        case PICA_PROTO_FILECONTROL_PAUSE:
+        skynet->emit_OutgoingFilePaused(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+        break;
+
+        case PICA_PROTO_FILECONTROL_RESUME:
+        skynet->emit_OutgoingFileResumed(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+        break;
+
+        case PICA_PROTO_FILECONTROL_CANCEL:
+        skynet->emit_OutgoingFileCancelled(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+        break;
+
+        case PICA_PROTO_FILECONTROL_IOERROR:
+        skynet->emit_OutgoingFileIoError(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+        break;
+        }
+    }
 }
 

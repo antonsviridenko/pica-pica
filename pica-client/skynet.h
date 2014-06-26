@@ -4,6 +4,7 @@
 #include "nodes.h"
 #include "nodethread.h"
 #include "../PICA_client.h"
+#include "../PICA_proto.h"
 #include "accounts.h"
 #include <QObject>
 #include <QMap>
@@ -23,6 +24,9 @@ public:
     void SendFile(QByteArray to, QString filepath);
     void AcceptFile(QByteArray from, QString filepath);
     void DenyFile(QByteArray from);
+    void PauseFile(QByteArray peer_id, bool pause_sending);
+    void ResumeFile(QByteArray peer_id, bool resume_sending);
+
     Accounts::AccountRecord CurrentAccount() {return skynet_account;};
 
 signals:
@@ -43,6 +47,10 @@ signals:
     void IncomingFileCancelled(QByteArray peer_id);
     void IncomingFileIoError(QByteArray peer_id);
     void IncomingFileResumed(QByteArray peer_id);
+    void OutgoingFilePaused(QByteArray peer_id);
+    void OutgoingFileCancelled(QByteArray peer_id);
+    void OutgoingFileIoError(QByteArray peer_id);
+    void OutgoingFileResumed(QByteArray peer_id);
 
 private:
     Nodes nodes;
@@ -70,7 +78,16 @@ private:
     void emit_OutgoingFileRequestAccepted(QByteArray peer_id);
     void emit_OutgoingFileRequestDenied(QByteArray peer_id);
     void emit_FileProgress(QByteArray peer_id, quint64 bytes_sent, quint64 bytes_received);
-    //incoming/outgoing x paused, cancelled, io error
+
+    void emit_IncomingFilePaused(QByteArray peer_id);
+    void emit_IncomingFileCancelled(QByteArray peer_id);
+    void emit_IncomingFileIoError(QByteArray peer_id);
+    void emit_IncomingFileResumed(QByteArray peer_id);
+    void emit_OutgoingFilePaused(QByteArray peer_id);
+    void emit_OutgoingFileCancelled(QByteArray peer_id);
+    void emit_OutgoingFileIoError(QByteArray peer_id);
+    void emit_OutgoingFileResumed(QByteArray peer_id);
+
 
     //получение сообщения.
     static void newmsg_cb(const unsigned char *peer_id,const char* msgbuf,unsigned int nb,int type);

@@ -28,9 +28,10 @@ static pthread_mutex_t *mt_locks;
 
 #endif
 
-int PICA_send_file_fragment(struct PICA_chaninfo *chn);
-int PICA_sendfile_open_read(struct PICA_chaninfo *chn, const char *filename_utf8, uint64_t *file_size);
-int PICA_recvfile_open_write(struct PICA_chaninfo *chn, const char *filename_utf8, unsigned int filenamesize);
+static int PICA_send_file_fragment(struct PICA_chaninfo *chn);
+static int PICA_sendfile_open_read(struct PICA_chaninfo *chn, const char *filename_utf8, uint64_t *file_size);
+static int PICA_recvfile_open_write(struct PICA_chaninfo *chn, const char *filename_utf8, unsigned int filenamesize);
+static int PICA_send_filecontrol(struct PICA_chaninfo *chan, int senderctl, int receiverctl);
 
 static unsigned int procmsg_INITRESP(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_CONNREQINC(unsigned char*,unsigned int,void*);
@@ -788,14 +789,7 @@ if (fwrite(buf + 4, nb - 4, 1, chan->recvfile_stream) != 1)
 
     chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
 
-    mp = c2c_writebuf_push( chan, PICA_PROTO_FILECONTROL, PICA_PROTO_FILECONTROL_SIZE);
-
-    if (mp)
-        {
-        mp->tail[0] = PICA_PROTO_FILECONTROL_VOID; //sender's command
-        mp->tail[1] = PICA_PROTO_FILECONTROL_IOERROR; //receiver's command
-        }
-    else
+    if (PICA_OK != PICA_send_filecontrol(chan, PICA_PROTO_FILECONTROL_VOID, PICA_PROTO_FILECONTROL_IOERROR))
         return 0;
     }
 
@@ -824,12 +818,16 @@ unsigned int sender_cmd, receiver_cmd;
 sender_cmd = buf[2];
 receiver_cmd = buf[3];
 
+fprintf(stderr, "procmsg_FILECONTROL sender_cmd = %i receiver_cmd = %i\n", sender_cmd, receiver_cmd);
+
 if ((chan->sendfilestate == PICA_CHANSENDFILESTATE_IDLE || chan->sendfilestate == PICA_CHANSENDFILESTATE_SENTREQ)
      && receiver_cmd != PICA_PROTO_FILECONTROL_VOID)
     return 0;
 
 if (chan->recvfilestate == PICA_CHANRECVFILESTATE_IDLE && sender_cmd != PICA_PROTO_FILECONTROL_VOID)
     return 0;
+
+fprintf(stderr, "procmsg_FILECONTROL  switch(sender_cmd)\n");
 
 switch(sender_cmd)
     {
@@ -861,6 +859,7 @@ switch(sender_cmd)
     return 0;
     }
 
+fprintf(stderr, "procmsg_FILECONTROL  switch(receiver_cmd)\n");
 switch(receiver_cmd)
     {
     case PICA_PROTO_FILECONTROL_PAUSE:
@@ -884,10 +883,14 @@ switch(receiver_cmd)
     chan->sendfile_stream = NULL;
     break;
 
+    case PICA_PROTO_FILECONTROL_VOID:
+    break;
+
     default:
     return 0;
     }
 
+fprintf(stderr, "procmsg_FILECONTROL  calling callback\n");
 callbacks.file_control(chan->peer_id, sender_cmd, receiver_cmd);
 
 return 1;
@@ -1759,6 +1762,75 @@ chn->sendfile_pos = 0;
 return PICA_OK;
 }
 
+int PICA_pause_file(struct PICA_chaninfo *chan, int sending)
+{
+int senderctl = PICA_PROTO_FILECONTROL_VOID;
+int receiverctl = PICA_PROTO_FILECONTROL_VOID;
+
+if (sending)
+    {
+    if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENDING)
+        return PICA_ERRINVARG;
+
+    chan->sendfilestate = PICA_CHANSENDFILESTATE_PAUSED;
+
+    senderctl = PICA_PROTO_FILECONTROL_PAUSE;
+    }
+    else
+    {
+    if (chan->recvfilestate != PICA_CHANRECVFILESTATE_RECEIVING)
+        return PICA_ERRINVARG;
+
+    chan->recvfilestate = PICA_CHANRECVFILESTATE_PAUSED;
+
+    receiverctl = PICA_PROTO_FILECONTROL_PAUSE;
+    }
+
+return PICA_send_filecontrol(chan, senderctl, receiverctl);
+}
+
+int PICA_resume_file(struct PICA_chaninfo *chan, int sending)
+{
+int senderctl = PICA_PROTO_FILECONTROL_VOID;
+int receiverctl = PICA_PROTO_FILECONTROL_VOID;
+
+if (sending)
+    {
+    if (chan->sendfilestate != PICA_CHANSENDFILESTATE_PAUSED)
+        return PICA_ERRINVARG;
+
+    chan->sendfilestate = PICA_CHANSENDFILESTATE_SENDING;
+
+    senderctl = PICA_PROTO_FILECONTROL_RESUME;
+    }
+    else
+    {
+    if (chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
+        return PICA_ERRINVARG;
+
+    chan->recvfilestate = PICA_CHANRECVFILESTATE_RECEIVING;
+
+    receiverctl = PICA_PROTO_FILECONTROL_RESUME;
+    }
+
+return PICA_send_filecontrol(chan, senderctl, receiverctl);
+}
+
+int PICA_send_filecontrol(struct PICA_chaninfo *chan, int senderctl, int receiverctl)
+{
+struct PICA_proto_msg *mp;
+
+if ((mp = c2c_writebuf_push(chan, PICA_PROTO_FILECONTROL, PICA_PROTO_FILECONTROL_SIZE)))
+    {
+    mp->tail[0] = senderctl; //sender's command
+    mp->tail[1] = receiverctl; //receiver's command
+    }
+else
+    return PICA_ERRNOMEM;
+
+return PICA_OK;
+}
+
 int PICA_send_file_fragment(struct PICA_chaninfo *chn)
 {
 struct PICA_proto_msg *mp;
@@ -1776,11 +1848,7 @@ if (fragment_size == 0)
     chn->sendfile_stream = NULL;
     chn->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
 
-    if ((mp = c2c_writebuf_push(chn, PICA_PROTO_FILECONTROL, PICA_PROTO_FILECONTROL_SIZE)))
-        {
-        mp->tail[0] = PICA_PROTO_FILECONTROL_IOERROR; //sender's command
-        mp->tail[1] = PICA_PROTO_FILECONTROL_VOID; //receiver's command
-        }
+    PICA_send_filecontrol(chn, PICA_PROTO_FILECONTROL_IOERROR, PICA_PROTO_FILECONTROL_VOID);
 
     return PICA_ERRFILEIO;
     }
