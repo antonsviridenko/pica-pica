@@ -20,6 +20,17 @@ FileTransferController::FileTransferController(QObject *parent) :
     connect(skynet, SIGNAL(OutgoingFileRequestDenied(QByteArray)), this, SLOT(file_denied_by_peer(QByteArray)));
 }
 
+void FileTransferController::file_finished_incoming(QByteArray peer_id)
+{
+    if (ftdialogs_in.contains(peer_id))
+        ftdialogs_in.remove(peer_id);
+}
+
+void FileTransferController::file_finished_outgoing(QByteArray peer_id)
+{
+    if (ftdialogs_out.contains(peer_id))
+        ftdialogs_out.remove(peer_id);
+}
 
 void FileTransferController::file_progress(QByteArray peer_id, quint64 bytes_sent, quint64 bytes_received)
 {
@@ -44,7 +55,6 @@ void FileTransferController::file_request(QByteArray peer_id, quint64 file_size,
     FileTransferDialog *ftd = new FileTransferDialog(peer_id, filename, file_size, FileTransferDialog::RECEIVING);
 
     ftdialogs_in[peer_id] = ftd;
-    fsizes[peer_id] = file_size;
     fnames[peer_id] = filename;
 
     connect(ftd, SIGNAL(acceptedFile(QByteArray)), this, SLOT(file_accepted_by_me(QByteArray)));

@@ -51,6 +51,8 @@ signals:
     void OutgoingFileCancelled(QByteArray peer_id);
     void OutgoingFileIoError(QByteArray peer_id);
     void OutgoingFileResumed(QByteArray peer_id);
+    void OutgoingFileFinished(QByteArray peer_id);
+    void IncomingFileFinished(QByteArray peer_id);
 
 private:
     Nodes nodes;
@@ -88,6 +90,8 @@ private:
     void emit_OutgoingFileIoError(QByteArray peer_id);
     void emit_OutgoingFileResumed(QByteArray peer_id);
 
+    void emit_OutgoingFileFinished(QByteArray peer_id);
+    void emit_IncomingFileFinished(QByteArray peer_id);
 
     //получение сообщения.
     static void newmsg_cb(const unsigned char *peer_id,const char* msgbuf,unsigned int nb,int type);
@@ -117,6 +121,8 @@ private:
     static void file_progress(const unsigned char *peer_id, uint64_t sent, uint64_t received);
 
     static void file_control(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd);
+
+    static void file_finished(const unsigned char *peer_id, int sending);
 
 private slots:
     void nodethread_finished();

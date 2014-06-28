@@ -28,7 +28,8 @@ PICA_client_callbacks cbs = {
                             accepted_file_cb,
                             denied_file_cb,
                             file_progress,
-                            file_control
+                            file_control,
+                            file_finished
                             };
 
 PICA_client_init(&cbs);
@@ -565,6 +566,16 @@ void SkyNet::emit_OutgoingFileResumed(QByteArray peer_id)
     emit OutgoingFileResumed(peer_id);
 }
 
+void SkyNet::emit_OutgoingFileFinished(QByteArray peer_id)
+{
+    emit OutgoingFileFinished(peer_id);
+}
+
+void SkyNet::emit_IncomingFileFinished(QByteArray peer_id)
+{
+    emit IncomingFileFinished(peer_id);
+}
+
 //callbacks
 
 //all callbacks are executed in separate thread, created in Nodethread instance, REMEMBER THAT !!!
@@ -616,7 +627,8 @@ void SkyNet::notfound_cb(const unsigned char *callee_id)
 
 void SkyNet::channel_closed_cb(const unsigned char *peer_id, int reason)
 {
-    qDebug()<<"channel closed ("<<QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64()<<")\n";
+    qDebug()<<"channel closed ("<<QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64()
+            <<", error_code =" << reason << ")\n";
 
 }
 
@@ -713,3 +725,10 @@ void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd,
     }
 }
 
+void SkyNet::file_finished(const unsigned char *peer_id, int sending)
+{
+    if (sending)
+        skynet->emit_OutgoingFileFinished(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+    else
+        skynet->emit_IncomingFileFinished(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+}

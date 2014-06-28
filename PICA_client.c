@@ -795,17 +795,20 @@ if (fwrite(buf + 4, nb - 4, 1, chan->recvfile_stream) != 1)
 
 chan->recvfile_pos += (nb - 4);
 
-if (chan->recvfile_pos == chan->recvfile_size)
-    {
-    chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
-    fclose(chan->recvfile_stream);
-    chan->recvfile_stream = NULL;
-    }
 
 if (chan->recvfile_pos > chan->recvfile_size) //received more than file_size
     return 0;
 
 callbacks.file_progress(chan->peer_id, 0, chan->recvfile_pos);
+
+if (chan->recvfile_pos == chan->recvfile_size)
+    {
+    chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
+    fclose(chan->recvfile_stream);
+    chan->recvfile_stream = NULL;
+
+    callbacks.file_finished(chan->peer_id, 0);
+    }
 
 return 1;
 }
@@ -818,7 +821,7 @@ unsigned int sender_cmd, receiver_cmd;
 sender_cmd = buf[2];
 receiver_cmd = buf[3];
 
-fprintf(stderr, "procmsg_FILECONTROL sender_cmd = %i receiver_cmd = %i\n", sender_cmd, receiver_cmd);
+fprintf(stderr, "procmsg_FILECONTROL sender_cmd = %i receiver_cmd = %i\n", sender_cmd, receiver_cmd);//debug
 
 if ((chan->sendfilestate == PICA_CHANSENDFILESTATE_IDLE || chan->sendfilestate == PICA_CHANSENDFILESTATE_SENTREQ)
      && receiver_cmd != PICA_PROTO_FILECONTROL_VOID)
@@ -1351,6 +1354,7 @@ if (ret>0)
 			{
 			if (PICA_OK != (ret = PICA_read_c2c(ipt)) )
 				{
+                puts("PICA_read_c2c() failed");//debug
 				callbacks.channel_closed_cb(ipt->peer_id, ret);
 				kill_ptr = ipt;
 				}
@@ -1393,6 +1397,7 @@ while(ipt)
 		{
 		if (PICA_OK != (ret = PICA_write_c2c(ipt)))
 			{
+            fprintf(stderr,"PICA_write_c2c() failed, ret = %i\n", ret);//debug
 			callbacks.channel_closed_cb(ipt->peer_id, ret);
 			kill_ptr = ipt;
 			}
@@ -1767,6 +1772,8 @@ int PICA_pause_file(struct PICA_chaninfo *chan, int sending)
 int senderctl = PICA_PROTO_FILECONTROL_VOID;
 int receiverctl = PICA_PROTO_FILECONTROL_VOID;
 
+fprintf(stderr, "PICA_pause_file(%p, %i)\n", chan, sending);//debug
+
 if (sending)
     {
     if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENDING)
@@ -1820,6 +1827,8 @@ int PICA_send_filecontrol(struct PICA_chaninfo *chan, int senderctl, int receive
 {
 struct PICA_proto_msg *mp;
 
+fprintf(stderr, "PICA_send_filecontrol(%p, %i, %i)\n", chan, senderctl, receiverctl);//debug
+
 if ((mp = c2c_writebuf_push(chan, PICA_PROTO_FILECONTROL, PICA_PROTO_FILECONTROL_SIZE)))
     {
     mp->tail[0] = senderctl; //sender's command
@@ -1871,6 +1880,8 @@ if (chn->sendfile_pos >= chn->sendfile_size)
     chn->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
     fclose(chn->sendfile_stream);
     chn->sendfile_stream = NULL;
+
+    callbacks.file_finished(chn->peer_id, 1);
     }
 
 if (chn->sendfile_pos > chn->sendfile_size)
@@ -1883,7 +1894,7 @@ void PICA_close_channel(struct PICA_chaninfo *chn)
 {
 struct PICA_chaninfo *ipt;
 
-//puts("PICA_close_channel");//debug
+fprintf(stderr, "PICA_close_channel(%p)\n", chn);//debug
 	
 ipt=chn->conn->chan_list_head;
 //puts("PICA_close_channel_chkp0");//debug

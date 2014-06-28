@@ -18,7 +18,6 @@ private:
     QMap<QByteArray, FileTransferDialog*> ftdialogs_in;
     QMap<QByteArray, FileTransferDialog*> ftdialogs_out;
 
-    QMap<QByteArray, quint64> fsizes;
     QMap<QByteArray, QString> fnames;
 
 
@@ -40,6 +39,8 @@ public slots:
     void file_cancelled_outgoing(QByteArray peer_id);
     void file_ioerror_outgoing(QByteArray peer_id);
 
+    void file_finished_incoming(QByteArray peer_id);
+
     //from me (file transfer dialog shown to user) to remote peer
     void file_accepted_by_me(QByteArray peer_id);
     void file_denied_by_me(QByteArray peer_id);
@@ -48,6 +49,8 @@ public slots:
     void file_resumed_by_me(QByteArray peer_id, FileTransferDialog *from);
 
     void send_file(QByteArray peer_id);
+
+    void file_finished_outgoing(QByteArray peer_id);
 
 };
 

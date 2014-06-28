@@ -207,6 +207,8 @@ void (*denied_file_cb)(const unsigned char *peer_id);
 void (*file_progress)(const unsigned char *peer_id, uint64_t sent, uint64_t received);
 
 void (*file_control)(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd);
+
+void (*file_finished)(const unsigned char *peer_id, int sending);
 };
 
  	
