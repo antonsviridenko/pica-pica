@@ -23,13 +23,17 @@ FileTransferController::FileTransferController(QObject *parent) :
 void FileTransferController::file_finished_incoming(QByteArray peer_id)
 {
     if (ftdialogs_in.contains(peer_id))
+
         ftdialogs_in.remove(peer_id);
 }
 
 void FileTransferController::file_finished_outgoing(QByteArray peer_id)
 {
     if (ftdialogs_out.contains(peer_id))
+        {
         ftdialogs_out.remove(peer_id);
+        qDebug() << "outgoing file transfer finished, removing dialog pointer\n";
+        }
 }
 
 void FileTransferController::file_progress(QByteArray peer_id, quint64 bytes_sent, quint64 bytes_received)
@@ -69,6 +73,7 @@ void FileTransferController::file_accepted_by_peer(QByteArray peer_id)
     connect(skynet, SIGNAL(OutgoingFileResumed(QByteArray)), this, SLOT(file_resumed_outgoing(QByteArray)));
     connect(skynet, SIGNAL(OutgoingFileCancelled(QByteArray)), this, SLOT(file_cancelled_outgoing(QByteArray)));
     connect(skynet, SIGNAL(OutgoingFileIoError(QByteArray)), this, SLOT(file_ioerror_outgoing(QByteArray)));
+    connect(skynet, SIGNAL(OutgoingFileFinished(QByteArray)), this, SLOT(file_finished_outgoing(QByteArray)));
 
     ftdialogs_out[peer_id]->setTransferStatus(FileTransferDialog::SENDINGFILE);
 }
@@ -133,6 +138,7 @@ void FileTransferController::file_accepted_by_me(QByteArray peer_id)
     connect(skynet, SIGNAL(IncomingFileResumed(QByteArray)), this, SLOT(file_resumed_incoming(QByteArray)));
     connect(skynet, SIGNAL(IncomingFileCancelled(QByteArray)), this, SLOT(file_cancelled_incoming(QByteArray)));
     connect(skynet, SIGNAL(IncomingFileIoError(QByteArray)), this, SLOT(file_ioerror_incoming(QByteArray)));
+    connect(skynet,SIGNAL(IncomingFileFinished(QByteArray)), this, SLOT(file_finished_incoming(QByteArray)));
 
     ftdialogs_in[peer_id]->setTransferStatus(FileTransferDialog::RECEIVINGFILE);
 }

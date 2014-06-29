@@ -243,9 +243,9 @@ QString FileTransferDialog::timeLeft(quint64 seconds)
         return QString(tr("%1 days")).arg(days, 6, 'f', 1);
 
     if (hours > 0)
-        return QString("%1:%2").arg(hours).arg(minutes % 60);
+        return QString("%1h:%2m").arg(hours).arg(minutes % 60);
 
-    return QString("%1:%2").arg(minutes).arg(seconds % 60);
+    return QString("%1:%2").arg(minutes).arg((double)(seconds % 60), 2, 'f', 0, '0');
 }
 
 void FileTransferDialog::timeout()

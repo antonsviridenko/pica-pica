@@ -727,6 +727,8 @@ void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd,
 
 void SkyNet::file_finished(const unsigned char *peer_id, int sending)
 {
+    qDebug()<< "file_finished callback\n";
+
     if (sending)
         skynet->emit_OutgoingFileFinished(QByteArray((const char *)peer_id, PICA_ID_SIZE));
     else

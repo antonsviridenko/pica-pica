@@ -773,8 +773,11 @@ static unsigned int procmsg_FILEFRAGMENT(unsigned char* buf, unsigned int nb, vo
 {
 struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
 
-
-if (chan->recvfilestate != PICA_CHANRECVFILESTATE_RECEIVING)
+/*
+ *Allow incoming FILEFRAGMENTs while paused
+ */
+if (chan->recvfilestate != PICA_CHANRECVFILESTATE_RECEIVING
+    && chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
     return 0;
 
 if (nb - 4 !=  *(uint16_t*)(buf + 2))
@@ -874,7 +877,7 @@ switch(receiver_cmd)
 
     case PICA_PROTO_FILECONTROL_RESUME:
     if (chan->sendfilestate == PICA_CHANSENDFILESTATE_PAUSED)
-        chan->recvfilestate = PICA_CHANSENDFILESTATE_SENDING;
+        chan->sendfilestate = PICA_CHANSENDFILESTATE_SENDING;
     else
         return 0;
     break;
@@ -1404,9 +1407,10 @@ while(ipt)
 		}
     else if (ipt->sendfilestate == PICA_CHANSENDFILESTATE_SENDING)
         {
-        if (PICA_OK == PICA_send_file_fragment(ipt))
+        if (PICA_OK != (ret = PICA_send_file_fragment(ipt)))
             {
-            callbacks.file_progress(ipt->peer_id, ipt->sendfile_pos, 0);
+            callbacks.channel_closed_cb(ipt->peer_id, ret);
+            kill_ptr = ipt;
             }
         }
 	ipt = ipt->next;
@@ -1874,6 +1878,8 @@ else
     }
 
 chn->sendfile_pos += fragment_size;
+
+callbacks.file_progress(chn->peer_id, chn->sendfile_pos, 0);
 
 if (chn->sendfile_pos >= chn->sendfile_size)
     {
