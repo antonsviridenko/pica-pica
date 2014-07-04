@@ -1827,6 +1827,39 @@ if (sending)
 return PICA_send_filecontrol(chan, senderctl, receiverctl);
 }
 
+int PICA_cancel_file(struct PICA_chaninfo *chan, int sending)
+{
+int senderctl = PICA_PROTO_FILECONTROL_VOID;
+int receiverctl = PICA_PROTO_FILECONTROL_VOID;
+
+if (sending)
+    {
+    if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENDING
+        && chan->sendfilestate != PICA_CHANSENDFILESTATE_PAUSED)
+        return PICA_ERRINVARG;
+
+    fclose(chan->sendfile_stream);
+    chan->sendfile_stream = NULL;
+    chan->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
+
+    senderctl = PICA_PROTO_FILECONTROL_CANCEL;
+    }
+    else
+    {
+    if (chan->recvfilestate != PICA_CHANRECVFILESTATE_RECEIVING
+        && chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
+        return PICA_ERRINVARG;
+
+    fclose(chan->recvfile_stream);
+    chan->recvfile_stream = NULL;
+    chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
+
+    receiverctl = PICA_PROTO_FILECONTROL_CANCEL;
+    }
+
+return PICA_send_filecontrol(chan, senderctl, receiverctl);
+}
+
 int PICA_send_filecontrol(struct PICA_chaninfo *chan, int senderctl, int receiverctl)
 {
 struct PICA_proto_msg *mp;

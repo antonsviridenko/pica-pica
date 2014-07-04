@@ -1,6 +1,7 @@
 #include "filetransferdialog.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QMessageBox>
 #include <stdlib.h>
 
 FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, quint64 size,
@@ -188,13 +189,21 @@ void FileTransferDialog::rightbuttonclick()
         if (rightbutton->text() == tr("Deny"))
         {
             emit deniedFile(peer_id_);
+            setTransferStatus(DENIED);
             return;
         }
     }
 
     if (rightbutton->text() == tr("Cancel"))
     {
+
+        if (QMessageBox::No == QMessageBox::question(this, tr("Cancel File Transfer"),
+            tr("Are you sure you want to cancel file transfer?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No))
+             return;
+
         emit cancelledFile(peer_id_, this);
+        setTransferStatus(CANCELLED);
     }
 }
 

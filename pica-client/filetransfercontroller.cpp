@@ -96,6 +96,7 @@ void FileTransferController::file_resumed_incoming(QByteArray peer_id)
 void FileTransferController::file_cancelled_incoming(QByteArray peer_id)
 {
     ftdialogs_in[peer_id]->cancelledByPeer();
+    ftdialogs_in.remove(peer_id);
 }
 
 void FileTransferController::file_ioerror_incoming(QByteArray peer_id)
@@ -111,11 +112,13 @@ void FileTransferController::file_paused_outgoing(QByteArray peer_id)
 void FileTransferController::file_resumed_outgoing(QByteArray peer_id)
 {
     ftdialogs_out[peer_id]->resumedByPeer();
+
 }
 
 void FileTransferController::file_cancelled_outgoing(QByteArray peer_id)
 {
     ftdialogs_out[peer_id]->cancelledByPeer();
+    ftdialogs_out.remove(peer_id);
 }
 
 void FileTransferController::file_ioerror_outgoing(QByteArray peer_id)
@@ -147,14 +150,27 @@ void FileTransferController::file_denied_by_me(QByteArray peer_id)
 {
     skynet->DenyFile(peer_id);
 
-    delete ftdialogs_in[peer_id];
+    //delete ftdialogs_in[peer_id];
 
     ftdialogs_in.remove(peer_id);
 }
 
 void FileTransferController::file_cancelled_by_me(QByteArray peer_id, FileTransferDialog *from)
 {
+    bool sending = true;
 
+    if (from->getTransferDirection() == FileTransferDialog::RECEIVING)
+        {
+        ftdialogs_in.remove(peer_id);
+
+        sending = false;
+        }
+    else
+        {
+        ftdialogs_out.remove(peer_id);
+        }
+
+    skynet->CancelFile(peer_id, sending);
 }
 
 void FileTransferController::file_paused_by_me(QByteArray peer_id, FileTransferDialog *from)

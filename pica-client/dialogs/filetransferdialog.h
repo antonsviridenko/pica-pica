@@ -26,6 +26,8 @@ public:
     RECEIVINGFILE,
     PAUSED,
     CANCELLED,
+    PEERDISCONNECTED,
+    IOERROR,
     FINISHED
     };
 

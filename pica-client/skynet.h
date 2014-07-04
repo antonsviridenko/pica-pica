@@ -26,6 +26,7 @@ public:
     void DenyFile(QByteArray from);
     void PauseFile(QByteArray peer_id, bool pause_sending);
     void ResumeFile(QByteArray peer_id, bool resume_sending);
+    void CancelFile(QByteArray peer_id, bool cancel_sending);
 
     Accounts::AccountRecord CurrentAccount() {return skynet_account;};
 

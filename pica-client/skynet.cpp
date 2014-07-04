@@ -355,6 +355,24 @@ if ( (iptr = find_active_chan(peer_id)) )
 write_mutex.unlock();//>>
 }
 
+void SkyNet::CancelFile(QByteArray peer_id, bool cancel_sending)
+{
+int ret = PICA_OK;
+struct PICA_chaninfo *iptr;
+
+write_mutex.lock();//<<
+if ( (iptr = find_active_chan(peer_id)) )
+    {
+        ret = PICA_cancel_file(iptr, (int)cancel_sending );
+
+        if (ret != PICA_OK)
+        {
+            //show error somewhere somehow
+        }
+    }
+write_mutex.unlock();//>>
+}
+
 void SkyNet::SendMessage(QByteArray to, QString msg)
 {
 int ret = PICA_OK;
