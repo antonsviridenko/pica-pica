@@ -86,6 +86,8 @@ pica-client/history.h \
 pica-client/history.cpp \
 pica-client/dhparam.h \
 pica-client/dhparam.cpp \
+pica-client/filetransfercontroller.cpp \
+pica-client/filetransfercontroller.h \
  \
 pica-client/dialogs/addaccountdialog.cpp \
 pica-client/dialogs/addaccountdialog.h \
@@ -97,6 +99,8 @@ pica-client/dialogs/viewcertdialog.cpp \
 pica-client/dialogs/viewcertdialog.h \
 pica-client/dialogs/showpicaiddialog.cpp \
 pica-client/dialogs/showpicaiddialog.h \
+pica-client/dialogs/filetransferdialog.cpp \
+pica-client/dialogs/filetransferdialog.h \
 PICA_client.c \
 PICA_client.h \
 PICA_msgproc.c \
@@ -117,10 +121,12 @@ moc_nodethread.cpp \
 moc_picaactioncenter.cpp \
 moc_picasystray.cpp \
 moc_registeraccountdialog.cpp \
+moc_filetransferdialog.cpp \
 moc_skynet.cpp \
 moc_viewcertdialog.cpp \
 moc_showpicaiddialog.cpp \
 moc_dhparam.cpp \
+moc_filetransfercontroller.cpp \
 ui_mainwindow.h
 
 moc_%.cpp: pica-client/%.h
