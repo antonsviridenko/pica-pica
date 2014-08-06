@@ -74,6 +74,8 @@ public slots:
     void pausedByPeer();
     void resumedByPeer();
     void cancelledByPeer();
+    void ioError();
+    void peerDisconnected();
 
 private slots:
     void timeout();

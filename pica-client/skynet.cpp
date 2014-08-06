@@ -594,6 +594,12 @@ void SkyNet::emit_IncomingFileFinished(QByteArray peer_id)
     emit IncomingFileFinished(peer_id);
 }
 
+void SkyNet::emit_ChannelClosed(QByteArray peer_id)
+{
+    emit ChannelClosed(peer_id);
+}
+
+
 //callbacks
 
 //all callbacks are executed in separate thread, created in Nodethread instance, REMEMBER THAT !!!
@@ -648,6 +654,7 @@ void SkyNet::channel_closed_cb(const unsigned char *peer_id, int reason)
     qDebug()<<"channel closed ("<<QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64()
             <<", error_code =" << reason << ")\n";
 
+    skynet->emit_ChannelClosed(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
 void SkyNet::nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port)

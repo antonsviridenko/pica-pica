@@ -40,6 +40,7 @@ public slots:
     void file_ioerror_outgoing(QByteArray peer_id);
 
     void file_finished_incoming(QByteArray peer_id);
+    void file_peer_disconnected(QByteArray peer_id);
 
     //from me (file transfer dialog shown to user) to remote peer
     void file_accepted_by_me(QByteArray peer_id);

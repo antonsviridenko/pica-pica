@@ -55,6 +55,8 @@ signals:
     void OutgoingFileFinished(QByteArray peer_id);
     void IncomingFileFinished(QByteArray peer_id);
 
+    void ChannelClosed(QByteArray peer_id);
+
 private:
     Nodes nodes;
     QList<NodeThread*> threads;
@@ -93,6 +95,8 @@ private:
 
     void emit_OutgoingFileFinished(QByteArray peer_id);
     void emit_IncomingFileFinished(QByteArray peer_id);
+
+    void emit_ChannelClosed(QByteArray peer_id);
 
     //получение сообщения.
     static void newmsg_cb(const unsigned char *peer_id,const char* msgbuf,unsigned int nb,int type);

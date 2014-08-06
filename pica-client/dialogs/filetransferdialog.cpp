@@ -126,6 +126,16 @@ void FileTransferDialog::setTransferStatus(TransferStatus st)
     lbTransferStatus->setText(tr("Finished"));
     isTerminalState = true;
     break;
+
+    case PEERDISCONNECTED:
+    lbTransferStatus->setText(tr("Peer disconnected"));
+    isTerminalState = true;
+    break;
+
+    case IOERROR:
+    lbTransferStatus->setText(tr("I/O error"));
+    isTerminalState = true;
+    break;
     }
 
     if (isTerminalState)
@@ -153,6 +163,16 @@ void FileTransferDialog::resumedByPeer()
 void FileTransferDialog::cancelledByPeer()
 {
     setTransferStatus(CANCELLED);
+}
+
+void FileTransferDialog::ioError()
+{
+    setTransferStatus(IOERROR);
+}
+
+void FileTransferDialog::peerDisconnected()
+{
+    setTransferStatus(PEERDISCONNECTED);
 }
 
 void FileTransferDialog::leftbuttonclick()

@@ -18,6 +18,23 @@ FileTransferController::FileTransferController(QObject *parent) :
     connect(skynet, SIGNAL(OutgoingFileRequestAccepted(QByteArray)), this, SLOT(file_accepted_by_peer(QByteArray)));
 
     connect(skynet, SIGNAL(OutgoingFileRequestDenied(QByteArray)), this, SLOT(file_denied_by_peer(QByteArray)));
+
+    connect(skynet, SIGNAL(ChannelClosed(QByteArray)), this, SLOT(file_peer_disconnected(QByteArray)));
+}
+
+void FileTransferController::file_peer_disconnected(QByteArray peer_id)
+{
+    if (ftdialogs_in.contains(peer_id))
+    {
+        ftdialogs_in[peer_id]->peerDisconnected();
+        ftdialogs_in.remove(peer_id);
+    }
+
+    if (ftdialogs_out.contains(peer_id))
+    {
+        ftdialogs_out[peer_id]->peerDisconnected();
+        ftdialogs_out.remove(peer_id);
+    }
 }
 
 void FileTransferController::file_finished_incoming(QByteArray peer_id)
@@ -101,7 +118,8 @@ void FileTransferController::file_cancelled_incoming(QByteArray peer_id)
 
 void FileTransferController::file_ioerror_incoming(QByteArray peer_id)
 {
-
+    ftdialogs_in[peer_id]->ioError();
+    ftdialogs_in.remove(peer_id);
 }
 
 void FileTransferController::file_paused_outgoing(QByteArray peer_id)
@@ -123,7 +141,8 @@ void FileTransferController::file_cancelled_outgoing(QByteArray peer_id)
 
 void FileTransferController::file_ioerror_outgoing(QByteArray peer_id)
 {
-
+    ftdialogs_out[peer_id]->ioError();
+    ftdialogs_out.remove(peer_id);
 }
 
 void FileTransferController::file_accepted_by_me(QByteArray peer_id)
