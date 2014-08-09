@@ -6,6 +6,7 @@
 #include "../PICA_proto.h"
 #include "accounts.h"
 #include "dialogs/showpicaiddialog.h"
+#include "sound.h"
 
 #include <QMessageBox>
 
@@ -22,6 +23,10 @@ PicaActionCenter::PicaActionCenter(QObject *parent) :
 
     showmyidAct = new QAction(tr("Show My Pica Pica ID"), this);
     connect(showmyidAct, SIGNAL(triggered()), this, SLOT(showmyid()));
+
+    muteSoundsAct = new QAction(tr("&Mute Sounds"), this);
+    muteSoundsAct->setCheckable(true);
+    connect(muteSoundsAct, SIGNAL(triggered(bool)), this, SLOT(muteSounds(bool)));
 }
 
 void PicaActionCenter::about()
@@ -54,4 +59,9 @@ void PicaActionCenter::showmyid()
 {
     ShowPicaIdDialog d(Accounts::GetCurrentAccount().name, Accounts::GetCurrentAccount().id, tr("My Current Account"));
     d.exec();
+}
+
+void PicaActionCenter::muteSounds(bool yes)
+{
+    Sound::mute(yes);
 }

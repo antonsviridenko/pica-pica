@@ -35,9 +35,13 @@ class FileTransferController *ftctrl;
 #ifndef WIN32
 QString config_defaultCA(PICA_INSTALLPREFIX"/share/pica-client/CA.pem");
 QString config_defaultDHParam(PICA_INSTALLPREFIX"/share/pica-client/"PICA_CLIENT_DHPARAMFILE);
+
+QString snd_newmessage(PICA_INSTALLPREFIX"/share/pica-client/picapica-snd-newmessage.wav");
 #else
 QString config_defaultCA("share\\CA.pem");
 QString config_defaultDHParam("share\\"PICA_CLIENT_DHPARAMFILE);
+
+QString snd_newmessage("share\\picapica-snd-newmessage.wav");
 #endif
 
 static bool create_database()

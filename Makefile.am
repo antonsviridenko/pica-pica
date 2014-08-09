@@ -88,6 +88,8 @@ pica-client/dhparam.h \
 pica-client/dhparam.cpp \
 pica-client/filetransfercontroller.cpp \
 pica-client/filetransfercontroller.h \
+pica-client/sound.cpp \
+pica-client/sound.h \
  \
 pica-client/dialogs/addaccountdialog.cpp \
 pica-client/dialogs/addaccountdialog.h \
@@ -148,7 +150,12 @@ pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPEN
 pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS)
 
 pkgpicaclientdir = ${datarootdir}/pica-client
-dist_pkgpicaclient_DATA = CA.pem dhparam4096.pem pica-client/picapica-icon-fly.png pica-client/picapica-icon-sit.png 
+dist_pkgpicaclient_DATA =  \
+CA.pem \
+dhparam4096.pem \
+pica-client/picapica-icon-fly.png \
+pica-client/picapica-icon-sit.png \
+pica-client/picapica-snd-newmessage.wav
 
 #$(filter moc_%.cpp,$(pica_client_SOURCES))
 CLEANFILES += moc_*.cpp ui_*.h

@@ -15,6 +15,7 @@ PicaSysTray::PicaSysTray(QObject *parent) :
     systrayMenu_ = new QMenu();
 
     systrayMenu_->addAction(action_center->AboutAct());
+    systrayMenu_->addAction(action_center->MuteSoundsAct());
     systrayMenu_->addSeparator();
     systrayMenu_->addAction(action_center->ExitAct());
 

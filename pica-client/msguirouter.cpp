@@ -4,6 +4,7 @@
 #include "mainwindow.h"
 #include "picasystray.h"
 #include "globals.h"
+#include "sound.h"
 
 /*
   этот класс должен обеспечивать связь между приёмом-отправкой сообщений и их отображением в пользовательском интерфейсе.
@@ -68,6 +69,7 @@ void MsgUIRouter::create_chatwindow(QByteArray peer_id)
 
 void MsgUIRouter::msg_from_peer(QByteArray from, QString msg)
 {
+    Sound::play(snd_newmessage);
 
     if ( ! chatwindows.contains(from))
     {

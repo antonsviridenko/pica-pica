@@ -13,11 +13,13 @@ public:
     QAction *AboutAct() {return aboutAct;};
     QAction *ExitAct() {return exitAct;};
     QAction *ShowMyIDAct() {return showmyidAct;};
+    QAction *MuteSoundsAct() {return muteSoundsAct;};
     
 private:
     QAction *aboutAct;
     QAction *exitAct;
     QAction *showmyidAct;
+    QAction *muteSoundsAct;
 
 signals:
     
@@ -26,6 +28,7 @@ private slots:
     void about();
     void exit();
     void showmyid();
+    void muteSounds(bool yes);
 };
 
 #endif // PICAACTIONCENTER_H
