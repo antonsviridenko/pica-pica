@@ -7,8 +7,8 @@
 #else
 
 //link with winmm.lib
-#include <Mmsystem.h>
 #include <windows.h>
+#include <Mmsystem.h>
 
 #endif
 
