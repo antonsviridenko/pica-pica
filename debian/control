@@ -8,7 +8,7 @@ Homepage: http://picapica.im
 
 Package: pica-client
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends},alsa-utils
 Description: Pica Pica instant messaging client
  Client for secure distributed instant messaging system 
  Pica Pica.
