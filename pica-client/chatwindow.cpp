@@ -328,6 +328,8 @@ void ChatWindow::addct_yes()
 
     ct.Add(peer_id_, Contacts::regular);
     addct_removequestion();
+
+    emit contacts_update();
 }
 
 void ChatWindow::addct_no()

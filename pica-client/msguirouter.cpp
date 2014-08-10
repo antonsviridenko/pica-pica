@@ -63,6 +63,7 @@ void MsgUIRouter::create_chatwindow(QByteArray peer_id)
 
     connect(cw, SIGNAL(msg_input(QString,ChatWindow*)), this, SLOT(msg_to_peer(QString,ChatWindow*)));
     connect(cw, SIGNAL(chatwindow_close(ChatWindow*)), this, SLOT(chatwindow_closed(ChatWindow*)));
+    connect(cw, SIGNAL(contacts_update()), skynet, SIGNAL(ContactsUpdated()));
 
     cw->show();
 }

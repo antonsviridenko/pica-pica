@@ -34,6 +34,7 @@ public:
 signals:
     void msg_input(QString msg, ChatWindow *sender_window);
     void chatwindow_close(ChatWindow *sender_window);
+    void contacts_update();
 
 public slots:
     void msg_from_peer(QString msg);
