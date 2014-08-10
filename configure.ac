@@ -101,5 +101,5 @@ AC_FUNC_MALLOC
 AC_FUNC_REALLOC
 AC_CHECK_FUNCS([getcwd inet_ntoa memmove memset select socket strchr strstr strtol])
 
-AC_CONFIG_FILES([Makefile debian/changelog])
+AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
