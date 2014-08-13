@@ -60,6 +60,7 @@ private:
     QPushButton *btAddCtBlacklist;
     QLabel *lbAddCtQuestion;
 
+    bool isEmptyMessage(const QString &msg) const;
     void put_message(QString msg, QByteArray id, bool is_me);
     int draw_message(QString msg, QString nickname, QString datetime, QString color, bool is_delivered);
     void print_history(QList<History::HistoryRecord> H);

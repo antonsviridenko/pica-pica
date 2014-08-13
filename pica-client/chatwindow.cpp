@@ -264,21 +264,35 @@ void ChatWindow::msg_informational(QString text)
   chatw->moveCursor(QTextCursor::End, QTextCursor::KeepAnchor);
 }
 
+bool ChatWindow::isEmptyMessage(const QString &msg) const
+{
+    int size = msg.size();
+    for (int i = 0; i < size; ++i) {
+        if (!msg.at(i).isSpace()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void ChatWindow::send_message()
 {
-    put_message(sendtextw->toPlainText(), Accounts::GetCurrentAccount().id, true);
-    hist.Add(peer_id_, sendtextw->toPlainText(), true);
+    QString message = sendtextw->toPlainText();
+    if (!isEmptyMessage(message)) {
+        put_message(message, Accounts::GetCurrentAccount().id, true);
+        hist.Add(peer_id_, message, true);
 
-    if (!hist.isOK())
-    {
-        QMessageBox mbx;
-        mbx.setText(hist.GetLastError());
-        mbx.exec();
+        if (!hist.isOK())
+        {
+            QMessageBox mbx;
+            mbx.setText(hist.GetLastError());
+            mbx.exec();
+        }
+
+        emit msg_input(message, this);
+
+        sendtextw->clear();
     }
-
-    emit msg_input(sendtextw->toPlainText(), this);
-
-    sendtextw->clear();
 }
 
 void ChatWindow::closeEvent(QCloseEvent *e)
