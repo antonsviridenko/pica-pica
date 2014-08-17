@@ -40,6 +40,7 @@ public slots:
     void msg_from_peer(QString msg);
     void msg_delivered();
     void msg_informational(QString text);//юзер в оффлайне, набирает сообщение, и т.д. серым шрифтом, курсив
+    void set_peer_name();
 
 
 private:

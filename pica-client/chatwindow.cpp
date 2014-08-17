@@ -15,18 +15,10 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
     QWidget(0), peer_id_(peer_id), hist(config_dbname, Accounts::GetCurrentAccount().id)
 {
     QVBoxLayout *layout;
-    QString title;
 
-
-
+    set_peer_name();
     {
         Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
-        peer_name_ = ct.GetContactName(peer_id_);
-
-        title = peer_name_;
-
-        if (peer_name_.isEmpty())
-            peer_name_ = peer_id_.toBase64();
 
         QList<Contacts::ContactRecord>  L = ct.GetContacts(Contacts::temporary);
         addcontactquestion = false;
@@ -38,7 +30,6 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
             break;
             }
         }
-
     }
     {
         Accounts ac(config_dbname);
@@ -47,9 +38,6 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
         if (my_name_.isEmpty())
             my_name_ = Accounts::GetCurrentAccount().id.toBase64();
     }
-
-    title = QObject::tr("Chat with ") + title + " - " + peer_id_.toBase64();
-    setWindowTitle(title);
 
     layout = new QVBoxLayout;
 
@@ -370,3 +358,21 @@ void ChatWindow::addct_removequestion()
     addcontactquestion = false;
     }
 }
+
+void ChatWindow::set_peer_name()
+{
+    QString title;
+    Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
+
+    peer_name_ = ct.GetContactName(peer_id_);
+
+    title = peer_name_;
+
+    if (peer_name_.isEmpty())
+        peer_name_ = peer_id_.toBase64();
+
+
+    title = QObject::tr("Chat with ") + title + " - " + peer_id_.toBase64();
+    setWindowTitle(title);
+}
+
