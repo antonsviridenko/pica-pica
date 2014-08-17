@@ -39,6 +39,7 @@ public:
 
 private:
     QLabel *lbFilename;
+    QLabel *lbPeer;
     QLabel *lbProgressStatus;
     QLabel *lbTransferSpeed;
     QLabel *lbRemainingTime;
@@ -48,6 +49,7 @@ private:
     QPushButton *rightbutton;
 
     QByteArray peer_id_;
+    QString peer_name_;
     TransferDirection dir_;
     QString filename_;
     quint64 filesize_;

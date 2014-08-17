@@ -1,4 +1,7 @@
 #include "filetransferdialog.h"
+#include "contacts.h"
+#include "accounts.h"
+#include "globals.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMessageBox>
@@ -12,10 +15,19 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
     filename_(filename),
     filesize_(size)
 {
+    Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
+    peer_name_ = ct.GetContactName(peer_id_);
+
+    if (peer_name_.isEmpty())
+        peer_name_ = peer_id_.toBase64();
+    else
+        peer_name_ = QString("%1 (%2...)").arg(peer_name_).arg(peer_id_.toBase64().left(8).constData());
+
     QVBoxLayout *layout = new QVBoxLayout(this);
     QHBoxLayout *btlayout = new QHBoxLayout();
 
     lbFilename = new QLabel(this);
+    lbPeer = new QLabel(this);
     lbProgressStatus = new QLabel(this);
     lbTransferSpeed = new QLabel(this);
     lbRemainingTime = new QLabel(this);
@@ -26,6 +38,7 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
     rightbutton = new QPushButton(this);
 
     layout->addWidget(lbFilename);
+    layout->addWidget(lbPeer);
     layout->addWidget(lbProgressStatus);
     layout->addWidget(lbTransferSpeed);
     layout->addWidget(lbRemainingTime);
@@ -41,7 +54,9 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
         leftbutton->setText(tr("Accept"));
         rightbutton->setText(tr("Deny"));
 
-        setWindowTitle(tr("Receiving file %1").arg(filename_));
+        lbPeer->setText("Sender: " + peer_name_);
+
+        setWindowTitle(tr("Receiving file %1 from %2").arg(filename_).arg(peer_name_));
     }
     else if (drct == SENDING)
     {
@@ -49,7 +64,9 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
         rightbutton->setText(tr("Cancel"));
         leftbutton->setEnabled(false);
 
-        setWindowTitle(tr("Sending file %1").arg(filename_));
+        lbPeer->setText("Receiver: " + peer_name_);
+
+        setWindowTitle(tr("Sending file %1 to %2").arg(filename_).arg(peer_name_));
     }
     setTransferStatus(WAITINGFORACCEPT);
 
