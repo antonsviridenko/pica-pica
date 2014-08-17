@@ -1,7 +1,7 @@
 #include "filetransferdialog.h"
-#include "contacts.h"
-#include "accounts.h"
-#include "globals.h"
+#include "../contacts.h"
+#include "../accounts.h"
+#include "../globals.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMessageBox>
