@@ -86,7 +86,7 @@ void MsgUIRouter::msg_from_peer(QByteArray from, QString msg)
                 systray->StartBlinking();
                 blinkqueue.append(from);
             }
-            else if (blinkqueue.last() != from)
+            else if (!blinkqueue.contains(from))
             {
                 blinkqueue.append(from);
             }
