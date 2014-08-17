@@ -413,7 +413,7 @@ static bool create_config_dir()
             return false;
         }
     }*/
-
+    /*
     QString dh_error_message;
 
     if (!DHParam::VerifyGenerated(NULL))
@@ -445,7 +445,7 @@ static bool create_config_dir()
             msgBox.setStandardButtons(QMessageBox::Ok);
             msgBox.exec();
         }
-    }
+    }*/
 
     return true;
 }
