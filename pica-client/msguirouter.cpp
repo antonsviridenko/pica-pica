@@ -97,6 +97,15 @@ void MsgUIRouter::msg_from_peer(QByteArray from, QString msg)
 void MsgUIRouter::msg_to_peer(QString msg, ChatWindow *sender_window)
 {
     skynet->SendMessage(sender_window->getPeerId(), msg);
+
+    if (!blinkqueue.isEmpty())
+        {
+            blinkqueue.removeAll(sender_window->getPeerId());
+            if (blinkqueue.isEmpty())
+                {
+                    systray->StopBlinking();
+                }
+        }
 }
 
 void MsgUIRouter::start_chat(QByteArray peer_id)
