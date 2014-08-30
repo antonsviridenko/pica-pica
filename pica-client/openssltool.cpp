@@ -99,7 +99,7 @@ bool OpenSSLTool::GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpass
     args <<"genrsa"<<"-out"<<keyfile;
 
     if (setpassword)
-        args <<"-passout"<<"stdin"<<"-idea";
+        args <<"-passout"<<"stdin"<<"-aes256";
 
     if (!rand.isEmpty())
         args << "-rand"<<rand;
