@@ -29,6 +29,7 @@ QIcon picapica_ico_fly;
 class PicaActionCenter *action_center;
 class PicaSysTray *systray;
 class FileTransferController *ftctrl;
+class AccountsWindow *accwindow;
 
 // /usr/share/pica-client/pica-pica_CA.pem
 //QString config_defaultCA("/home/root_jr/files/projects/picapica_wc/localhost/project_picapica/trunk/tests/trusted_CA.pem");
@@ -468,6 +469,7 @@ int main(int argc, char *argv[])
     action_center = &ac;
 
     AccountsWindow aw;
+    accwindow = &aw;
 
     SkyNet s;
     skynet=&s;

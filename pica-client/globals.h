@@ -29,4 +29,5 @@ extern class PicaActionCenter *action_center;
 extern class PicaSysTray *systray;
 extern class FileTransferController *ftctrl;
 extern class QString snd_newmessage;
+extern class AccountsWindow *accwindow;
 #endif // GLOBALS_H

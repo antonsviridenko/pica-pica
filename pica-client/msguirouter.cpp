@@ -2,6 +2,7 @@
 #include "dialogs/forgedcertdialog.h"
 #include "history.h"
 #include "mainwindow.h"
+#include "accountswindow.h"
 #include "picasystray.h"
 #include "globals.h"
 #include "sound.h"
@@ -29,6 +30,15 @@ MsgUIRouter::MsgUIRouter(QObject *parent) :
 
 void MsgUIRouter::trayicon_dclick()
 {
+    if (mainwindow == NULL)
+    {
+        accwindow->showNormal();
+        accwindow->activateWindow();
+        accwindow->raise();
+        return;
+    }
+
+
     if (blinkqueue.isEmpty())
     {
         mainwindow->showNormal();

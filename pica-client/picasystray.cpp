@@ -14,8 +14,14 @@ PicaSysTray::PicaSysTray(QObject *parent) :
 {
     systrayMenu_ = new QMenu();
 
+    //Unity cannot into doubleclick on tray icon...  :(
+    QAction *activate = new QAction(tr("&Activate"), this);
+    connect(activate, SIGNAL(triggered()), this, SIGNAL(doubleclicked()));
+
+
     systrayMenu_->addAction(action_center->AboutAct());
     systrayMenu_->addAction(action_center->MuteSoundsAct());
+    systrayMenu_->addAction(activate);
     systrayMenu_->addSeparator();
     systrayMenu_->addAction(action_center->ExitAct());
 
@@ -34,7 +40,7 @@ PicaSysTray::PicaSysTray(QObject *parent) :
 
 void PicaSysTray::systray_activated(QSystemTrayIcon::ActivationReason r)
 {
-    if (r == QSystemTrayIcon::DoubleClick && mainwindow!=NULL)
+    if (r == QSystemTrayIcon::DoubleClick)
     {
         emit doubleclicked();
     }
