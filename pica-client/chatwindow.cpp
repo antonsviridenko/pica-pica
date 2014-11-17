@@ -126,7 +126,7 @@ void ChatWindow::put_message(QString msg, QByteArray id, bool is_me)
             name = id.toBase64();
     }
 
-    pos = draw_message(msg, name, QDateTime::currentDateTime().toString(), color, false);
+    pos = draw_message(msg, name, QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"), color, false);
 
     if (is_me)
         undelivered_msgs.append(pos);
@@ -192,7 +192,7 @@ void ChatWindow::print_history(QList<History::HistoryRecord> H)
 
         dt.setTime_t(r.timestamp);
         //put_message(r.message, r.peer_id, r.is_me);
-        draw_message(r.message, name, dt.toString(), color, r.is_delivered);
+        draw_message(r.message, name, dt.toString("yyyy-MM-dd hh:mm:ss"), color, r.is_delivered);
     }
 }
 
