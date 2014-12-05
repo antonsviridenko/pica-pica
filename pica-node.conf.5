@@ -36,6 +36,11 @@ The default is
 .I CA_cert_file
 Specifies the path to CA certificate in .pem format. The default is 
 .I /usr/share/pica-node/CA.pem
+.TP
+.I disable_reserved_addrs
+Disables usage of reserved IP ranges (127.0.0.0/8, 10.0.0.0/8, 192.168.0.0/16 and others).
+If such address is received from other node or is set as "announced_addr" value, it will be 
+rejected. This option can be set to "yes" or "no". Default is "yes".
 .SH AUTHOR
 Anton Sviridenko (anton (at) picapica.im, anton (at) picapica.ge)
 .SH SEE ALSO

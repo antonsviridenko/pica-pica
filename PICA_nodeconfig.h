@@ -27,6 +27,8 @@ char 			*listen_port;
 char 			*nodes_db_file;
 char			*config_file;
 char			*CA_cert_file;
+int 			disable_reserved_addrs;
+//int			conn_speed_limit;
 };
 
 extern struct nodeconfig nodecfg;

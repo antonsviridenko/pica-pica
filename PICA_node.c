@@ -635,10 +635,18 @@ switch (buf[0])
 	
 	if (nodelink_search_by_ipv4addr(na_ipv4.addr, na_ipv4.port)) //connection with this node is already established
 		{
-		PICA_debug3("disconnecting node %.16s:%hu - connection with this node is already established", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
+		PICA_debug1("disconnecting node %.16s:%hu - connection with this node is already established", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
 		return 0;
 		}
 
+	if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(na_ipv4.addr))
+		{
+		PICA_debug1("disconnecting node %.16s:%hu - private IP ranges are rejected by node configuration",
+		    		inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port)
+		);
+		return 0;
+		}
+		
 	sprintf(na.addr,"%.16s",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
 	na.port = ntohs(na_ipv4.port);
 	
@@ -769,6 +777,7 @@ while(listleft)
 		//char addr[256];
 		struct newconn nc;
 		struct nodelink *nlp;
+		int skip_save = 0;
 
 		memset(na.addr,0,256);
 		memset(&nc,0,sizeof(struct newconn));
@@ -793,12 +802,20 @@ while(listleft)
 // 					PICA_debug1("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
 // 					}
 					
+			PICA_debug3("NODELIST item %.16s:%hu", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
 			
-
+			if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(na_ipv4.addr))
+			{
+			skip_save = 1;
+			PICA_debug1("Received NODELIST item %.16s:%hu is in private range, skipping",
+			    inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port)
+			);
+			}
 			listleft-=PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 			break;
 			}
-		PICA_nodeaddr_save(nodecfg.nodes_db_file, &na);//CONF filename
+		if (!skip_save)
+			PICA_nodeaddr_save(nodecfg.nodes_db_file, &na);//CONF filename
 		}
 	}
 
@@ -2907,6 +2924,12 @@ while(nap)
 		PICA_debug3("Skipping self address %.255s port %u", nap->addr, nap->port);
 		skip = 1;
 		}
+		
+	if (nodecfg.disable_reserved_addrs && INADDR_NONE != inet_addr(nap->addr) && PICA_is_reserved_addr_ipv4(inet_addr(nap->addr)))
+		{
+		PICA_debug3("Skipping IP from private range %.255s port %u", nap->addr, nap->port);
+		skip = 1;
+		}
 	
 	nl = nodelink_list_head;
 	//check if connection to node with current address is already established
@@ -2958,14 +2981,22 @@ PICA_debug1("nodecfg.config_file = %s", nodecfg.config_file);
 PICA_debug1("nodecfg.announced_addr = %s",nodecfg.announced_addr);
 PICA_debug1("nodecfg.listen_port = %s",nodecfg.listen_port);
 PICA_debug1("nodecfg.nodes_db_file = %s",nodecfg.nodes_db_file);
+PICA_debug1("nodecfg.disable_reserved_addrs = %s", nodecfg.disable_reserved_addrs ? "yes" : "no");
 
 if (!PICA_node_init())
 	return -1;
 
 if (INADDR_NONE == inet_addr(nodecfg.announced_addr) || INADDR_ANY == inet_addr(nodecfg.announced_addr))
 	{
-	PICA_fatal("announced_addr  (%.16s) is invalid or not configured. Please set correct public IP address of your pica-node instance in config file",
+	PICA_fatal("announced_addr  (%.16s) is invalid or not configured. Please set correct public IP address of your pica-node instance in config file.",
 			nodecfg.announced_addr
+	);
+	}
+	
+if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(inet_addr(nodecfg.announced_addr)))
+	{
+	PICA_fatal("announced_addr  (%.16s) is in private range and is unacceptable for global Internet. Private ranges are disabled by node configuration.",
+	 		nodecfg.announced_addr
 	);
 	}
 
