@@ -28,10 +28,10 @@ static pthread_mutex_t *mt_locks;
 
 #endif
 
-static int PICA_send_file_fragment(struct PICA_chaninfo *chn);
-static int PICA_sendfile_open_read(struct PICA_chaninfo *chn, const char *filename_utf8, uint64_t *file_size);
-static int PICA_recvfile_open_write(struct PICA_chaninfo *chn, const char *filename_utf8, unsigned int filenamesize);
-static int PICA_send_filecontrol(struct PICA_chaninfo *chan, int senderctl, int receiverctl);
+static int PICA_send_file_fragment(struct PICA_c2c *chn);
+static int PICA_sendfile_open_read(struct PICA_c2c *chn, const char *filename_utf8, uint64_t *file_size);
+static int PICA_recvfile_open_write(struct PICA_c2c *chn, const char *filename_utf8, unsigned int filenamesize);
+static int PICA_send_filecontrol(struct PICA_c2c *chan, int senderctl, int receiverctl);
 
 static unsigned int procmsg_INITRESP(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_CONNREQINC(unsigned char*,unsigned int,void*);
@@ -47,8 +47,8 @@ static unsigned int procmsg_DENIEDFILE(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_FILEFRAGMENT(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_FILECONTROL(unsigned char*,unsigned int,void*);
 
-static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_conninfo *ci, unsigned int msgid, unsigned int size);
-static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_chaninfo *chn, unsigned int msgid, unsigned int size);
+static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
+static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size);
 
 #define MSGINFO_MSGSNUM(arr) (sizeof(arr)/sizeof(struct PICA_msginfo))
 const struct PICA_msginfo  c2n_messages[] = {
@@ -193,11 +193,11 @@ if (!preverify_ok) {
     return preverify_ok;
 }
 
-static int add_chaninfo(struct PICA_conninfo *ci, struct PICA_chaninfo **chn, const unsigned char *peer_id, int is_outgoing)
+static int add_chaninfo(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsigned char *peer_id, int is_outgoing)
 {
-struct PICA_chaninfo *chnl,*ipt;
+struct PICA_c2c *chnl,*ipt;
 
-chnl=*chn=(struct PICA_chaninfo*)calloc(sizeof(struct PICA_chaninfo),1);
+chnl=*chn=(struct PICA_c2c*)calloc(sizeof(struct PICA_c2c),1);
 
 if (!chnl)
 	return 0;//ERR_CHECK
@@ -227,7 +227,7 @@ else
 return 1;
 }
 
-static int establish_data_connection(struct PICA_chaninfo *chnl)
+static int establish_data_connection(struct PICA_c2c *chnl)
 {
 char* DN_str;
 //unsigned char buf[12];
@@ -400,7 +400,7 @@ return err_ret;
 
 static unsigned int procmsg_INITRESP(unsigned char* buf, unsigned int nb,void* p)
 {
-struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
+struct PICA_c2n *ci=(struct PICA_c2n *)p;
 
 switch(buf[0])
 	{
@@ -424,14 +424,14 @@ return 1;
 static unsigned int procmsg_CONNREQINC(unsigned char* buf,unsigned int nb,void* p)
 {
 int ret;
-struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
+struct PICA_c2n *ci=(struct PICA_c2n *)p;
 struct PICA_proto_msg *mp;
 unsigned char *peer_id = buf + 2;
 
 
 	if (callbacks.accept_cb(peer_id))
 		{
-		struct PICA_chaninfo *_chnl;
+		struct PICA_c2c *_chnl;
 		
 		mp = c2n_writebuf_push( ci, PICA_PROTO_CONNALLOW, PICA_PROTO_CONNALLOW_SIZE);
 		
@@ -480,8 +480,8 @@ return 1;
 
 static unsigned int procmsg_NOTFOUND(unsigned char* buf,unsigned int nb,void* p)
 {
-struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
-struct PICA_chaninfo *ipt,*rq=0;
+struct PICA_c2n *ci=(struct PICA_c2n *)p;
+struct PICA_c2c *ipt,*rq=0;
 unsigned char *peer_id = buf + 2;
 
 //puts("procmsg_NOTFOUND");//debug
@@ -511,8 +511,8 @@ return 1;
 
 static unsigned int procmsg_FOUND(unsigned char* buf,unsigned int nb,void* p)
 {
-struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
-struct PICA_chaninfo *ipt,*rq=0;
+struct PICA_c2n *ci=(struct PICA_c2n *)p;
+struct PICA_c2c *ipt,*rq=0;
 unsigned char *peer_id = buf + 2;
 int ret;
 
@@ -609,7 +609,7 @@ return 1;
 
 static unsigned int procmsg_MSGUTF8(unsigned char* buf, unsigned int nb, void* p)
 {
-struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+struct PICA_c2c *chan = (struct PICA_c2c *)p;
 struct PICA_proto_msg *mp;
 
 callbacks.newmsg_cb(chan->peer_id, buf + 4, nb - 4, buf[0]);
@@ -629,7 +629,7 @@ return 1;
 
 static unsigned int procmsg_MSGOK(unsigned char* buf, unsigned int nb, void* p)
 {
-struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
 callbacks.msgok_cb(chan -> peer_id);
 return 1;
@@ -637,7 +637,7 @@ return 1;
 
 unsigned int procmsg_PINGREQ(unsigned char* buf,unsigned int nb,void* p)
 {
-struct PICA_conninfo *ci=(struct PICA_conninfo *)p;
+struct PICA_c2n *ci=(struct PICA_c2n *)p;
 struct PICA_proto_msg *mp;
 
 mp = c2n_writebuf_push(ci, PICA_PROTO_PINGREP, PICA_PROTO_PINGREP_SIZE);
@@ -652,7 +652,7 @@ else
 return 1;
 }
 
-int PICA_deny_file(struct PICA_chaninfo *chan)
+int PICA_deny_file(struct PICA_c2c *chan)
 {
 struct PICA_proto_msg *mp;
 
@@ -673,7 +673,7 @@ else
 return PICA_OK;
 }
 
-int PICA_accept_file(struct PICA_chaninfo *chan, char *filename, unsigned int filenamesize)
+int PICA_accept_file(struct PICA_c2c *chan, char *filename, unsigned int filenamesize)
 {
 struct PICA_proto_msg *mp;
 int ret;
@@ -703,7 +703,7 @@ return PICA_OK;
 
 static unsigned int procmsg_SENDFILEREQUEST(unsigned char* buf, unsigned int nb, void* p)
 {
-struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+struct PICA_c2c *chan = (struct PICA_c2c *)p;
 struct PICA_proto_msg *mp;
 int ret;
 
@@ -740,7 +740,7 @@ return 1;
 
 static unsigned int procmsg_ACCEPTEDFILE(unsigned char* buf, unsigned int nb, void* p)
 {
-struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
 if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENTREQ)
     return 0;
@@ -754,7 +754,7 @@ return 1;
 
 static unsigned int procmsg_DENIEDFILE(unsigned char* buf, unsigned int nb, void* p)
 {
-struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
 if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENTREQ)
     return 0;
@@ -771,7 +771,7 @@ return 1;
 
 static unsigned int procmsg_FILEFRAGMENT(unsigned char* buf, unsigned int nb, void* p)
 {
-struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
 /*
  *Allow incoming FILEFRAGMENTs while paused
@@ -818,7 +818,7 @@ return 1;
 
 static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, void* p)
 {
-struct PICA_chaninfo *chan = (struct PICA_chaninfo *)p;
+struct PICA_c2c *chan = (struct PICA_c2c *)p;
 unsigned int sender_cmd, receiver_cmd;
 
 sender_cmd = buf[2];
@@ -997,7 +997,7 @@ return 1;
 //cert_file - имя файла, содержащего сертфикат клиента в формате PEM
 //pkey_file - имя файла, содержащего приватный ключ в формате PEM
 //password_cb - callback-функция, запрашивающая пароль к приватному ключу, см. man 3 SSL_CTX_set_default_passwd_cb;в userdata передается указатель на id
-//ci -указатель на указатель на структуру PICA_conninfo, который будет проинициализирован при успешном выполнении функции
+//ci -указатель на указатель на структуру PICA_c2n, который будет проинициализирован при успешном выполнении функции
 //Память, выделенная под структуру, освобождается при вызове PICA_close_connection
 //Возвращаемое значение - код завершения
 //PICA_OK - успешное завершение функции
@@ -1010,10 +1010,10 @@ int PICA_new_connection(const char *nodeaddr,
                         const char *pkey_file,
                         const char *dh_param_file,
                         int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
-                        struct PICA_conninfo **ci)
+                        struct PICA_c2n **ci)
 {
 int ret,ret_err;
-struct PICA_conninfo *cid;
+struct PICA_c2n *cid;
 struct sockaddr_in a;
 DH *dh = NULL;
 FILE *dh_file = NULL;
@@ -1023,7 +1023,7 @@ if (!(nodeaddr && CA_file && cert_file && pkey_file && ci))
 	return PICA_ERRINVARG;
 
 
-cid=*ci=(struct PICA_conninfo*)calloc(sizeof(struct PICA_conninfo),1);//(1)
+cid=*ci=(struct PICA_c2n*)calloc(sizeof(struct PICA_c2n),1);//(1)
 if (!cid)
 	return PICA_ERRNOMEM;
 
@@ -1268,10 +1268,10 @@ return ret_err;
 
 //создает ИСХОДЯЩИЙ логический зашифрованный канал связи с указанным собеседником, если тот доступен
 // в данный момент.
-int PICA_create_channel(struct PICA_conninfo *ci,const unsigned char *peer_id,struct PICA_chaninfo **chn)
+int PICA_create_channel(struct PICA_c2n *ci,const unsigned char *peer_id,struct PICA_c2c **chn)
 {
 struct PICA_proto_msg *mp;
-struct PICA_chaninfo *chnl;
+struct PICA_c2c *chnl;
 
 if (!(ci && chn))
 	return PICA_ERRINVARG;
@@ -1294,11 +1294,11 @@ mp = c2n_writebuf_push( ci, PICA_PROTO_CONNREQOUTG, PICA_PROTO_CONNREQOUTG_SIZE)
 return PICA_OK;
 }
 
-int PICA_read(struct PICA_conninfo *ci,int timeout)
+int PICA_read(struct PICA_c2n *ci,int timeout)
 {
 fd_set fds;
 struct timeval tv={0,1000};
-struct PICA_chaninfo *ipt, *kill_ptr = 0;
+struct PICA_c2c *ipt, *kill_ptr = 0;
 int ret,nfds;
 
 //puts("PICA_read<<");//debug
@@ -1379,9 +1379,9 @@ if (ret>0)
 return PICA_OK;
 }
 
-int PICA_write(struct PICA_conninfo *ci)
+int PICA_write(struct PICA_c2n *ci)
 {
-struct PICA_chaninfo *ipt, *kill_ptr = 0;
+struct PICA_c2c *ipt, *kill_ptr = 0;
 int ret = PICA_OK;
 
 //puts("PICA_write>>");//debug
@@ -1494,7 +1494,7 @@ return PICA_OK;
 //int PICA_read_socket()
 //int PICA_read_ssl()
 
-int PICA_write_c2n(struct PICA_conninfo *ci)
+int PICA_write_c2n(struct PICA_c2n *ci)
 {
 int ret = PICA_ERRINVARG;
 
@@ -1506,7 +1506,7 @@ else if (PICA_CONNSTATE_CONNECTED == ci->state)
 return ret;
 }
 
-int PICA_write_c2c(struct PICA_chaninfo *chn)
+int PICA_write_c2c(struct PICA_c2c *chn)
 {
 int ret = PICA_ERRINVARG;
 
@@ -1590,7 +1590,7 @@ if (ret > 0)
 return PICA_OK;    
 }
 
-int PICA_read_c2c(struct PICA_chaninfo *chn)
+int PICA_read_c2c(struct PICA_c2c *chn)
 {
 int ret;
 
@@ -1610,7 +1610,7 @@ return ret;
 }
 
 //функция читает и обрабатывает данные, приходящие от сервера по управляющему соединению.
-int PICA_read_c2n(struct PICA_conninfo *ci) 
+int PICA_read_c2n(struct PICA_c2n *ci) 
 {
 int ret;
 
@@ -1636,7 +1636,7 @@ if (ret == PICA_OK)
 return ret;
 } 
 
-struct PICA_proto_msg* c2n_writebuf_push(struct PICA_conninfo *ci, unsigned int msgid, unsigned int size)
+struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size)
 {
 struct PICA_proto_msg *mp;
     
@@ -1669,7 +1669,7 @@ ci->write_pos += size;
 return mp;
 }
 
-struct PICA_proto_msg* c2c_writebuf_push(struct PICA_chaninfo *chn, unsigned int msgid, unsigned int size)
+struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size)
 {
 struct PICA_proto_msg *mp;
     
@@ -1702,7 +1702,7 @@ chn->write_pos += size;
 return mp;
 }
 
-int PICA_send_msg(struct PICA_chaninfo *chn, char *buf,unsigned int len)
+int PICA_send_msg(struct PICA_c2c *chn, char *buf,unsigned int len)
 {
 struct PICA_proto_msg *mp;
 
@@ -1720,7 +1720,7 @@ else
 return PICA_OK;
 }
 
-int PICA_send_file(struct PICA_chaninfo *chn, const char *filepath)
+int PICA_send_file(struct PICA_c2c *chn, const char *filepath)
 {
 struct PICA_proto_msg *mp;
 size_t namelen;
@@ -1771,7 +1771,7 @@ chn->sendfile_pos = 0;
 return PICA_OK;
 }
 
-int PICA_pause_file(struct PICA_chaninfo *chan, int sending)
+int PICA_pause_file(struct PICA_c2c *chan, int sending)
 {
 int senderctl = PICA_PROTO_FILECONTROL_VOID;
 int receiverctl = PICA_PROTO_FILECONTROL_VOID;
@@ -1800,7 +1800,7 @@ if (sending)
 return PICA_send_filecontrol(chan, senderctl, receiverctl);
 }
 
-int PICA_resume_file(struct PICA_chaninfo *chan, int sending)
+int PICA_resume_file(struct PICA_c2c *chan, int sending)
 {
 int senderctl = PICA_PROTO_FILECONTROL_VOID;
 int receiverctl = PICA_PROTO_FILECONTROL_VOID;
@@ -1827,7 +1827,7 @@ if (sending)
 return PICA_send_filecontrol(chan, senderctl, receiverctl);
 }
 
-int PICA_cancel_file(struct PICA_chaninfo *chan, int sending)
+int PICA_cancel_file(struct PICA_c2c *chan, int sending)
 {
 int senderctl = PICA_PROTO_FILECONTROL_VOID;
 int receiverctl = PICA_PROTO_FILECONTROL_VOID;
@@ -1860,7 +1860,7 @@ if (sending)
 return PICA_send_filecontrol(chan, senderctl, receiverctl);
 }
 
-int PICA_send_filecontrol(struct PICA_chaninfo *chan, int senderctl, int receiverctl)
+int PICA_send_filecontrol(struct PICA_c2c *chan, int senderctl, int receiverctl)
 {
 struct PICA_proto_msg *mp;
 
@@ -1877,7 +1877,7 @@ else
 return PICA_OK;
 }
 
-int PICA_send_file_fragment(struct PICA_chaninfo *chn)
+int PICA_send_file_fragment(struct PICA_c2c *chn)
 {
 struct PICA_proto_msg *mp;
 char buf[PICA_FILEFRAGMENTSIZE];
@@ -1929,9 +1929,9 @@ if (chn->sendfile_pos > chn->sendfile_size)
 return PICA_OK;
 }
 
-void PICA_close_channel(struct PICA_chaninfo *chn)
+void PICA_close_channel(struct PICA_c2c *chn)
 {
-struct PICA_chaninfo *ipt;
+struct PICA_c2c *ipt;
 
 fprintf(stderr, "PICA_close_channel(%p)\n", chn);//debug
 	
@@ -1994,9 +1994,9 @@ free(chn);
 //puts("PICA_close_channel_chkp7");//debug
 }
 
-void PICA_close_connection(struct PICA_conninfo *cid)
+void PICA_close_connection(struct PICA_c2n *cid)
 {
-struct PICA_chaninfo *ipt;
+struct PICA_c2c *ipt;
 
 while((ipt = cid->chan_list_head))
 	PICA_close_channel(ipt);
@@ -2041,7 +2041,7 @@ free(cid);
 #endif
 
 
-int PICA_sendfile_open_read(struct PICA_chaninfo *chn, const char *filename_utf8, uint64_t *file_size)
+int PICA_sendfile_open_read(struct PICA_c2c *chn, const char *filename_utf8, uint64_t *file_size)
 {
 #ifdef WIN32
 {
@@ -2093,7 +2093,7 @@ if (fseeko(chn->sendfile_stream, 0, SEEK_SET) != 0)
 return PICA_OK;
 }
 
-int PICA_recvfile_open_write(struct PICA_chaninfo *chn, const char *filename_utf8, unsigned int filenamesize)
+int PICA_recvfile_open_write(struct PICA_c2c *chn, const char *filename_utf8, unsigned int filenamesize)
 {
 /////////////
 #ifdef WIN32

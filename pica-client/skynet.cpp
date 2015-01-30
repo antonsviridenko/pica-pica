@@ -89,7 +89,7 @@ void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread
     {
         int ret;
         write_mutex.lock();
-        struct PICA_chaninfo *chan = NULL;
+        struct PICA_c2c *chan = NULL;
 
         ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), &chan);
 
@@ -181,7 +181,7 @@ void SkyNet::timerEvent(QTimerEvent *e)
             {
                 int ret;
 
-                struct PICA_chaninfo *chan = NULL;
+                struct PICA_c2c *chan = NULL;
 
                 ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), &chan);
 
@@ -240,7 +240,7 @@ bool SkyNet::isSelfAware()
 void SkyNet::SendFile(QByteArray to, QString filepath)
 {
 int ret = PICA_OK;
-struct PICA_chaninfo *iptr;
+struct PICA_c2c *iptr;
 
 write_mutex.lock();//<<
 
@@ -263,7 +263,7 @@ if ( (iptr = find_active_chan(to)) )
     }
     else
     {
-       struct PICA_chaninfo *chan = NULL;
+       struct PICA_c2c *chan = NULL;
 
        ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), &chan);
 
@@ -283,7 +283,7 @@ write_mutex.unlock();//>>
 void SkyNet::AcceptFile(QByteArray from, QString filepath)
 {
 int ret = PICA_OK;
-struct PICA_chaninfo *iptr;
+struct PICA_c2c *iptr;
 
 write_mutex.lock();//<<
 if ( (iptr = find_active_chan(from)) )
@@ -302,7 +302,7 @@ write_mutex.unlock();//>>
 void SkyNet::DenyFile(QByteArray from)
 {
 int ret = PICA_OK;
-struct PICA_chaninfo *iptr;
+struct PICA_c2c *iptr;
 
 write_mutex.lock();//<<
 if ( (iptr = find_active_chan(from)) )
@@ -321,7 +321,7 @@ write_mutex.unlock();//>>
 void SkyNet::PauseFile(QByteArray peer_id, bool pause_sending)
 {
 int ret = PICA_OK;
-struct PICA_chaninfo *iptr;
+struct PICA_c2c *iptr;
 
 write_mutex.lock();//<<
 if ( (iptr = find_active_chan(peer_id)) )
@@ -340,7 +340,7 @@ write_mutex.unlock();//>>
 void SkyNet::ResumeFile(QByteArray peer_id, bool resume_sending)
 {
 int ret = PICA_OK;
-struct PICA_chaninfo *iptr;
+struct PICA_c2c *iptr;
 
 write_mutex.lock();//<<
 if ( (iptr = find_active_chan(peer_id)) )
@@ -358,7 +358,7 @@ write_mutex.unlock();//>>
 void SkyNet::CancelFile(QByteArray peer_id, bool cancel_sending)
 {
 int ret = PICA_OK;
-struct PICA_chaninfo *iptr;
+struct PICA_c2c *iptr;
 
 write_mutex.lock();//<<
 if ( (iptr = find_active_chan(peer_id)) )
@@ -376,7 +376,7 @@ write_mutex.unlock();//>>
 void SkyNet::SendMessage(QByteArray to, QString msg)
 {
 int ret = PICA_OK;
-struct PICA_chaninfo *iptr;
+struct PICA_c2c *iptr;
 
 write_mutex.lock();//<<
 
@@ -399,7 +399,7 @@ if ( (iptr = find_active_chan(to)) )
     }
     else
     {
-        struct PICA_chaninfo *chan = NULL;
+        struct PICA_c2c *chan = NULL;
 
         ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), &chan);
 
@@ -418,7 +418,7 @@ write_mutex.unlock();//>>
 
 void SkyNet::flush_queues(QByteArray to)
 {
-    struct PICA_chaninfo *chan;
+    struct PICA_c2c *chan;
     int ret;
 
     if (self_aware && (msgqueues.contains(to) || sndfilequeues.contains(to)))
@@ -466,12 +466,12 @@ void SkyNet::flush_queues(QByteArray to)
     }
 }
 
-struct PICA_chaninfo * SkyNet::find_active_chan(QByteArray peer_id)
+struct PICA_c2c * SkyNet::find_active_chan(QByteArray peer_id)
 {
 if (!nodelink)
   return NULL;
 
-struct PICA_chaninfo *iptr = nodelink->chan_list_head;
+struct PICA_c2c *iptr = nodelink->chan_list_head;
 
 while(iptr)
     {
@@ -491,7 +491,7 @@ QList<QByteArray> SkyNet::filter_existing_chans(QList<QByteArray> peer_ids)
     if (!nodelink)
       return ret;
 
-    struct PICA_chaninfo *iptr = nodelink->chan_list_head;
+    struct PICA_c2c *iptr = nodelink->chan_list_head;
 
     while(iptr)
         {

@@ -115,10 +115,10 @@ typedef unsigned __int64 uint64_t;
 #define PICA_CHANNEL_INCOMING 0
 #define PICA_CHANNEL_OUTGOING 1
 
-struct PICA_conninfo;
-struct PICA_chaninfo;
+struct PICA_c2n;
+struct PICA_c2c;
 
-struct PICA_conninfo
+struct PICA_c2n
 {
 //#warning "sockaddr!"
 struct sockaddr_in srv_addr; // sockaddr !!
@@ -137,16 +137,16 @@ unsigned int write_pos;
 unsigned int write_buflen;
 unsigned int write_sslbytestowrite;
 
-struct PICA_chaninfo *chan_list_head;
-struct PICA_chaninfo *chan_list_end;
+struct PICA_c2c *chan_list_head;
+struct PICA_c2c *chan_list_end;
 
 int init_resp_ok;
 unsigned char node_ver_major, node_ver_minor;
 };
 
-struct PICA_chaninfo
+struct PICA_c2c
 {
-struct PICA_conninfo *conn;//соединение с сервером, через которое установлен данный логический канал связи
+struct PICA_c2n *conn;//соединение с сервером, через которое установлен данный логический канал связи
 unsigned char peer_id[PICA_ID_SIZE];
 SOCKET sck_data;
 SSL *ssl;
@@ -161,8 +161,8 @@ unsigned int write_pos;
 unsigned int write_buflen;
 unsigned int write_sslbytestowrite;
 
-struct PICA_chaninfo *next;
-struct PICA_chaninfo *prev;
+struct PICA_c2c *next;
+struct PICA_c2c *prev;
 int state;
 time_t timestamp;
 int sendfilestate;
@@ -231,28 +231,28 @@ int PICA_new_connection
       const char *pkey_file,
       const char *dh_param_file,
       int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
-      struct PICA_conninfo **ci);
+      struct PICA_c2n **ci);
 
-int PICA_create_channel(struct PICA_conninfo *ci,const unsigned char *peer_id,struct PICA_chaninfo **chn);
-int PICA_read_c2n(struct PICA_conninfo *ci);
+int PICA_create_channel(struct PICA_c2n *ci,const unsigned char *peer_id,struct PICA_c2c **chn);
+int PICA_read_c2n(struct PICA_c2n *ci);
 
-int PICA_read(struct PICA_conninfo *ci,int timeout);
-int PICA_write(struct PICA_conninfo *ci);
+int PICA_read(struct PICA_c2n *ci,int timeout);
+int PICA_write(struct PICA_c2n *ci);
 
-int PICA_send_msg(struct PICA_chaninfo *chn, char *buf,unsigned int len);
-int PICA_read_msg(struct PICA_chaninfo *chn,char *buf,unsigned int *n);
+int PICA_send_msg(struct PICA_c2c *chn, char *buf,unsigned int len);
+int PICA_read_msg(struct PICA_c2c *chn,char *buf,unsigned int *n);
 
 //filename - ASCII or UTF-8 encoded string
-int PICA_send_file(struct PICA_chaninfo *chn, const char *filepath);
-int PICA_accept_file(struct PICA_chaninfo *chan, char *filename, unsigned int filenamesize);
-int PICA_deny_file(struct PICA_chaninfo *chan);
+int PICA_send_file(struct PICA_c2c *chn, const char *filepath);
+int PICA_accept_file(struct PICA_c2c *chan, char *filename, unsigned int filenamesize);
+int PICA_deny_file(struct PICA_c2c *chan);
 // if sending != 0 then pause sending file, else pause receiving of file
-int PICA_pause_file(struct PICA_chaninfo *chan, int sending);
-int PICA_resume_file(struct PICA_chaninfo *chan, int sending);
-int PICA_cancel_file(struct PICA_chaninfo *chan, int sending);
+int PICA_pause_file(struct PICA_c2c *chan, int sending);
+int PICA_resume_file(struct PICA_c2c *chan, int sending);
+int PICA_cancel_file(struct PICA_c2c *chan, int sending);
 
-void PICA_close_channel(struct PICA_chaninfo *chn);
-void PICA_close_connection(struct PICA_conninfo *cid);
+void PICA_close_channel(struct PICA_c2c *chn);
+void PICA_close_connection(struct PICA_c2n *cid);
 
 #ifdef __cplusplus
 }

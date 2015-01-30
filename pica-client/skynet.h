@@ -62,7 +62,7 @@ private:
     QList<NodeThread*> threads;
     bool self_aware;
     QString status;
-    struct PICA_conninfo *nodelink;
+    struct PICA_c2n *nodelink;
     Accounts::AccountRecord skynet_account;
     QMutex write_mutex;
     QMap<QByteArray, QList<QString> > msgqueues;
@@ -72,7 +72,7 @@ private:
     void timerEvent(QTimerEvent * e);
 
     void flush_queues(QByteArray to);
-    struct PICA_chaninfo *find_active_chan(QByteArray peer_id);
+    struct PICA_c2c *find_active_chan(QByteArray peer_id);
     QList<QByteArray> filter_existing_chans(QList<QByteArray> peer_ids);
 
     void emit_MessageReceived(QByteArray from, QString msg);

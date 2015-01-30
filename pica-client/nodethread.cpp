@@ -6,7 +6,7 @@
 
 QMutex NodeThread::finished_mutex;
 
-NodeThread::NodeThread(Nodes::NodeRecord &addr, bool *completed, Accounts::AccountRecord &acc, PICA_conninfo **pica_conn, QMutex *wm) :
+NodeThread::NodeThread(Nodes::NodeRecord &addr, bool *completed, Accounts::AccountRecord &acc, PICA_c2n **pica_conn, QMutex *wm) :
     QThread(0)
 {
     node_addr = addr;
