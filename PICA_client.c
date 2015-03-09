@@ -46,6 +46,7 @@ static unsigned int procmsg_ACCEPTEDFILE(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_DENIEDFILE(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_FILEFRAGMENT(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_FILECONTROL(unsigned char*,unsigned int,void*);
+static unsigned int procmsg_INITRESP_c2c(unsigned char*,unsigned int,void*);
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size);
@@ -70,10 +71,14 @@ const struct PICA_msginfo  c2c_messages[] = {
 };
 
 struct PICA_msginfo c2n_init_messages[] = {
-    {PICA_PROTO_INITRESPOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_INITRESPOK_SIZE, procmsg_INITRESP},
-    {PICA_PROTO_VERDIFFER, PICA_MSG_FIXED_SIZE, PICA_PROTO_VERDIFFER_SIZE, procmsg_INITRESP}
+	{PICA_PROTO_INITRESPOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_INITRESPOK_SIZE, procmsg_INITRESP},
+	{PICA_PROTO_VERDIFFER, PICA_MSG_FIXED_SIZE, PICA_PROTO_VERDIFFER_SIZE, procmsg_INITRESP}
 };
 
+struct PICA_msginfo c2c_init_messages[] = {
+	{PICA_PROTO_INITRESPOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_INITRESPOK_SIZE, procmsg_INITRESP_c2c},
+	{PICA_PROTO_VERDIFFER, PICA_MSG_FIXED_SIZE, PICA_PROTO_VERDIFFER_SIZE, procmsg_INITRESP_c2c}
+};
 
 // static int pem_passwd_cb(char *buf, int size, int rwflag, void *userdata)
 //{
@@ -206,6 +211,8 @@ chnl->conn = ci;
 chnl->outgoing = is_outgoing;
 memcpy(chnl->peer_id, peer_id, PICA_ID_SIZE);
 
+chnl->acc = ci->acc;
+
 chnl->timestamp = time(0);
 
 chnl->sck_data = -1;//prevent closing stdin when closing non-active connection
@@ -243,7 +250,7 @@ struct sockaddr_in addr=chnl->conn->srv_addr;
 addr.sin_port = htons(ntohs(addr.sin_port));
 
 ret=connect( chnl->sck_data, (struct sockaddr*)&addr, sizeof(struct sockaddr_in));
-
+/////////////////state_
 if (ret==SOCKET_ERROR)
 	{
 	err_ret=PICA_ERRSOCK;
@@ -256,13 +263,13 @@ if (mp)
 	{
 	if (chnl->outgoing)
 		{
-		memcpy(mp->tail, chnl->conn->id, PICA_ID_SIZE);//вызвывающий
+        memcpy(mp->tail, chnl->acc->id, PICA_ID_SIZE);//вызвывающий
 		memcpy(mp->tail + PICA_ID_SIZE, chnl->peer_id, PICA_ID_SIZE);//вызываемый
 		}
 	else
 		{
 		memcpy(mp->tail, chnl->peer_id, PICA_ID_SIZE);//вызвывающий
-		memcpy(mp->tail + PICA_ID_SIZE, chnl->conn->id, PICA_ID_SIZE);//вызываемый
+        memcpy(mp->tail + PICA_ID_SIZE, chnl->acc->id, PICA_ID_SIZE);//вызываемый
 		}    
 	}
 else
@@ -279,7 +286,7 @@ do
 	}
 while( chnl->write_pos > 0);
 
-chnl->ssl=SSL_new(chnl->conn->ctx);
+chnl->ssl=SSL_new(chnl->acc->ctx);
 
 if (!chnl->ssl)
 	{
@@ -305,7 +312,7 @@ if (chnl->outgoing)
 ret=SSL_connect(chnl->ssl);
 else
 ret=SSL_accept(chnl->ssl);
-
+/////////////////state_
 //printf("verify result:%i\n",(int)SSL_get_verify_result(chnl->ssl));//debug
 
 if (ret!=1)
@@ -396,6 +403,10 @@ error_ret:
 callbacks.channel_failed(chnl->peer_id);
 PICA_close_channel(chnl);
 return err_ret;
+}
+
+static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb,void* p)
+{
 }
 
 static unsigned int procmsg_INITRESP(unsigned char* buf, unsigned int nb,void* p)
@@ -987,6 +998,144 @@ signal(SIGPIPE, SIG_IGN);
 return 1;
 }
 
+static int check_pkey_passphrase(const char *pkey_file,
+                                 int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
+                                 void *userdata)
+{
+RSA *rsa;
+FILE *f;
+
+
+f = fopen(pkey_file, "r");
+
+if (!f)
+    return PICA_ERRINVPKEYFILE;
+
+rsa = PEM_read_RSAPrivateKey(f, NULL, password_cb, userdata);
+
+fclose(f);
+
+if (!rsa)
+    {
+    unsigned long int e = ERR_get_error();
+
+    // 0x6065064 is an OpenSSL error code corresponding to decryption failure
+    if (e == 0x6065064 || strcmp("bad decrypt", ERR_reason_error_string(e)) == 0)
+        return PICA_ERRINVPKEYPASSPHRASE;
+
+        return PICA_ERRINVPKEYFILE;
+    }
+
+RSA_free(rsa);
+
+return PICA_OK;
+}
+
+int PICA_open_acc(const char *cert_file,
+                  const char *pkey_file,
+                  const char *dh_param_file,
+                  int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
+                  struct PICA_acc **acc)
+{
+int ret,ret_err;
+DH *dh = NULL;
+FILE *dh_file = NULL;
+struct PICA_acc *a = NULL;
+
+
+if (!(cert_file && pkey_file && dh_param_file && acc))
+    return PICA_ERRINVARG;
+
+a = *acc = (struct PICA_acc*)calloc(sizeof(struct PICA_acc), 1);//(1)
+
+if (!a)
+    return PICA_ERRNOMEM;
+
+a->ctx = SSL_CTX_new(TLSv1_2_method());//(2)
+
+if (!a->ctx)
+    {
+    ret_err=PICA_ERRSSL;
+    goto error_ret_1;
+    }
+
+dh_file = fopen(dh_param_file, "r");
+
+if (dh_file)
+    {
+    dh = PEM_read_DHparams(dh_file, NULL, NULL, NULL);
+    fclose(dh_file);
+    }
+
+if (1 != SSL_CTX_set_tmp_dh(a->ctx, dh))
+{
+    ret_err = PICA_ERRSSL;
+    goto error_ret_2;
+}
+
+DH_free(dh);
+
+if (!PICA_get_id_from_cert_file(cert_file, a->id))
+    {
+    ret_err = PICA_ERRINVCERT;
+    goto error_ret_2;
+    }
+
+ret = check_pkey_passphrase(pkey_file, password_cb, a->id);
+
+if (ret != PICA_OK)
+    {
+    ret_err = ret;
+    goto error_ret_2;
+    }
+
+////<<
+if (password_cb)
+    {
+    SSL_CTX_set_default_passwd_cb(a->ctx, password_cb);
+    SSL_CTX_set_default_passwd_cb_userdata(a->ctx, a->id);
+    }
+
+ret = SSL_CTX_use_certificate_file(a->ctx, cert_file, SSL_FILETYPE_PEM);
+
+if (ret != 1)
+    {
+    ret_err=PICA_ERRSSL;
+    goto error_ret_2;
+    }
+
+ret = SSL_CTX_use_PrivateKey_file(a->ctx, pkey_file, SSL_FILETYPE_PEM);
+if (ret != 1)
+       {
+       ret_err = PICA_ERRSSL;
+       goto error_ret_2;
+       }
+////<<
+
+//ret=SSL_CTX_load_verify_locations(cid->ctx,CA_file,0/*"trustedCA/"*/);
+//printf("loadverifylocations ret=%i\n",ret);//debug
+//SSL_CTX_set_client_CA_list(cid->ctx,SSL_load_client_CA_file(CA_file));
+
+ret = SSL_CTX_set_cipher_list(a->ctx,"DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CAMELLIA256-SHA");
+
+if (ret != 1)
+{
+    ret_err = PICA_ERRSSL;
+    goto error_ret_2;
+}
+
+return PICA_OK;
+
+error_ret_2: //(2)
+SSL_CTX_free(a->ctx);
+
+error_ret_1: //(1)
+free(a);
+*acc = 0;
+
+return ret_err;
+}
+
 /*адрес сервера, сертификат клиента и закрытый ключ*/
 
 //Осуществляет подключение к серверу по указанному адресу.
@@ -1003,29 +1152,24 @@ return 1;
 //PICA_OK - успешное завершение функции
 //....
 
-int PICA_new_connection(const char *nodeaddr,
+int PICA_new_connection(const struct PICA_acc *acc, const char *nodeaddr,
                         unsigned int port,
-                        const char *CA_file,
-                        const char *cert_file,
-                        const char *pkey_file,
-                        const char *dh_param_file,
-                        int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
                         struct PICA_c2n **ci)
 {
 int ret,ret_err;
 struct PICA_c2n *cid;
 struct sockaddr_in a;
-DH *dh = NULL;
-FILE *dh_file = NULL;
 
 
-if (!(nodeaddr && CA_file && cert_file && pkey_file && ci))
+if (!(nodeaddr && acc && port && ci))
 	return PICA_ERRINVARG;
 
 
 cid=*ci=(struct PICA_c2n*)calloc(sizeof(struct PICA_c2n),1);//(1)
 if (!cid)
 	return PICA_ERRNOMEM;
+
+cid->acc = acc;
 
 cid->read_buf = calloc(PICA_CONNREADBUFSIZE, 1);//(2)
 if (!cid->read_buf)
@@ -1034,75 +1178,12 @@ if (!cid->read_buf)
     goto error_ret_1;
     }
 
-cid->ctx=SSL_CTX_new(TLSv1_2_method());//(3)
-
-if (!cid->ctx)
-	{
-	ret_err=PICA_ERRSSL;
-    goto error_ret_2;
-	}
-
-dh_file = fopen(dh_param_file, "r");
-
-if (dh_file)
-    {
-    dh = PEM_read_DHparams(dh_file, NULL, NULL, NULL);
-    fclose(dh_file);
-    }
-
-if (1 != SSL_CTX_set_tmp_dh(cid->ctx, dh))
-{
-    ret_err = PICA_ERRSSL;
-    goto error_ret_2;
-}
-
-DH_free (dh);
-
-if (!PICA_get_id_from_cert_file(cert_file, cid->id))
-    {
-    ret_err=PICA_ERRINVCERT;
-    goto error_ret_3;
-    }
-////<<
-if (password_cb)
-    {
-    SSL_CTX_set_default_passwd_cb(cid->ctx, password_cb);
-    SSL_CTX_set_default_passwd_cb_userdata(cid->ctx,cid->id);
-    }
-
-ret=SSL_CTX_use_certificate_file(cid->ctx,cert_file,SSL_FILETYPE_PEM);
-if (ret!=1)
-	{//ERR_CHECK
-	ret_err=PICA_ERRSSL;
-    goto error_ret_3;
-	}
-ret=SSL_CTX_use_PrivateKey_file(cid->ctx,pkey_file,SSL_FILETYPE_PEM);
-if (ret!=1)
-       {//ERR_CHECK
-       ret_err=PICA_ERRSSL;
-       goto error_ret_3;
-       }
-////<<
-
-ret=SSL_CTX_load_verify_locations(cid->ctx,CA_file,0/*"trustedCA/"*/);
-//printf("loadverifylocations ret=%i\n",ret);//debug
-SSL_CTX_set_client_CA_list(cid->ctx,SSL_load_client_CA_file(CA_file));
-
-ret = SSL_CTX_set_cipher_list(cid->ctx,"DHE-RSA-CAMELLIA256-SHA"/*:DHE-RSA-AES256-SHA256"*/);
-
-if (ret != 1)
-{
-    ret_err = PICA_ERRSSL;
-    goto error_ret_2;
-}
-
-
-cid->ssl_comm=SSL_new(cid->ctx);//(4)
+cid->ssl_comm=SSL_new(acc->ctx);//(3)
 
 if (!cid->ssl_comm)
 	{
 	ret_err=PICA_ERRSSL;
-    goto error_ret_3;
+    goto error_ret_2;
 	}
 
 
@@ -1144,18 +1225,18 @@ cid->sck_comm=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);//(5)
 if (cid->sck_comm==SOCKET_ERROR)
 	{
 	ret_err=PICA_ERRSOCK;
-    goto error_ret_4;
+    goto error_ret_3;
 	}
 
 cid->state = PICA_CONNSTATE_CONNECTING;
 
 ret=connect(cid->sck_comm,(struct sockaddr*)&a,sizeof(struct sockaddr_in));
-
+/////////////////state_
 
 if (ret==SOCKET_ERROR)
 	{
 	ret_err=PICA_ERRSOCK;
-    goto error_ret_5;
+    goto error_ret_4;
 	}
 
 
@@ -1172,9 +1253,11 @@ if (mp)
 else
 	{
 	ret_err = PICA_ERRNOMEM;
-    goto error_ret_5;
+    goto error_ret_4;
 	}
 }
+
+cid->state = PICA_CONNSTATE_WAITINGREP;
 
 do
 	{
@@ -1204,7 +1287,7 @@ if (cid->init_resp_ok != 1)
         else
             ret_err = PICA_ERRPROTOOLD;
         }
-    goto error_ret_5;
+    goto error_ret_4;
 	}
 
 //printf("6\n");//debug
@@ -1214,13 +1297,14 @@ ret=SSL_set_fd(cid->ssl_comm,cid->sck_comm);
 //printf("SSL_set_fd=%i\n",ret);
 
 ret=SSL_accept(cid->ssl_comm);
-
+/////////////////state_
+cid->state = PICA_CONNSTATE_WAITINGTLS;
 if (ret!=1)
 	{
 	//printf("SSL_accept  ret=%i\n  SSL_get_error=%i\n",ret,SSL_get_error(cid->ssl_comm,ret));//debug
 		//ERR_CHECK
 	ret_err=PICA_ERRSSL;
-    goto error_ret_5;
+    goto error_ret_4;
 	}
 cid->state = PICA_CONNSTATE_CONNECTED;//<<<!!!
 
@@ -1244,15 +1328,12 @@ IOCTLSETNONBLOCKINGSOCKET(cid->sck_comm, &arg);
 return PICA_OK;
 
 
-error_ret_5: //(5)
+error_ret_4: //(4)
     SHUTDOWN(cid->sck_comm);
     CLOSE(cid->sck_comm);
 
-error_ret_4: //(4)
-    SSL_free(cid->ssl_comm);
-
 error_ret_3: //(3)
-    SSL_CTX_free(cid->ctx);
+    SSL_free(cid->ssl_comm);
 
 error_ret_2: //(2)
     free(cid->read_buf);
@@ -1268,7 +1349,7 @@ return ret_err;
 
 //создает ИСХОДЯЩИЙ логический зашифрованный канал связи с указанным собеседником, если тот доступен
 // в данный момент.
-int PICA_create_channel(struct PICA_c2n *ci,const unsigned char *peer_id,struct PICA_c2c **chn)
+int PICA_create_channel(struct PICA_c2n *ci,const unsigned char *peer_id, struct PICA_listener *l,struct PICA_c2c **chn)
 {
 struct PICA_proto_msg *mp;
 struct PICA_c2c *chnl;
@@ -1292,6 +1373,11 @@ mp = c2n_writebuf_push( ci, PICA_PROTO_CONNREQOUTG, PICA_PROTO_CONNREQOUTG_SIZE)
 
 
 return PICA_OK;
+}
+
+int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners)
+{
+
 }
 
 int PICA_read(struct PICA_c2n *ci,int timeout)
@@ -1613,6 +1699,11 @@ return ret;
 int PICA_read_c2n(struct PICA_c2n *ci) 
 {
 int ret;
+
+switch(ci->state)
+{
+//<<<
+}
 
 //ret=SSL_read(ci->ssl_comm, ci->read_buf + ci->read_pos, PICA_CONNREADBUFSIZE - ci->read_pos);
 if (PICA_CONNSTATE_CONNECTING == ci->state)
@@ -2006,13 +2097,18 @@ SSL_shutdown(cid->ssl_comm);
 SSL_free(cid->ssl_comm);
 SHUTDOWN(cid->sck_comm);
 CLOSE(cid->sck_comm);
-SSL_CTX_free(cid->ctx);
+
 free(cid->read_buf);
 
 if (cid->write_buf)
 	free(cid->write_buf);
 
 free(cid);
+}
+
+void PICA_close_acc(struct PICA_acc *a)
+{
+SSL_CTX_free(a->ctx);
 }
 
 #ifdef WIN32

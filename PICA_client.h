@@ -87,6 +87,9 @@ typedef unsigned __int64 uint64_t;
 #define PICA_ERRFILEOPEN -20
 #define PICA_ERRFILEIO -21
 
+#define PICA_ERRINVPKEYPASSPHRASE -22
+#define PICA_ERRINVPKEYFILE -23
+
 //#define PICA_CHNMSGBUFLEN 104
 
 #define PICA_CHANREADBUFSIZE 65536
@@ -96,7 +99,10 @@ typedef unsigned __int64 uint64_t;
 #define PICA_FILEFRAGMENTSIZE 16384 //max size of TLS record
 
 #define PICA_CHANSTATE_ACTIVE 13
+
 #define PICA_CONNSTATE_CONNECTING 17
+#define PICA_CONNSTATE_WAITINGREP 18
+#define PICA_CONNSTATE_WAITINGTLS 21
 #define PICA_CONNSTATE_CONNECTED 19
 
 #define PICA_CHANSENDFILESTATE_IDLE 0
@@ -118,12 +124,19 @@ typedef unsigned __int64 uint64_t;
 struct PICA_c2n;
 struct PICA_c2c;
 
-struct PICA_c2n
+struct PICA_acc
 {
-//#warning "sockaddr!"
-struct sockaddr_in srv_addr; // sockaddr !!
 unsigned char id[PICA_ID_SIZE]; //SHA224 hash of user's certificate in DER format
 SSL_CTX* ctx;
+};
+
+struct PICA_c2n
+{
+struct PICA_acc *acc;
+//#warning "sockaddr!"
+struct sockaddr_in srv_addr; // sockaddr !!
+//unsigned char id[PICA_ID_SIZE]; //SHA224 hash of user's certificate in DER format
+//SSL_CTX* ctx;
 SOCKET sck_comm;
 SSL* ssl_comm;
 
@@ -146,6 +159,7 @@ unsigned char node_ver_major, node_ver_minor;
 
 struct PICA_c2c
 {
+struct PICA_acc *acc;
 struct PICA_c2n *conn;//соединение с сервером, через которое установлен данный логический канал связи
 unsigned char peer_id[PICA_ID_SIZE];
 SOCKET sck_data;
@@ -174,6 +188,19 @@ int recvfilestate;
 uint64_t recvfile_size;
 uint64_t recvfile_pos;
 FILE *recvfile_stream;
+};
+
+struct PICA_listener
+{
+struct PICA_acc *acc;
+SOCKET  sck_listener;
+
+int public_port;
+int local_port;
+
+in_addr_t public_addr_ipv4;
+const char *public_addr_dns;
+
 };
 
 struct PICA_client_callbacks
@@ -224,20 +251,36 @@ int PICA_get_id_from_cert_string(const char *cert_pem, unsigned char *id);
 int PICA_client_init(struct PICA_client_callbacks *clcbs);
 
 int PICA_new_connection
-    (const char *nodeaddr,
-      unsigned int port,
-      const char *CA_file,
+    (const struct PICA_acc *acc,
+     const char *nodeaddr,
+     unsigned int port,
+/*      const char *CA_file,
       const char *cert_file,
       const char *pkey_file,
       const char *dh_param_file,
-      int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
+      int (*password_cb)(char *buf, int size, int rwflag, void *userdata), //move callback to PICA_client_callbacks? */
       struct PICA_c2n **ci);
 
-int PICA_create_channel(struct PICA_c2n *ci,const unsigned char *peer_id,struct PICA_c2c **chn);
+int PICA_create_channel(struct PICA_c2n *ci,const unsigned char *peer_id, struct PICA_listener *l,struct PICA_c2c **chn);
+
+int PICA_new_listener(const char *public_addr, int public_port, int local_port, struct PICA_listener **l);
+
+
+// <<<////
+int PICA_open_acc(const char *cert_file,
+                  const char *pkey_file,
+                  const char *dh_param_file,
+                  int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
+                  struct PICA_acc **acc);
+// <<<////
+
 int PICA_read_c2n(struct PICA_c2n *ci);
 
 int PICA_read(struct PICA_c2n *ci,int timeout);
 int PICA_write(struct PICA_c2n *ci);
+
+//connections, listeners - NULL-terminated arrays of pointers to appropriate structures
+int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners);
 
 int PICA_send_msg(struct PICA_c2c *chn, char *buf,unsigned int len);
 int PICA_read_msg(struct PICA_c2c *chn,char *buf,unsigned int *n);
@@ -253,7 +296,8 @@ int PICA_cancel_file(struct PICA_c2c *chan, int sending);
 
 void PICA_close_channel(struct PICA_c2c *chn);
 void PICA_close_connection(struct PICA_c2n *cid);
-
+void PICA_close_listener(struct PICA_listener *l);
+void PICA_close_acc(struct PICA_acc *a);
 #ifdef __cplusplus
 }
 #endif
