@@ -6,7 +6,7 @@
 
 QMutex NodeThread::finished_mutex;
 
-NodeThread::NodeThread(Nodes::NodeRecord &addr, bool *completed, Accounts::AccountRecord &acc, PICA_c2n **pica_conn, QMutex *wm) :
+NodeThread::NodeThread(Nodes::NodeRecord &addr, bool *completed, PICA_acc *acc, PICA_c2n **pica_conn, QMutex *wm) :
     QThread(0)
 {
     node_addr = addr;
@@ -23,14 +23,15 @@ void NodeThread::run()
     int ret;
     exit = 0;
 
-    ret = PICA_new_connection(node_addr.address.toUtf8().constData(),
+    /*ret = PICA_new_connection(node_addr.address.toUtf8().constData(),
                               node_addr.port,
                               user_account.CA_file.toUtf8().constData(),
                               user_account.cert_file.toUtf8().constData(),
                               user_account.pkey_file.toUtf8().constData(),
                               DHParam::GetDHParamFilename().toUtf8().constData(),
                               AskPassword::ask_password_cb,
-                              &ci);
+                              &ci);*/
+    ret = PICA_new_connection(user_account, node_addr.address.toUtf8().constData(), node_addr.port, &ci);
 
     switch(ret)
     {

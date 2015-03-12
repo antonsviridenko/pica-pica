@@ -8,6 +8,8 @@
 //#include "dialogs/forgedcertdialog.h"
 #include <QDebug>
 #include "history.h"
+#include "dhparam.h"
+#include "askpassword.h"
 
 SkyNet::SkyNet()
     : nodes(config_dbname), QObject(0)
@@ -91,7 +93,7 @@ void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread
         write_mutex.lock();
         struct PICA_c2c *chan = NULL;
 
-        ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), &chan);
+        ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
 
         qDebug()<<"restoring channel to "<<c2c_peer_ids[i]<<" ret ="<<ret<<"\n";
         write_mutex.unlock();
@@ -183,7 +185,7 @@ void SkyNet::timerEvent(QTimerEvent *e)
 
                 struct PICA_c2c *chan = NULL;
 
-                ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), &chan);
+                ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
 
                 qDebug()<<"restoring channel to "<<c2c_peer_ids[i]<<" ret ="<<ret<<" in timer event\n";
 
@@ -204,6 +206,25 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
     QList<Nodes::NodeRecord> nodelist;
     skynet_account = accrec;
     nodelist = nodes.GetNodes();
+    int ret;
+
+    AskPassword::clear();
+    do
+    {
+        ret = PICA_open_acc(skynet_account.cert_file.toUtf8().constData(),
+                            skynet_account.pkey_file.toUtf8().constData(),
+                            DHParam::GetDHParamFilename().toUtf8().constData(),
+                            AskPassword::ask_password_cb,
+                            &acc);
+
+       if (ret == PICA_ERRINVPKEYPASSPHRASE)
+            AskPassword::setInvalidPassword();
+    } while (ret == PICA_ERRINVPKEYPASSPHRASE);
+
+    qDebug() << "PICA_open_acc() returned " << ret;
+
+    if (ret != PICA_OK)
+        return;
 
     if (nodelist.count()==0)
     {
@@ -213,7 +234,7 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 
     for (int i=0;i<nodelist.count() && !self_aware;i++)
     {//TODO FIXME сделать запуск потоков порциями, а не все сразу
-        threads.append(new NodeThread(nodelist[i],&self_aware,skynet_account,&nodelink, &write_mutex));
+        threads.append(new NodeThread(nodelist[i],&self_aware, acc,&nodelink, &write_mutex));
         connect(threads.last(), SIGNAL(finished()),this,SLOT(nodethread_finished()));
         connect(threads.last(), SIGNAL(NodeStatusChanged(QString,quint16,bool)), this, SLOT(node_status_changed(QString,quint16,bool)));
         connect(threads.last(), SIGNAL(ConnectedToNode(QString,quint16,NodeThread*)), this, SLOT(nodethread_connected(QString,quint16,NodeThread*)));
@@ -265,7 +286,7 @@ if ( (iptr = find_active_chan(to)) )
     {
        struct PICA_c2c *chan = NULL;
 
-       ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), &chan);
+       ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), NULL, &chan);
 
        QList<QString> l;
        l.append(filepath);
@@ -401,7 +422,7 @@ if ( (iptr = find_active_chan(to)) )
     {
         struct PICA_c2c *chan = NULL;
 
-        ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), &chan);
+        ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), NULL, &chan);
 
         QList<QString> l;
         l.append(msg);

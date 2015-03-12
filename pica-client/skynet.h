@@ -63,6 +63,7 @@ private:
     bool self_aware;
     QString status;
     struct PICA_c2n *nodelink;
+    struct PICA_acc *acc;
     Accounts::AccountRecord skynet_account;
     QMutex write_mutex;
     QMap<QByteArray, QList<QString> > msgqueues;
