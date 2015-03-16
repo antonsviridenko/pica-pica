@@ -18,10 +18,10 @@ RegisterAccountDialog::RegisterAccountDialog(QWidget *parent) :
     btRegister = new QPushButton(tr("Create"));
 
     #ifndef WIN32
-    cbUseDevRandom = new QCheckBox(tr("Use /dev/random as random data source"));
+    cbUseDevRandom = new QCheckBox(tr("Use /dev/random as a random data source"));
     #endif
 
-    cbSetPassword = new QCheckBox(tr("Set password for secret key"));
+    cbSetPassword = new QCheckBox(tr("Set passphrase for the secret key"));
     password = new QLineEdit();
     repeatPassword = new QLineEdit();
     lbStatus = new QLabel(tr("Enter your name and press\n \"Create\" to create new Pica Pica certificate"));
@@ -127,7 +127,7 @@ void RegisterAccountDialog::Register()
     if (name.isEmpty())
     {
         QMessageBox mbx;
-        mbx.setText(tr("You must enter name for account"));
+        mbx.setText(tr("You must enter account name"));
         mbx.exec();
         return;
     }
@@ -137,7 +137,7 @@ void RegisterAccountDialog::Register()
         if (password->text() != repeatPassword->text())
         {
             QMessageBox mbx;
-            mbx.setText(tr("Passwords do not match"));
+            mbx.setText(tr("Passphrases do not match"));
             mbx.exec();
             return;
         }
