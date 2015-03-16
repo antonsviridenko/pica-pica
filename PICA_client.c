@@ -1257,7 +1257,7 @@ else
 	}
 }
 
-cid->state = PICA_CONNSTATE_WAITINGREP;
+//cid->state = PICA_CONNSTATE_WAITINGREP;
 
 do
 	{

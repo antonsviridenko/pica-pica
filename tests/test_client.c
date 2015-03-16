@@ -6,6 +6,7 @@
 
 
 struct sockaddr_in a;
+struct PICA_acc *acc;
 struct PICA_c2n *c;
 struct PICA_c2c *chn;
 
@@ -121,11 +122,19 @@ PICA_client_init(&cbs);
 // a.sin_addr.s_addr = inet_addr (argv[1]);//("127.0.0.1");
 // a.sin_port        = htons(51914);
 
+printf("opening account...");
+ret = PICA_open_acc(argv[3], argv[3],argv[3], NULL, &acc);
+
+if (ret != PICA_OK)
+{
+    printf("failed to open account, ret = %i\n", ret);
+    return 1;
+}
 
 printf("making connection...\n");
 
 //PICA_new_connection(const char *nodeaddr, unsigned int port, const char *CA_file, const char *cert_file, const char *pkey_file, const char* password, struct PICA_c2n **ci)
-ret=PICA_new_connection(argv[1], atoi(argv[2]), /*"trusted_CA.pem"*/ argv[3], argv[3],argv[3],NULL,&c);
+ret=PICA_new_connection(acc, argv[1], atoi(argv[2]), /*"trusted_CA.pem"*/ &c);
 
 ERR_print_errors_fp(stdout);
 
@@ -147,7 +156,7 @@ if (argc==5)
 
 	printf("Creating channel to %s...\n",PICA_id_to_base64(peer_id, NULL));
 	
-	ret=PICA_create_channel(c,peer_id,&chn);
+	ret=PICA_create_channel(c,peer_id,NULL,&chn);
 		//sleep(17);//timeout test
 	if (ret!=PICA_OK)
 		{
