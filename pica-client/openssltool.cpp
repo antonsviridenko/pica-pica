@@ -3,6 +3,9 @@
 #include <QRegExp>
 #include <QMessageBox>
 
+#define REGEXOLD "CN = [0-9]+\\#([^\\#\\$&\"\'=\\(\\)\\\\/\\|`!<>\\{\\}\\[\\]\\+\r\n]+)"
+#define REGEXNEW "CN = ([^\\#\\$&\"\'=\\(\\)\\\\/\\|`!<>\\{\\}\\[\\]\\+\r\n]+)"
+
 OpenSSLTool::OpenSSLTool()
 {
 }
@@ -20,8 +23,8 @@ QString OpenSSLTool::NameFromCertFile(QString cert_file)
         return QString();
 
     QByteArray result = openssl.readAll();
-        QRegExp rxOld("CN = [0-9]+\\#([^\\s\\#]+)");
-    QRegExp rx("CN = ([^\\s\\#]+)");
+        QRegExp rxOld(REGEXOLD);
+    QRegExp rx(REGEXNEW);
 
     QString name=QString::fromUtf8( result.constData());
 
@@ -52,8 +55,8 @@ QString OpenSSLTool::NameFromCertString(QString cert_pem)
         return QString();
 
     QByteArray result = openssl.readAll();
-    QRegExp rxOld("CN = [0-9]+\\#([^\\s\\#]+)");
-    QRegExp rx("CN = ([^\\s\\#]+)");
+    QRegExp rxOld(REGEXOLD);
+    QRegExp rx(REGEXNEW);
 
     QString name=QString::fromUtf8( result.constData());
 
