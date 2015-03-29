@@ -2109,6 +2109,7 @@ free(cid);
 void PICA_close_acc(struct PICA_acc *a)
 {
 SSL_CTX_free(a->ctx);
+free(a);
 }
 
 #ifdef WIN32
