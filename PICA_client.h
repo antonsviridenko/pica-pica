@@ -263,7 +263,7 @@ int PICA_new_connection
 
 int PICA_create_channel(struct PICA_c2n *ci,const unsigned char *peer_id, struct PICA_listener *l,struct PICA_c2c **chn);
 
-int PICA_new_listener(const char *public_addr, int public_port, int local_port, struct PICA_listener **l);
+int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int public_port, int local_port, struct PICA_listener **l);
 
 
 // <<<////

@@ -1031,6 +1031,93 @@ RSA_free(rsa);
 return PICA_OK;
 }
 
+// Opens socket to listen for incoming direct c2c connections bypassing nodes
+//
+// acc - pointer to opened account
+//
+// public_addr - DNS name or IP address string,
+// it is an address that will be used for connecting from global Internet.
+// Should be set to router's external IP if computer running pica-client is located behind the NAT.
+//
+// public_port - TCP port for incoming connections from global Internet
+//
+// local_port - TCP port that will be actually opened on computer listening for direct c2c connections
+//
+// l - address of pointer that will be filled with address of created PICA_listener structure
+//
+int PICA_new_listener(const struct PICA_acc *acc,const char *public_addr, int public_port, int local_port, struct PICA_listener **l)
+{
+    int ret, ret_err, flag;
+    struct PICA_listener *lst = NULL;
+    struct sockaddr_in s;
+
+
+    if (!acc || !public_addr || public_port <= 0 || public_port > 65535 || local_port <= 0 || local_port > 65535 || !l)
+        return PICA_ERRINVARG;
+
+    lst = *l = (struct PICA_listener*)calloc(sizeof(struct PICA_listener), 1);
+
+    if (!lst)
+        return PICA_ERRNOMEM;
+
+    lst->public_addr_dns = strdup(public_addr);
+
+    if (!lst->public_addr_dns)
+        return PICA_ERRNOMEM;
+
+    lst->public_addr_ipv4 = inet_addr(public_addr);
+
+    lst->acc = acc;
+    lst->public_port = public_port;
+    lst->local_port = local_port;
+
+    lst->sck_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); //(1)
+
+    if (lst->sck_listener == SOCKET_ERROR)
+        {
+        ret_err = PICA_ERRSOCK;
+        goto error_ret_1;
+        }
+
+    flag = 1;
+    setsockopt(lst->sck_listener, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+
+    memset(&s, 0, sizeof(s));
+    s.sin_family = AF_INET;
+    s.sin_addr.s_addr = INADDR_ANY;
+    s.sin_port = htons(local_port);
+
+    ret = bind(lst->sck_listener, (const struct sockaddr*) &s, sizeof(s));//(2)
+
+    if (ret == SOCKET_ERROR)
+        {
+        ret_err = PICA_ERRSOCK;
+        goto error_ret_2;
+        }
+
+    ret = listen(lst->sck_listener, 10);
+
+     if (ret == SOCKET_ERROR)
+        {
+        ret_err = PICA_ERRSOCK;
+        goto error_ret_2;
+        }
+
+    return PICA_OK;
+
+    error_ret_2: //(2)
+
+    CLOSE(lst->sck_listener);
+
+    error_ret_1: //(1)
+
+    free(lst->public_addr_dns);
+    free(lst);
+    *l = 0;
+
+    return ret_err;
+}
+
 int PICA_open_acc(const char *cert_file,
                   const char *pkey_file,
                   const char *dh_param_file,
@@ -2110,6 +2197,13 @@ void PICA_close_acc(struct PICA_acc *a)
 {
 SSL_CTX_free(a->ctx);
 free(a);
+}
+
+void PICA_close_listener(struct PICA_listener *l)
+{
+CLOSE(l->sck_listener);
+free(l->public_addr_dns);
+free(l);
 }
 
 #ifdef WIN32
