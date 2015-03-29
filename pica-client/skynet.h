@@ -75,6 +75,7 @@ private:
     void flush_queues(QByteArray to);
     struct PICA_c2c *find_active_chan(QByteArray peer_id);
     QList<QByteArray> filter_existing_chans(QList<QByteArray> peer_ids);
+    bool open_account();
 
     void emit_MessageReceived(QByteArray from, QString msg);
     void emit_UnableToDeliver(QByteArray to, QString msg);

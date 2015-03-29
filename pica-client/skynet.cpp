@@ -36,7 +36,8 @@ PICA_client_callbacks cbs = {
 
 PICA_client_init(&cbs);
 
-nodelink = NULL;
+this->nodelink = NULL;
+this->acc = NULL;
 
 connect(this, SIGNAL(PeerCertificateReceived(QByteArray,QString,bool*)), this, SLOT(verify_peer_cert(QByteArray,QString,bool*)),Qt::DirectConnection);
 
@@ -201,11 +202,8 @@ else
     }
 }
 
-void SkyNet::Join(Accounts::AccountRecord &accrec)
+bool SkyNet::open_account()
 {
-    QList<Nodes::NodeRecord> nodelist;
-    skynet_account = accrec;
-    nodelist = nodes.GetNodes();
     int ret;
 
     AskPassword::clear();
@@ -224,7 +222,22 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
     qDebug() << "PICA_open_acc() returned " << ret;
 
     if (ret != PICA_OK)
-        return;
+        return false;
+
+    return true;
+}
+
+void SkyNet::Join(Accounts::AccountRecord &accrec)
+{
+    QList<Nodes::NodeRecord> nodelist;
+    skynet_account = accrec;
+    nodelist = nodes.GetNodes();
+
+    if (!acc)
+    {
+        if (!open_account())
+            return;
+    }
 
     if (nodelist.count()==0)
     {
