@@ -98,13 +98,6 @@ typedef unsigned __int64 uint64_t;
 #define PICA_CONNWRITEBUFSIZE 4096
 #define PICA_FILEFRAGMENTSIZE 16384 //max size of TLS record
 
-#define PICA_CHANSTATE_ACTIVE 13
-
-#define PICA_CONNSTATE_CONNECTING 17
-#define PICA_CONNSTATE_WAITINGREP 18
-#define PICA_CONNSTATE_WAITINGTLS 21
-#define PICA_CONNSTATE_CONNECTED 19
-
 #define PICA_CHANSENDFILESTATE_IDLE 0
 #define PICA_CHANSENDFILESTATE_SENTREQ 20
 #define PICA_CHANSENDFILESTATE_SENDING 22
@@ -130,6 +123,15 @@ unsigned char id[PICA_ID_SIZE]; //SHA224 hash of user's certificate in DER forma
 SSL_CTX* ctx;
 };
 
+enum PICA_c2n_state
+{
+PICA_CONNSTATE_NONE = 0,
+PICA_CONNSTATE_CONNECTING,
+PICA_CONNSTATE_WAITINGREP,
+PICA_CONNSTATE_WAITINGTLS,
+PICA_CONNSTATE_CONNECTED
+};
+
 struct PICA_c2n
 {
 struct PICA_acc *acc;
@@ -141,7 +143,7 @@ SOCKET sck_comm;
 SSL* ssl_comm;
 
 
-int state;
+enum PICA_c2n_state state;
 
 unsigned char *read_buf;
 unsigned char *write_buf;
@@ -155,6 +157,12 @@ struct PICA_c2c *chan_list_end;
 
 int init_resp_ok;
 unsigned char node_ver_major, node_ver_minor;
+};
+
+enum PICA_c2c_state
+{
+PICA_CHANSTATE_NONE = 0,
+PICA_CHANSTATE_ACTIVE
 };
 
 struct PICA_c2c
@@ -177,7 +185,7 @@ unsigned int write_sslbytestowrite;
 
 struct PICA_c2c *next;
 struct PICA_c2c *prev;
-int state;
+PICA_c2c_state state;
 time_t timestamp;
 int sendfilestate;
 uint64_t sendfile_size;
@@ -280,7 +288,8 @@ int PICA_read(struct PICA_c2n *ci,int timeout);
 int PICA_write(struct PICA_c2n *ci);
 
 //connections, listeners - NULL-terminated arrays of pointers to appropriate structures
-int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners);
+// timeout - timeout in milliseconds
+int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners, int timeout);
 
 int PICA_send_msg(struct PICA_c2c *chn, char *buf,unsigned int len);
 int PICA_read_msg(struct PICA_c2c *chn,char *buf,unsigned int *n);

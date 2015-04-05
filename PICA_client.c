@@ -1462,8 +1462,69 @@ mp = c2n_writebuf_push( ci, PICA_PROTO_CONNREQOUTG, PICA_PROTO_CONNREQOUTG_SIZE)
 return PICA_OK;
 }
 
-int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners)
+static void fdset_add(fd_set *fds, int fd, int *max)
 {
+FD_SET(fd, fds);
+
+if (fd > *max)
+    *max = fd;
+}
+
+int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners, int timeout)
+{
+fd_set rfds, wfds;
+struct timeval tv;
+int ret, nfds = 0;
+struct PICA_c2n **ic2n;
+struct PICA_listener **ilst;
+
+tv.tv_sec = timeout / 1000;
+tv.tv_usec = (timeout % 1000) * 1000;
+
+FD_ZERO(&rfds);
+FD_ZERO(&wfds);
+
+ilst = listeners;
+
+while(ilst && *ilst)
+    {
+    fdset_add(&rfds, (*ilst)->sck_listener, &nfds);
+    ilst++;
+    }
+
+ic2n = connections;
+
+while(ic2n && *ic2n)
+    {
+    struct PICA_c2c *ic2c;
+
+    fdset_add(&rfds, (*ic2n)->sck_comm, &nfds);
+
+    if ((*ic2n)->write_pos)
+        fdset_add(&wfds, (*ic2n)->sck_comm, &nfds);
+
+    ic2c = (*ic2n)->chan_list_head;
+
+    while(ic2c)
+        {
+        if (ic2c->state == PICA_CHANSTATE_ACTIVE)
+            {
+            fdset_add(&rfds, ic2c->sck_data, &nfds);
+
+            if (ic2c->write_pos)
+                fdset_add(&wfds, ic2c->sck_data, &nfds);
+            }
+
+        ic2c = ic2c->next;
+        }
+
+    ic2n++;
+    }
+
+
+
+ret = select(nfds + 1, &rfds, &wfds, NULL, &tv);
+
 
 }
 
@@ -1787,10 +1848,6 @@ int PICA_read_c2n(struct PICA_c2n *ci)
 {
 int ret;
 
-switch(ci->state)
-{
-//<<<
-}
 
 //ret=SSL_read(ci->ssl_comm, ci->read_buf + ci->read_pos, PICA_CONNREADBUFSIZE - ci->read_pos);
 if (PICA_CONNSTATE_CONNECTING == ci->state)
