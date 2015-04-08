@@ -185,7 +185,7 @@ unsigned int write_sslbytestowrite;
 
 struct PICA_c2c *next;
 struct PICA_c2c *prev;
-PICA_c2c_state state;
+enum PICA_c2c_state state;
 time_t timestamp;
 int sendfilestate;
 uint64_t sendfile_size;

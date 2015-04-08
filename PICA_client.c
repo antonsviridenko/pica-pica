@@ -1462,6 +1462,25 @@ mp = c2n_writebuf_push( ci, PICA_PROTO_CONNREQOUTG, PICA_PROTO_CONNREQOUTG_SIZE)
 return PICA_OK;
 }
 
+static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
+{
+
+}
+
+static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
+{
+//if (ic2c->state == PICA_CHANSTATE_ACTIVE)
+//            {
+//
+//            }
+
+}
+
+static int process_listener(struct PICA_listener *lst, fd_set *rfds)
+{
+
+}
+
 static void fdset_add(fd_set *fds, int fd, int *max)
 {
 FD_SET(fd, fds);
@@ -1522,10 +1541,59 @@ while(ic2n && *ic2n)
     }
 
 
-
 ret = select(nfds + 1, &rfds, &wfds, NULL, &tv);
 
+if (ret == 0)
+    return PICA_OK;
 
+if (ret == -1)
+    {
+#ifndef WIN32
+    if (errno == EINTR)
+        return PICA_OK;
+    else
+        return PICA_ERRSOCK;
+#else
+#warning "implement handling of select() errors on Windows!"
+#endif
+    }
+
+//processing listeners, c2n and c2c connections
+
+ilst = listeners;
+
+while(ilst && *ilst)
+    {
+    ret = process_listener(*ilst, &rfds);
+
+    if (ret != PICA_OK)
+        return ret;
+
+    ilst++;
+    }
+
+while(ic2n && *ic2n)
+    {
+    struct PICA_c2c *ic2c;
+
+    //processing current c2n
+
+    ret = process_c2n(*ic2n, &rfds, &wfds);
+
+    ic2c = (*ic2n)->chan_list_head;
+
+    //processing c2c connections associated with current c2n
+    while(ic2c)
+        {
+        ret = process_c2c(ic2c, &rfds, &wfds);
+
+        ic2c = ic2c->next;
+        }
+
+    ic2n++;
+    }
+
+return PICA_OK;
 }
 
 int PICA_read(struct PICA_c2n *ci,int timeout)
