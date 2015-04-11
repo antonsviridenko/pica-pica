@@ -242,7 +242,7 @@ if (chn)
     PICA_close_c2c(chn);
 	}
 
-PICA_close_connection(c);
+PICA_close_c2n(c);
 
 return 0;
 }

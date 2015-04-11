@@ -42,7 +42,7 @@ void NodeThread::run()
         finished_mutex.lock();
         if (*finished_flag)
         {
-            PICA_close_connection(ci);
+            PICA_close_c2n(ci);
             exit = 1;
         }
         else
@@ -106,7 +106,7 @@ void NodeThread::run()
     while (!exit);
 
     write_mutex->lock();
-    PICA_close_connection(ci);
+    PICA_close_c2n(ci);
     *connection = NULL;
     write_mutex->unlock();
 }

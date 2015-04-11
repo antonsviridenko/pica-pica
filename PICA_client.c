@@ -1234,7 +1234,7 @@ return ret_err;
 //pkey_file - имя файла, содержащего приватный ключ в формате PEM
 //password_cb - callback-функция, запрашивающая пароль к приватному ключу, см. man 3 SSL_CTX_set_default_passwd_cb;в userdata передается указатель на id
 //ci -указатель на указатель на структуру PICA_c2n, который будет проинициализирован при успешном выполнении функции
-//Память, выделенная под структуру, освобождается при вызове PICA_close_connection
+//Память, выделенная под структуру, освобождается при вызове PICA_close_c2n
 //Возвращаемое значение - код завершения
 //PICA_OK - успешное завершение функции
 //....
@@ -2302,7 +2302,7 @@ free(chn);
 //puts("PICA_close_c2c_chkp7");//debug
 }
 
-void PICA_close_connection(struct PICA_c2n *cid)
+void PICA_close_c2n(struct PICA_c2n *cid)
 {
 struct PICA_c2c *ipt;
 

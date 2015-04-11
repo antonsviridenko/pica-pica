@@ -304,7 +304,7 @@ int PICA_resume_file(struct PICA_c2c *chan, int sending);
 int PICA_cancel_file(struct PICA_c2c *chan, int sending);
 
 void PICA_close_c2c(struct PICA_c2c *chn);
-void PICA_close_connection(struct PICA_c2n *cid);
+void PICA_close_c2n(struct PICA_c2n *cid);
 void PICA_close_listener(struct PICA_listener *l);
 void PICA_close_acc(struct PICA_acc *a);
 #ifdef __cplusplus
