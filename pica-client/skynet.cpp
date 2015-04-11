@@ -19,11 +19,11 @@ SkyNet::SkyNet()
 PICA_client_callbacks cbs = {
                             newmsg_cb,
                             msgok_cb,
-                            channel_established_cb,
-                            channel_failed,
+                            c2c_established_cb,
+                            c2c_failed,
                             accept_cb,
                             notfound_cb,
-                            channel_closed_cb,
+                            c2c_closed_cb,
                             nodelist_cb,
                             peer_cert_verify_cb,
                             accept_file_cb,
@@ -94,9 +94,9 @@ void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread
         write_mutex.lock();
         struct PICA_c2c *chan = NULL;
 
-        ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
+        ret = PICA_new_c2c(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
 
-        qDebug()<<"restoring channel to "<<c2c_peer_ids[i]<<" ret ="<<ret<<"\n";
+        qDebug()<<"restoring c2c to "<<c2c_peer_ids[i]<<" ret ="<<ret<<"\n";
         write_mutex.unlock();
     }
 
@@ -186,9 +186,9 @@ void SkyNet::timerEvent(QTimerEvent *e)
 
                 struct PICA_c2c *chan = NULL;
 
-                ret = PICA_create_channel(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
+                ret = PICA_new_c2c(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
 
-                qDebug()<<"restoring channel to "<<c2c_peer_ids[i]<<" ret ="<<ret<<" in timer event\n";
+                qDebug()<<"restoring c2c to "<<c2c_peer_ids[i]<<" ret ="<<ret<<" in timer event\n";
 
             }
             write_mutex.unlock();
@@ -299,7 +299,7 @@ if ( (iptr = find_active_chan(to)) )
     {
        struct PICA_c2c *chan = NULL;
 
-       ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), NULL, &chan);
+       ret = PICA_new_c2c(nodelink, (const unsigned char*)to.constData(), NULL, &chan);
 
        QList<QString> l;
        l.append(filepath);
@@ -435,7 +435,7 @@ if ( (iptr = find_active_chan(to)) )
     {
         struct PICA_c2c *chan = NULL;
 
-        ret = PICA_create_channel(nodelink, (const unsigned char*)to.constData(), NULL, &chan);
+        ret = PICA_new_c2c(nodelink, (const unsigned char*)to.constData(), NULL, &chan);
 
         QList<QString> l;
         l.append(msg);
@@ -509,7 +509,7 @@ struct PICA_c2c *iptr = nodelink->chan_list_head;
 
 while(iptr)
     {
-    if (iptr->state == PICA_CHANSTATE_ACTIVE && QByteArray((const char*)iptr->peer_id, PICA_ID_SIZE) == peer_id)
+    if (iptr->state == PICA_C2C_STATE_ACTIVE && QByteArray((const char*)iptr->peer_id, PICA_ID_SIZE) == peer_id)
         break;
 
         iptr = iptr->next;
@@ -628,9 +628,9 @@ void SkyNet::emit_IncomingFileFinished(QByteArray peer_id)
     emit IncomingFileFinished(peer_id);
 }
 
-void SkyNet::emit_ChannelClosed(QByteArray peer_id)
+void SkyNet::emit_c2cClosed(QByteArray peer_id)
 {
-    emit ChannelClosed(peer_id);
+    emit c2cClosed(peer_id);
 }
 
 
@@ -651,14 +651,14 @@ void SkyNet::msgok_cb(const unsigned char *peer_id)
 skynet->emit_Delivered(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
-void SkyNet::channel_established_cb(const unsigned char *peer_id)
+void SkyNet::c2c_established_cb(const unsigned char *peer_id)
 {
 skynet->flush_queues(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
-void SkyNet::channel_failed(const unsigned char *peer_id)
+void SkyNet::c2c_failed(const unsigned char *peer_id)
 {
-    qDebug()<<"channel failed ("<<QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64()<<")\n";
+    qDebug()<<"c2c failed ("<<QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64()<<")\n";
 }
 
 int SkyNet::accept_cb(const unsigned char *caller_id)
@@ -683,12 +683,12 @@ void SkyNet::notfound_cb(const unsigned char *callee_id)
   */
 }
 
-void SkyNet::channel_closed_cb(const unsigned char *peer_id, int reason)
+void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
 {
-    qDebug()<<"channel closed ("<<QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64()
+    qDebug()<<"c2c closed ("<<QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64()
             <<", error_code =" << reason << ")\n";
 
-    skynet->emit_ChannelClosed(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+    skynet->emit_c2cClosed(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
 void SkyNet::nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port)

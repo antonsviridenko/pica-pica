@@ -388,7 +388,7 @@ if (callbacks.peer_cert_verify_cb(chnl->peer_id, (const char*)cert_pem, cert_pem
 BIO_free(mem);
 }
 
-chnl->state=PICA_CHANSTATE_ACTIVE;
+chnl->state=PICA_C2C_STATE_ACTIVE;
 
 {
 unsigned long arg = 1;
@@ -400,8 +400,8 @@ return PICA_OK;
 
 error_ret_:
 error_ret:
-callbacks.channel_failed(chnl->peer_id);
-PICA_close_channel(chnl);
+callbacks.c2c_failed(chnl->peer_id);
+PICA_close_c2c(chnl);
 return err_ret;
 }
 
@@ -471,7 +471,7 @@ unsigned char *peer_id = buf + 2;
 		if (ret!=PICA_OK)
 			return 1;
 
-		callbacks.channel_established_cb(_chnl->peer_id);//*nchn=_chnl;
+        callbacks.c2c_established_cb(_chnl->peer_id);//*nchn=_chnl;
 
 		return 1;
 		}
@@ -512,7 +512,7 @@ if (!rq)
 	return 0;// ERR_CHECK -левое сообщение, такой запрос не посылался
 
 //puts("procmsg_NOTFOUND_chkp0");//debug
-PICA_close_channel(rq);
+PICA_close_c2c(rq);
 
 //puts("procmsg_NOTFOUND_chkp1");//debug
 
@@ -546,7 +546,7 @@ ret=establish_data_connection(rq);
 if (ret!=PICA_OK)
 	return 0;
 
-callbacks.channel_established_cb(rq->peer_id);//*nchn=_chnl;
+callbacks.c2c_established_cb(rq->peer_id);//*nchn=_chnl;
 
 return 1;
 }
@@ -1239,7 +1239,7 @@ return ret_err;
 //PICA_OK - успешное завершение функции
 //....
 
-int PICA_new_connection(const struct PICA_acc *acc, const char *nodeaddr,
+int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr,
                         unsigned int port,
                         struct PICA_c2n **ci)
 {
@@ -1315,7 +1315,7 @@ if (cid->sck_comm==SOCKET_ERROR)
     goto error_ret_3;
 	}
 
-cid->state = PICA_CONNSTATE_CONNECTING;
+cid->state = PICA_C2N_STATE_CONNECTING;
 
 ret=connect(cid->sck_comm,(struct sockaddr*)&a,sizeof(struct sockaddr_in));
 /////////////////state_
@@ -1344,7 +1344,7 @@ else
 	}
 }
 
-//cid->state = PICA_CONNSTATE_WAITINGREP;
+//cid->state = PICA_C2N_STATE_WAITINGREP;
 
 do
 	{
@@ -1385,7 +1385,7 @@ ret=SSL_set_fd(cid->ssl_comm,cid->sck_comm);
 
 ret=SSL_accept(cid->ssl_comm);
 /////////////////state_
-cid->state = PICA_CONNSTATE_WAITINGTLS;
+cid->state = PICA_C2N_STATE_WAITINGTLS;
 if (ret!=1)
 	{
 	//printf("SSL_accept  ret=%i\n  SSL_get_error=%i\n",ret,SSL_get_error(cid->ssl_comm,ret));//debug
@@ -1393,7 +1393,7 @@ if (ret!=1)
 	ret_err=PICA_ERRSSL;
     goto error_ret_4;
 	}
-cid->state = PICA_CONNSTATE_CONNECTED;//<<<!!!
+cid->state = PICA_C2N_STATE_CONNECTED;//<<<!!!
 
 {
 struct PICA_proto_msg *mp;
@@ -1436,7 +1436,7 @@ return ret_err;
 
 //создает ИСХОДЯЩИЙ логический зашифрованный канал связи с указанным собеседником, если тот доступен
 // в данный момент.
-int PICA_create_channel(struct PICA_c2n *ci,const unsigned char *peer_id, struct PICA_listener *l,struct PICA_c2c **chn)
+int PICA_new_c2c(struct PICA_c2n *ci,const unsigned char *peer_id, struct PICA_listener *l,struct PICA_c2c **chn)
 {
 struct PICA_proto_msg *mp;
 struct PICA_c2c *chnl;
@@ -1444,7 +1444,7 @@ struct PICA_c2c *chnl;
 if (!(ci && chn))
 	return PICA_ERRINVARG;
 
-if (!add_chaninfo(ci, chn, peer_id, PICA_CHANNEL_OUTGOING))
+if (!add_chaninfo(ci, chn, peer_id, PICA_c2c_OUTGOING))
 	return PICA_ERRNOMEM;
 
 chnl=*chn;
@@ -1464,21 +1464,26 @@ return PICA_OK;
 
 static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 {
+//switch(c2n->state)
+//    {
+//    case PICA_C2N_STATE_CONNECTED:
+//    }
 
+return PICA_OK;
 }
 
 static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 {
-//if (ic2c->state == PICA_CHANSTATE_ACTIVE)
+//if (ic2c->state == PICA_C2C_STATE_ACTIVE)
 //            {
 //
 //            }
-
+return PICA_OK;
 }
 
 static int process_listener(struct PICA_listener *lst, fd_set *rfds)
 {
-
+return PICA_OK;
 }
 
 static void fdset_add(fd_set *fds, int fd, int *max)
@@ -1526,7 +1531,7 @@ while(ic2n && *ic2n)
 
     while(ic2c)
         {
-        if (ic2c->state == PICA_CHANSTATE_ACTIVE)
+        if (ic2c->state == PICA_C2C_STATE_ACTIVE)
             {
             fdset_add(&rfds, ic2c->sck_data, &nfds);
 
@@ -1616,7 +1621,7 @@ ipt=ci->chan_list_head;
 
 while(ipt)
 	{
-	if (ipt->state==PICA_CHANSTATE_ACTIVE)
+    if (ipt->state==PICA_C2C_STATE_ACTIVE)
 		{
 		FD_SET(ipt->sck_data,&fds);
 
@@ -1624,7 +1629,7 @@ while(ipt)
 			nfds=ipt->sck_data;
 		}	
 
-	if (ipt->state != PICA_CHANSTATE_ACTIVE && (time(0) - ipt->timestamp) > PICA_CHAN_ACTIVATE_TIMEOUT)
+    if (ipt->state != PICA_C2C_STATE_ACTIVE && (time(0) - ipt->timestamp) > PICA_CHAN_ACTIVATE_TIMEOUT)
 		{
 		kill_ptr = ipt;  
 		}
@@ -1633,7 +1638,7 @@ while(ipt)
 
 	if (kill_ptr)
 		{
-		PICA_close_channel(kill_ptr);
+        PICA_close_c2c(kill_ptr);
 		kill_ptr = 0;
 		}
 	}
@@ -1655,12 +1660,12 @@ if (ret>0)
 	ipt=ci->chan_list_head;
 	while(ipt)
 		{
-		if (ipt->state==PICA_CHANSTATE_ACTIVE && FD_ISSET(ipt->sck_data, &fds))
+        if (ipt->state==PICA_C2C_STATE_ACTIVE && FD_ISSET(ipt->sck_data, &fds))
 			{
 			if (PICA_OK != (ret = PICA_read_c2c(ipt)) )
 				{
                 puts("PICA_read_c2c() failed");//debug
-				callbacks.channel_closed_cb(ipt->peer_id, ret);
+                callbacks.c2c_closed_cb(ipt->peer_id, ret);
 				kill_ptr = ipt;
 				}
 			    
@@ -1670,7 +1675,7 @@ if (ret>0)
 
 		if (kill_ptr)
 			{
-			PICA_close_channel(kill_ptr);
+            PICA_close_c2c(kill_ptr);
 			kill_ptr = 0;
 			}
 		}
@@ -1703,7 +1708,7 @@ while(ipt)
 		if (PICA_OK != (ret = PICA_write_c2c(ipt)))
 			{
             fprintf(stderr,"PICA_write_c2c() failed, ret = %i\n", ret);//debug
-			callbacks.channel_closed_cb(ipt->peer_id, ret);
+            callbacks.c2c_closed_cb(ipt->peer_id, ret);
 			kill_ptr = ipt;
 			}
 		}
@@ -1711,7 +1716,7 @@ while(ipt)
         {
         if (PICA_OK != (ret = PICA_send_file_fragment(ipt)))
             {
-            callbacks.channel_closed_cb(ipt->peer_id, ret);
+            callbacks.c2c_closed_cb(ipt->peer_id, ret);
             kill_ptr = ipt;
             }
         }
@@ -1719,7 +1724,7 @@ while(ipt)
 
 	if (kill_ptr)
 		{
-		PICA_close_channel(kill_ptr);
+        PICA_close_c2c(kill_ptr);
 		kill_ptr = 0;
 		}
 	}
@@ -1800,9 +1805,9 @@ int PICA_write_c2n(struct PICA_c2n *ci)
 {
 int ret = PICA_ERRINVARG;
 
-if (PICA_CONNSTATE_CONNECTING == ci->state)
+if (PICA_C2N_STATE_CONNECTING == ci->state)
 	ret = PICA_write_socket( ci->sck_comm, ci->write_buf, &ci->write_pos);
-else if (PICA_CONNSTATE_CONNECTED == ci->state)
+else if (PICA_C2N_STATE_CONNECTED == ci->state)
     ret = PICA_write_ssl( ci->ssl_comm, ci->write_buf, &ci->write_pos, &ci->write_sslbytestowrite);
 
 return ret;
@@ -1812,7 +1817,7 @@ int PICA_write_c2c(struct PICA_c2c *chn)
 {
 int ret = PICA_ERRINVARG;
 
-if (PICA_CHANSTATE_ACTIVE != chn->state)
+if (PICA_C2C_STATE_ACTIVE != chn->state)
 	ret = PICA_write_socket( chn->sck_data, chn->write_buf, &chn->write_pos);
 else
     ret = PICA_write_ssl( chn->ssl, chn->write_buf, &chn->write_pos, &chn->write_sslbytestowrite);
@@ -1896,7 +1901,7 @@ int PICA_read_c2c(struct PICA_c2c *chn)
 {
 int ret;
 
-if (chn->state != PICA_CHANSTATE_ACTIVE)
+if (chn->state != PICA_C2C_STATE_ACTIVE)
 	return PICA_OK;// ??? 
 
 //ret = SSL_read(chn->ssl , chn->read_buf + chn->read_pos, PICA_CHANREADBUFSIZE - chn->read_pos);
@@ -1918,20 +1923,20 @@ int ret;
 
 
 //ret=SSL_read(ci->ssl_comm, ci->read_buf + ci->read_pos, PICA_CONNREADBUFSIZE - ci->read_pos);
-if (PICA_CONNSTATE_CONNECTING == ci->state)
+if (PICA_C2N_STATE_CONNECTING == ci->state)
 	ret = PICA_read_socket(ci->sck_comm, ci->read_buf, &ci->read_pos, PICA_CONNREADBUFSIZE);
-else if (PICA_CONNSTATE_CONNECTED == ci->state)
+else if (PICA_C2N_STATE_CONNECTED == ci->state)
 	ret = PICA_read_ssl(ci->ssl_comm,  ci->read_buf, &ci->read_pos, PICA_CONNREADBUFSIZE);
 
 
 
 if (ret == PICA_OK)
 	{
-	if (PICA_CONNSTATE_CONNECTING == ci->state)
+    if (PICA_C2N_STATE_CONNECTING == ci->state)
 		if(!PICA_processdatastream( ci->read_buf, &(ci->read_pos), ci, c2n_init_messages, MSGINFO_MSGSNUM(c2n_init_messages)))
 			return PICA_ERRSERV;
 	
-	if (PICA_CONNSTATE_CONNECTED == ci->state)
+    if (PICA_C2N_STATE_CONNECTED == ci->state)
 		if(!PICA_processdatastream( ci->read_buf, &(ci->read_pos), ci, c2n_messages, MSGINFO_MSGSNUM(c2n_messages)))
 			return PICA_ERRSERV;
 	}
@@ -2232,14 +2237,14 @@ if (chn->sendfile_pos > chn->sendfile_size)
 return PICA_OK;
 }
 
-void PICA_close_channel(struct PICA_c2c *chn)
+void PICA_close_c2c(struct PICA_c2c *chn)
 {
 struct PICA_c2c *ipt;
 
-fprintf(stderr, "PICA_close_channel(%p)\n", chn);//debug
+fprintf(stderr, "PICA_close_c2c(%p)\n", chn);//debug
 	
 ipt=chn->conn->chan_list_head;
-//puts("PICA_close_channel_chkp0");//debug
+//puts("PICA_close_c2c_chkp0");//debug
 while(ipt)
 	{
 	if (ipt==chn)
@@ -2259,7 +2264,7 @@ while(ipt)
 	ipt=ipt->next;
 	}
 
-//puts("PICA_close_channel_chkp1");//debug
+//puts("PICA_close_c2c_chkp1");//debug
 
 if (chn -> sendfile_stream)
     fclose(chn -> sendfile_stream);
@@ -2276,11 +2281,11 @@ if (chn -> write_buf)
 if (chn->peer_cert)
 	X509_free(chn->peer_cert);
 
-//puts("PICA_close_channel_chkp2");//debug
+//puts("PICA_close_c2c_chkp2");//debug
 
 if (chn->ssl)
 	SSL_shutdown(chn->ssl);
-	//puts("PICA_close_channel_chkp3");//debug
+    //puts("PICA_close_c2c_chkp3");//debug
 
 if (chn->ssl)
 	{
@@ -2288,13 +2293,13 @@ if (chn->ssl)
 	SSL_free(chn->ssl);
 	}
 
-//puts("PICA_close_channel_chkp4");//debug
+//puts("PICA_close_c2c_chkp4");//debug
 SHUTDOWN(chn->sck_data);
-//puts("PICA_close_channel_chkp5");//debug
+//puts("PICA_close_c2c_chkp5");//debug
 CLOSE(chn->sck_data);
-//puts("PICA_close_channel_chkp6");//debug
+//puts("PICA_close_c2c_chkp6");//debug
 free(chn);
-//puts("PICA_close_channel_chkp7");//debug
+//puts("PICA_close_c2c_chkp7");//debug
 }
 
 void PICA_close_connection(struct PICA_c2n *cid)
@@ -2302,7 +2307,7 @@ void PICA_close_connection(struct PICA_c2n *cid)
 struct PICA_c2c *ipt;
 
 while((ipt = cid->chan_list_head))
-	PICA_close_channel(ipt);
+    PICA_close_c2c(ipt);
 
 SSL_shutdown(cid->ssl_comm);
 //printf("4 SSL_free(%X)\n",cid->ssl_comm);//debug

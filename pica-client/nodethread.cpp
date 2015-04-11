@@ -23,7 +23,7 @@ void NodeThread::run()
     int ret;
     exit = 0;
 
-    /*ret = PICA_new_connection(node_addr.address.toUtf8().constData(),
+    /*ret = PICA_new_c2n(node_addr.address.toUtf8().constData(),
                               node_addr.port,
                               user_account.CA_file.toUtf8().constData(),
                               user_account.cert_file.toUtf8().constData(),
@@ -31,7 +31,7 @@ void NodeThread::run()
                               DHParam::GetDHParamFilename().toUtf8().constData(),
                               AskPassword::ask_password_cb,
                               &ci);*/
-    ret = PICA_new_connection(user_account, node_addr.address.toUtf8().constData(), node_addr.port, &ci);
+    ret = PICA_new_c2n(user_account, node_addr.address.toUtf8().constData(), node_addr.port, &ci);
 
     switch(ret)
     {

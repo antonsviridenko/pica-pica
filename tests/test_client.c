@@ -34,14 +34,14 @@ void msgok_cb(const unsigned char *peer_id)
 puts("[V]");
 }
 //создание канала с собеседником
-void channel_established_cb(const unsigned char *peer_id)
+void c2c_established_cb(const unsigned char *peer_id)
 {
-puts("channel_established_cb");
+puts("c2c_established_cb");
 }
 
-void channel_failed_cb(const unsigned char *peer_id)
+void c2c_failed_cb(const unsigned char *peer_id)
 {
-printf("Failed to create channel to %s\n",PICA_id_to_base64(peer_id, NULL));
+printf("Failed to create c2c to %s\n",PICA_id_to_base64(peer_id, NULL));
 chn=0;
 }
 
@@ -53,9 +53,9 @@ void notfound_cb(const unsigned char *callee_id)
 puts("notfound_cb");
 }
 
-void channel_closed_cb(const unsigned char *peer_id, int reason)
+void c2c_closed_cb(const unsigned char *peer_id, int reason)
 {
-printf("channel_closed_cb( peer_id = %s, reason = %i)\n", PICA_id_to_base64(peer_id, NULL), reason);
+printf("c2c_closed_cb( peer_id = %s, reason = %i)\n", PICA_id_to_base64(peer_id, NULL), reason);
 }
 
 void nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port)
@@ -89,11 +89,11 @@ int peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_pem, unsi
 struct PICA_client_callbacks cbs = {
     newmsg_cb, 
     msgok_cb, 
-    channel_established_cb, 
-    channel_failed_cb, 
+    c2c_established_cb,
+    c2c_failed_cb,
     accept_cb, 
     notfound_cb, 
-    channel_closed_cb,
+    c2c_closed_cb,
     nodelist_cb,
     peer_cert_verify_cb
 };
@@ -133,8 +133,8 @@ if (ret != PICA_OK)
 
 printf("making connection...\n");
 
-//PICA_new_connection(const char *nodeaddr, unsigned int port, const char *CA_file, const char *cert_file, const char *pkey_file, const char* password, struct PICA_c2n **ci)
-ret=PICA_new_connection(acc, argv[1], atoi(argv[2]), /*"trusted_CA.pem"*/ &c);
+//PICA_new_c2n(const char *nodeaddr, unsigned int port, const char *CA_file, const char *cert_file, const char *pkey_file, const char* password, struct PICA_c2n **ci)
+ret=PICA_new_c2n(acc, argv[1], atoi(argv[2]), /*"trusted_CA.pem"*/ &c);
 
 ERR_print_errors_fp(stdout);
 
@@ -142,7 +142,7 @@ if (ret==PICA_OK)
 printf("PICA_OK Connected to server...\n");
 else
 {
-printf("PICA_new_connection: ret=%i\n",ret);
+printf("PICA_new_c2n: ret=%i\n",ret);
 return 1;
 }
 
@@ -154,9 +154,9 @@ if (argc==5)
 	    return 1;
 	}
 
-	printf("Creating channel to %s...\n",PICA_id_to_base64(peer_id, NULL));
+    printf("Creating c2c to %s...\n",PICA_id_to_base64(peer_id, NULL));
 	
-	ret=PICA_create_channel(c,peer_id,NULL,&chn);
+    ret=PICA_new_c2c(c,peer_id,NULL,&chn);
 		//sleep(17);//timeout test
 	if (ret!=PICA_OK)
 		{
@@ -214,14 +214,14 @@ if (buf[0]=='.')
 else
 	{
 	peer_id=atoi(buf);
-	printf("Creating channel to %u...\n",peer_id);
+    printf("Creating c2c to %u...\n",peer_id);
 	
-	ret=PICA_create_channel(c,peer_id,&chn,1);
+    ret=PICA_new_c2c(c,peer_id,&chn,1);
 
 	if (ret==PICA_OK)
 		{
 		unsigned int msglen;
-		puts("Channel established...");
+        puts("c2c established...");
 		gets(buf);
 		msglen=strlen(buf);
 		
@@ -239,7 +239,7 @@ sleep(10);
 if (chn)
 	{
 	puts("--------");
-	PICA_close_channel(chn);
+    PICA_close_c2c(chn);
 	}
 
 PICA_close_connection(c);

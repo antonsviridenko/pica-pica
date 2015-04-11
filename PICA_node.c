@@ -389,13 +389,13 @@ if ((o = client_tree_search(callee_id)))
 	{
 	if (cclink_list_search(i->id, callee_id))
 		{
-		PICA_info("duplicate request for existing channel is ignored");
+		PICA_info("duplicate request for existing c2c connection is ignored");
 		return 1;
 		}
 
 	if (memcmp(i->id, callee_id, PICA_ID_SIZE) == 0)
 		{
-		PICA_info("request to create channel to self is ignored");
+		PICA_info("request to create c2c connection to self is ignored");
 		return 1;
 		}
 

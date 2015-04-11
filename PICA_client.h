@@ -111,8 +111,8 @@ typedef unsigned __int64 uint64_t;
 #define PICA_CHAN_ACTIVATE_TIMEOUT 30
 
 
-#define PICA_CHANNEL_INCOMING 0
-#define PICA_CHANNEL_OUTGOING 1
+#define PICA_c2c_INCOMING 0
+#define PICA_c2c_OUTGOING 1
 
 struct PICA_c2n;
 struct PICA_c2c;
@@ -125,11 +125,11 @@ SSL_CTX* ctx;
 
 enum PICA_c2n_state
 {
-PICA_CONNSTATE_NONE = 0,
-PICA_CONNSTATE_CONNECTING,
-PICA_CONNSTATE_WAITINGREP,
-PICA_CONNSTATE_WAITINGTLS,
-PICA_CONNSTATE_CONNECTED
+PICA_C2N_STATE_NEW = 0,
+PICA_C2N_STATE_CONNECTING,
+PICA_C2N_STATE_WAITINGREP,
+PICA_C2N_STATE_WAITINGTLS,
+PICA_C2N_STATE_CONNECTED
 };
 
 struct PICA_c2n
@@ -161,8 +161,8 @@ unsigned char node_ver_major, node_ver_minor;
 
 enum PICA_c2c_state
 {
-PICA_CHANSTATE_NONE = 0,
-PICA_CHANSTATE_ACTIVE
+PICA_C2C_STATE_NEW = 0,
+PICA_C2C_STATE_ACTIVE
 };
 
 struct PICA_c2c
@@ -218,16 +218,16 @@ void (*newmsg_cb)(const unsigned char *peer_id,const char* msgbuf,unsigned int n
 //получение подтверждения о доставке сообщения
 void (*msgok_cb)(const unsigned char *peer_id);
 //создание канала с собеседником
-void (*channel_established_cb)(const unsigned char *peer_id);
+void (*c2c_established_cb)(const unsigned char *peer_id);
 //создать канал не удалось		
-void (*channel_failed)(const unsigned char *peer_id);
+void (*c2c_failed)(const unsigned char *peer_id);
 //входящий запрос на создание канала от пользователя с номером caller_id
 //возвращаемое значение: 0 - отклонить запрос, ненулевое значение - принять запрос
 int (*accept_cb)(const unsigned char  *caller_id);
 //запрошенный пользователь не найден, в оффлайне или отказался от общения
 void (*notfound_cb)(const unsigned char  *callee_id);
 //
-void (*channel_closed_cb)(const unsigned char *peer_id, int reason);
+void (*c2c_closed_cb)(const unsigned char *peer_id, int reason);
 
 void (*nodelist_cb)(int type, void *addr_bin, const char *addr_str, unsigned int port);
 //сертификат собеседника в формате PEM. Функция должна сравнить предъявленный сертификат с сохранённым (если есть) и вернуть 1 при успешной проверке, 0 - при неуспешной
@@ -258,7 +258,7 @@ int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id);
 int PICA_get_id_from_cert_string(const char *cert_pem, unsigned char *id);
 int PICA_client_init(struct PICA_client_callbacks *clcbs);
 
-int PICA_new_connection
+int PICA_new_c2n
     (const struct PICA_acc *acc,
      const char *nodeaddr,
      unsigned int port,
@@ -269,7 +269,7 @@ int PICA_new_connection
       int (*password_cb)(char *buf, int size, int rwflag, void *userdata), //move callback to PICA_client_callbacks? */
       struct PICA_c2n **ci);
 
-int PICA_create_channel(struct PICA_c2n *ci,const unsigned char *peer_id, struct PICA_listener *l,struct PICA_c2c **chn);
+int PICA_new_c2c(struct PICA_c2n *ci,const unsigned char *peer_id, struct PICA_listener *l,struct PICA_c2c **chn);
 
 int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int public_port, int local_port, struct PICA_listener **l);
 
@@ -303,7 +303,7 @@ int PICA_pause_file(struct PICA_c2c *chan, int sending);
 int PICA_resume_file(struct PICA_c2c *chan, int sending);
 int PICA_cancel_file(struct PICA_c2c *chan, int sending);
 
-void PICA_close_channel(struct PICA_c2c *chn);
+void PICA_close_c2c(struct PICA_c2c *chn);
 void PICA_close_connection(struct PICA_c2n *cid);
 void PICA_close_listener(struct PICA_listener *l);
 void PICA_close_acc(struct PICA_acc *a);

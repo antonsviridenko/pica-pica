@@ -55,7 +55,7 @@ signals:
     void OutgoingFileFinished(QByteArray peer_id);
     void IncomingFileFinished(QByteArray peer_id);
 
-    void ChannelClosed(QByteArray peer_id);
+    void c2cClosed(QByteArray peer_id);
 
 private:
     Nodes nodes;
@@ -98,22 +98,22 @@ private:
     void emit_OutgoingFileFinished(QByteArray peer_id);
     void emit_IncomingFileFinished(QByteArray peer_id);
 
-    void emit_ChannelClosed(QByteArray peer_id);
+    void emit_c2cClosed(QByteArray peer_id);
 
     //получение сообщения.
     static void newmsg_cb(const unsigned char *peer_id,const char* msgbuf,unsigned int nb,int type);
     //получение подтверждения о доставке сообщения
     static void msgok_cb(const unsigned char *peer_id);
     //создание канала с собеседником
-    static void channel_established_cb(const unsigned char *peer_id);
+    static void c2c_established_cb(const unsigned char *peer_id);
     //создать канал не удалось
-    static void channel_failed(const unsigned char *peer_id);
+    static void c2c_failed(const unsigned char *peer_id);
     //входящий запрос на создание канала от пользователя с номером caller_id
     static int accept_cb(const unsigned char *caller_id);
     //запрошенный пользователь не найден, в оффлайне или отказался от общения
     static void notfound_cb(const unsigned char *callee_id);
 
-    static void channel_closed_cb(const unsigned char *peer_id, int reason);
+    static void c2c_closed_cb(const unsigned char *peer_id, int reason);
 
     static void nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port);
 
