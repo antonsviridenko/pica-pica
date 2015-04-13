@@ -68,6 +68,7 @@ private:
     QMap<QByteArray, QList<QString> > msgqueues;
     QMap<QByteArray, QList<QString> > sndfilequeues;
     int timer_id;
+    bool reconnect_enabled;
 
     void timerEvent(QTimerEvent * e);
 

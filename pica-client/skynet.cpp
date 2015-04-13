@@ -13,6 +13,7 @@ SkyNet::SkyNet()
     : nodes(config_dbname), QObject(0)
 {
     self_aware = false;
+    reconnect_enabled = false;
 
 PICA_client_callbacks cbs = {
                             newmsg_cb,
@@ -38,6 +39,7 @@ nodelink = NULL;
 
 connect(this, SIGNAL(PeerCertificateReceived(QByteArray,QString,bool*)), this, SLOT(verify_peer_cert(QByteArray,QString,bool*)),Qt::DirectConnection);
 
+timer_id = startTimer(10000);
 }
 
 void SkyNet::nodethread_finished()
@@ -97,8 +99,6 @@ void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread
         write_mutex.unlock();
     }
 
-    //start timer
-    timer_id = startTimer(10000);
     }
 }
 
@@ -191,9 +191,8 @@ void SkyNet::timerEvent(QTimerEvent *e)
             write_mutex.unlock();
         }
     }
-else
+else if (threads.count() == 0 && reconnect_enabled)
     {
-    killTimer(e->timerId());
     Accounts::AccountRecord acc = this->CurrentAccount();
     Join(acc);
     }
@@ -204,6 +203,7 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
     QList<Nodes::NodeRecord> nodelist;
     skynet_account = accrec;
     nodelist = nodes.GetNodes();
+    reconnect_enabled = true;
 
     if (nodelist.count()==0)
     {
@@ -228,8 +228,8 @@ void SkyNet::Exit()
         threads[i]->CloseThread();
 
     self_aware = false;
-
-    killTimer(timer_id);
+    reconnect_enabled = false;
+    emit LostSelfAwareness();
 }
 
 bool SkyNet::isSelfAware()
