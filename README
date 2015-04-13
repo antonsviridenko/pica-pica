@@ -21,10 +21,10 @@ in order to create configure script and install other required files. Autoconf a
 should be installed on your system in this case.
 
 Dependencies:
-	1) pica-node - OpenSSL libraries (libssl and libcrypto) >=0.9.8, 
+	1) pica-node - OpenSSL libraries (libssl and libcrypto) >= 1.0.1, 
 SQLite3 library (libsqlite3) and sqlite3 command line client
 
-	2) pica-client - OpenSSL libraries (libssl and libcrypto) >=0.9.8 and openssl command line tool,
+	2) pica-client - OpenSSL libraries (libssl and libcrypto) >=1.0.1 and openssl command line tool,
 Qt 4 libraries (QtCore, QtGui, QtSql, QtNetwork), Qt4 tools (uic and moc), pkg-config, xdg-utils (for menu 
 item installation)
 
@@ -53,4 +53,4 @@ See LICENSE file
 
 BUGS
 =========================
-Report bugs at http://picapica.im/bugzilla/
+Report bugs at https://picapica.im/bugzilla/
