@@ -3,7 +3,7 @@ Upstream-Name: pica-pica
 Source: http://picapica.im
 
 Files: *
-Copyright: 2012-2014 Anton Sviridenko <anton@picapica.im>
+Copyright: 2012-2015 Anton Sviridenko <anton@picapica.im>
 License: BSD-2-clause
  Redistribution and use in source and binary forms, with or without
  modification, are permitted provided that the following conditions are met:
@@ -27,7 +27,7 @@ License: BSD-2-clause
  POSSIBILITY OF SUCH DAMAGE. 
 
 Files: debian/*
-Copyright: 2014 Anton Sviridenko <anton@picapica.im>
+Copyright: 2015 Anton Sviridenko <anton@picapica.im>
 License: GPL-2+
  This package is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
