@@ -1572,7 +1572,7 @@ while(ilst && *ilst)
     ret = process_listener(*ilst, &rfds);
 
     if (ret != PICA_OK)
-        return ret;
+        callbacks.listener_error(*ilst, ret);
 
     ilst++;
     }

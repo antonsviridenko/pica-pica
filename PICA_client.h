@@ -250,6 +250,8 @@ void (*c2n_established_cb)(struct PICA_c2n *c2n);
 void (*c2n_failed_cb)(struct PICA_c2n *c2n);
 
 void (*c2n_closed_cb)(struct PICA_c2n *c2n);
+
+void (*listener_error)(struct PICA_listener *lst, int errorcode);
 };
 
  	
