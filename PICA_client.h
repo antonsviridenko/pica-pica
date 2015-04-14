@@ -244,6 +244,12 @@ void (*file_progress)(const unsigned char *peer_id, uint64_t sent, uint64_t rece
 void (*file_control)(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd);
 
 void (*file_finished)(const unsigned char *peer_id, int sending);
+
+void (*c2n_established_cb)(struct PICA_c2n *c2n);
+
+void (*c2n_failed_cb)(struct PICA_c2n *c2n);
+
+void (*c2n_closed_cb)(struct PICA_c2n *c2n);
 };
 
  	
