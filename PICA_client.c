@@ -1585,16 +1585,33 @@ while(ic2n && *ic2n)
 
     ret = process_c2n(*ic2n, &rfds, &wfds);
 
-    ic2c = (*ic2n)->chan_list_head;
-
-    //processing c2c connections associated with current c2n
-    while(ic2c)
+    if (ret != PICA_OK)
         {
-        ret = process_c2c(ic2c, &rfds, &wfds);
-
-        ic2c = ic2c->next;
+        PICA_close_c2n(*ic2n);
         }
+    else
+        {
+        struct PICA_c2c *kill_ptr = 0;
 
+        ic2c = (*ic2n)->chan_list_head;
+
+        //processing c2c connections associated with current c2n
+        while(ic2c)
+            {
+            ret = process_c2c(ic2c, &rfds, &wfds);
+
+            if (ret != PICA_OK)
+                kill_ptr = ic2c;
+
+            ic2c = ic2c->next;
+
+            if (kill_ptr)
+                {
+                PICA_close_c2c(kill_ptr);
+                kill_ptr = 0;
+                }
+            }
+        }
     ic2n++;
     }
 
