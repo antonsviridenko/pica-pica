@@ -21,7 +21,7 @@ return 1;
 }
 
 //получение сообщения.
-void newmsg_cb(const unsigned char *peer_id,char* msgbuf,unsigned int nb,int type)
+void newmsg_cb(const unsigned char *peer_id, const char* msgbuf,unsigned int nb,int type)
 {
 memcpy(buf,msgbuf,nb);
 buf[nb]=0;
@@ -86,6 +86,57 @@ int peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_pem, unsi
     return 1;
 }
 
+int accept_file_cb(const unsigned char  *peer_id, uint64_t  file_size, const char *filename, unsigned int filename_size)
+{
+    printf("accept_file_cb: peer_id %s\n", PICA_id_to_base64(peer_id, NULL));
+    return 0;
+}
+
+void accepted_file_cb(const unsigned char *peer_id)
+{
+    printf("accepted_file_cb: peer_id %s \n", PICA_id_to_base64(peer_id, NULL));
+}
+
+void denied_file_cb(const unsigned char *peer_id)
+{
+    printf("denied_file_cb: peer_id %s \n", PICA_id_to_base64(peer_id, NULL));
+}
+
+void file_progress(const unsigned char *peer_id, uint64_t sent, uint64_t received)
+{
+    printf("file_progress: peer_id %s\n", PICA_id_to_base64(peer_id, NULL));
+}
+
+void file_control(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd)
+{
+    printf("file_control: peer_id %s sender_cmd %u receiver_cmd %u \n", PICA_id_to_base64(peer_id, NULL), sender_cmd, receiver_cmd);
+}
+
+void file_finished(const unsigned char *peer_id, int sending)
+{
+    printf("file_finished: peer_id %s\n", PICA_id_to_base64(peer_id, NULL));
+}
+
+void c2n_established_cb(struct PICA_c2n *c2n)
+{
+    printf("c2n_established_cb: %p\n peer_id %s\n", c2n, PICA_id_to_base64(c2n->acc->id, NULL));
+}
+
+void c2n_failed_cb(struct PICA_c2n *c2n)
+{
+    printf("c2n_failed_cb: %p\n", c2n);
+}
+
+void c2n_closed_cb(struct PICA_c2n *c2n)
+{
+    printf("c2n_closed_cb: %p\n", c2n);
+}
+
+void listener_error(struct PICA_listener *lst, int errorcode)
+{
+    printf("listener_error: %p error code %i\n", lst, errorcode);
+}
+
 struct PICA_client_callbacks cbs = {
     newmsg_cb, 
     msgok_cb, 
@@ -95,13 +146,24 @@ struct PICA_client_callbacks cbs = {
     notfound_cb, 
     c2c_closed_cb,
     nodelist_cb,
-    peer_cert_verify_cb
+    peer_cert_verify_cb,
+    accept_file_cb,
+    accepted_file_cb,
+    denied_file_cb,
+    file_progress,
+    file_control,
+    file_finished,
+    c2n_established_cb,
+    c2n_failed_cb,
+    c2n_closed_cb,
+    listener_error
 };
 
 int main(int argc,char** argv)
 {
 int ret;
 unsigned char peer_id[PICA_ID_SIZE];
+struct PICA_c2n* c2ns[] = {NULL, NULL};
 
 if (argc<4)
 	{
@@ -139,12 +201,14 @@ ret=PICA_new_c2n(acc, argv[1], atoi(argv[2]), /*"trusted_CA.pem"*/ &c);
 ERR_print_errors_fp(stdout);
 
 if (ret==PICA_OK)
-printf("PICA_OK Connected to server...\n");
+printf("PICA_OK started c2n connection to node...\n");
 else
 {
 printf("PICA_new_c2n: ret=%i\n",ret);
 return 1;
 }
+
+c2ns[0] = c;
 
 if (argc==5)
 	{
@@ -166,6 +230,8 @@ if (argc==5)
 	
 	}
 
+	while(PICA_event_loop(c2ns, NULL, 1500) == PICA_OK);
+/*
 do
 	{
 		if (chn && chn->state==PICA_CHANSTATE_ACTIVE)
@@ -180,7 +246,7 @@ do
 			printf("PICA_send_msg ret=%i\n",ret);
 		}
 	}
-while(PICA_read(c,100000) == PICA_OK && PICA_write(c) == PICA_OK);
+while(PICA_read(c,100000) == PICA_OK && PICA_write(c) == PICA_OK);*/
 
 /*
 puts("Enter peer_id to talk with or . for waiting incoming sessions:");
