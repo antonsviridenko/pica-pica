@@ -390,11 +390,8 @@ BIO_free(mem);
 
 chnl->state=PICA_C2C_STATE_ACTIVE;
 
-{
-unsigned long arg = 1;
+IOCTLSETNONBLOCKINGSOCKET(chnl->sck_data, 1);
 
-IOCTLSETNONBLOCKINGSOCKET(chnl->sck_data, &arg);
-}
 
 return PICA_OK;
 
@@ -1223,6 +1220,74 @@ free(a);
 return ret_err;
 }
 
+static int c2n_stage2_sendreq(struct PICA_c2n *c2n)
+{
+struct PICA_proto_msg *mp;
+
+puts("c2n_stage2_sendreq");//debug
+
+mp = c2n_writebuf_push(c2n, PICA_PROTO_INITREQ, PICA_PROTO_INITREQ_SIZE);
+
+if (mp)
+    {
+    mp->tail[0] = PICA_PROTO_VER_HIGH;
+    mp->tail[1] = PICA_PROTO_VER_LOW;
+    }
+else
+    return PICA_ERRNOMEM;
+
+c2n->state = PICA_C2N_STATE_WAITINGREP;
+
+return PICA_OK;
+}
+
+static int c2n_stage3_starttls(struct PICA_c2n *c2n)
+{
+int ret;
+
+ret = SSL_set_fd(c2n->ssl_comm, c2n->sck_comm);
+
+if (ret != 1)
+    return PICA_ERRSSL;
+
+ret = SSL_accept(c2n->ssl_comm);
+
+if (ret == 0)
+    return PICA_ERRSSL;
+
+if (ret < 0)
+    {
+    ret = SSL_get_error(c2n->ssl_comm, ret);
+
+    if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
+        return PICA_ERRSSL;
+    }
+
+c2n->state = PICA_C2N_STATE_WAITINGTLS;
+
+return PICA_OK;
+}
+
+static int c2n_stage4_nodelistrequest(struct PICA_c2n *c2n)
+{
+struct PICA_proto_msg *mp;
+
+mp = c2n_writebuf_push(c2n, PICA_PROTO_CLNODELISTREQ, PICA_PROTO_CLNODELISTREQ_SIZE);
+
+if (mp)
+    {
+    RAND_bytes(mp->tail, 2);
+    }
+else
+    return PICA_ERRNOMEM;
+
+c2n->state = PICA_C2N_STATE_CONNECTED;
+
+callbacks.c2n_established_cb(c2n);
+
+return PICA_OK;
+}
+
 /*адрес сервера, сертификат клиента и закрытый ключ*/
 
 //Осуществляет подключение к серверу по указанному адресу.
@@ -1315,37 +1380,33 @@ if (cid->sck_comm==SOCKET_ERROR)
     goto error_ret_3;
 	}
 
+IOCTLSETNONBLOCKINGSOCKET(cid->sck_comm, 1);
+
 cid->state = PICA_C2N_STATE_CONNECTING;
 
-ret=connect(cid->sck_comm,(struct sockaddr*)&a,sizeof(struct sockaddr_in));
+ret=connect(cid->sck_comm,(struct sockaddr*)&cid->srv_addr,sizeof(cid->srv_addr));
 /////////////////state_
+
+if (ret == 0)
+    return c2n_stage2_sendreq(cid);
 
 if (ret==SOCKET_ERROR)
 	{
+#ifndef WIN32
+    if (errno == EINPROGRESS || errno == EINTR)
+        return PICA_OK;
+#else
+    if (WSAGetLastError() == WSAEWOULDBLOCK)
+        return PICA_OK;
+#endif
+
 	ret_err=PICA_ERRSOCK;
     goto error_ret_4;
 	}
 
 
-{
-struct PICA_proto_msg *mp;
 
-mp = c2n_writebuf_push( cid, PICA_PROTO_INITREQ, PICA_PROTO_INITREQ_SIZE);
-	
-if (mp)
-	{
-	mp->tail[0] = PICA_PROTO_VER_HIGH;
-	mp->tail[1] = PICA_PROTO_VER_LOW;
-	}
-else
-	{
-	ret_err = PICA_ERRNOMEM;
-    goto error_ret_4;
-	}
-}
-
-//cid->state = PICA_C2N_STATE_WAITINGREP;
-
+/*
 do
 	{
 	ret = PICA_write_c2n(cid);
@@ -1378,7 +1439,7 @@ if (cid->init_resp_ok != 1)
 	}
 
 //printf("6\n");//debug
-
+*/ /*
 ret=SSL_set_fd(cid->ssl_comm,cid->sck_comm);
 
 //printf("SSL_set_fd=%i\n",ret);
@@ -1392,7 +1453,7 @@ if (ret!=1)
 		//ERR_CHECK
 	ret_err=PICA_ERRSSL;
     goto error_ret_4;
-	}
+    }*/ /*
 cid->state = PICA_C2N_STATE_CONNECTED;//<<<!!!
 
 {
@@ -1405,12 +1466,7 @@ if (mp)
 	RAND_bytes(mp->tail, 2);
 	}    
 }
-
-{
-unsigned long arg = 1;
-
-IOCTLSETNONBLOCKINGSOCKET(cid->sck_comm, &arg);
-}
+*/
 
 return PICA_OK;
 
@@ -1464,12 +1520,107 @@ return PICA_OK;
 
 static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 {
-//switch(c2n->state)
-//    {
-//    case PICA_C2N_STATE_CONNECTED:
-//    }
+int ret = PICA_OK;
 
-return PICA_OK;
+//puts("process_c2n()");//debug
+
+switch(c2n->state)
+    {
+    case PICA_C2N_STATE_NEW:
+    break;
+
+    case PICA_C2N_STATE_CONNECTING:
+
+    if (FD_ISSET(c2n->sck_comm, wfds))
+    {
+    ret = PICA_ERRSOCK;
+
+    //check if connect() finished successfully
+#ifndef WIN32
+    int optval;
+    socklen_t optlen = sizeof(optval);
+
+    if (0 == getsockopt(c2n->sck_comm, SOL_SOCKET, SO_ERROR, &optval, &optlen))
+        {
+        if (optval == 0)
+            {
+            ret = c2n_stage2_sendreq(c2n);
+            }
+        }   
+#else
+    if (SOCKET_ERROR == connect(c2n->ssl_comm, (struct sockaddr*)&c2n->srv_addr, sizeof(c2n->srv_addr)) &&
+         WSAEISCONN == WSAGetLastError())
+    {
+        ret = c2n_stage2_sendreq(c2n);
+    }
+#endif
+    }
+
+    break;
+
+    case PICA_C2N_STATE_WAITINGREP:
+
+    if (FD_ISSET(c2n->sck_comm, wfds))
+    {
+    ret = PICA_write_c2n(c2n);
+    }
+
+    if (FD_ISSET(c2n->sck_comm, rfds))
+    {
+    ret = PICA_read_c2n(c2n);
+    }
+
+    if (ret == PICA_OK && c2n->init_resp_ok != 0)
+    {
+        if (c2n->init_resp_ok == 1)
+            ret = c2n_stage3_starttls(c2n);
+        else
+            {
+            if (c2n->node_ver_major > PICA_PROTO_VER_HIGH ||
+                (c2n->node_ver_major == PICA_PROTO_VER_HIGH && c2n->node_ver_minor > PICA_PROTO_VER_LOW))
+                ret = PICA_ERRPROTONEW;
+            else
+                ret = PICA_ERRPROTOOLD;
+            }
+    }
+
+    break;
+
+    case PICA_C2N_STATE_WAITINGTLS:
+
+    if (FD_ISSET(c2n->sck_comm, wfds) || FD_ISSET(c2n->sck_comm, rfds))
+    {
+        int sslret;
+
+        sslret = SSL_accept(c2n->ssl_comm);
+
+        if (sslret == 1)
+            ret = c2n_stage4_nodelistrequest(c2n);
+        else if (sslret == 0)
+            ret = PICA_ERRSSL;
+        else if (sslret < 0)
+        {
+            sslret = SSL_get_error(c2n->ssl_comm, sslret);
+
+            if (sslret != SSL_ERROR_WANT_READ && sslret != SSL_ERROR_WANT_WRITE)
+                ret = PICA_ERRSSL;
+        }
+    }
+
+    break;
+
+    case PICA_C2N_STATE_CONNECTED:
+
+    if (FD_ISSET(c2n->sck_comm, wfds))
+        ret = PICA_write_c2n(c2n);
+
+    if (FD_ISSET(c2n->sck_comm, rfds))
+        ret = PICA_read_c2n(c2n);
+
+    break;
+    }
+
+return ret;
 }
 
 static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
@@ -1502,6 +1653,8 @@ int ret, nfds = 0;
 struct PICA_c2n **ic2n;
 struct PICA_listener **ilst;
 
+//puts("PICA_event_loop");//debug
+
 tv.tv_sec = timeout / 1000;
 tv.tv_usec = (timeout % 1000) * 1000;
 
@@ -1522,9 +1675,12 @@ while(ic2n && *ic2n)
     {
     struct PICA_c2c *ic2c;
 
+    //printf("event_loop: adding c2n %p\n", *ic2n);//debug
+
     fdset_add(&rfds, (*ic2n)->sck_comm, &nfds);
 
-    if ((*ic2n)->write_pos)
+    if ((*ic2n)->write_pos || (*ic2n)->state == PICA_C2N_STATE_CONNECTING
+         || (*ic2n)->state  == PICA_C2N_STATE_WAITINGTLS)
         fdset_add(&wfds, (*ic2n)->sck_comm, &nfds);
 
     ic2c = (*ic2n)->chan_list_head;
@@ -1535,7 +1691,7 @@ while(ic2n && *ic2n)
             {
             fdset_add(&rfds, ic2c->sck_data, &nfds);
 
-            if (ic2c->write_pos)
+            if (ic2c->write_pos || ic2c->sendfilestate == PICA_CHANSENDFILESTATE_SENDING)
                 fdset_add(&wfds, ic2c->sck_data, &nfds);
             }
 
@@ -1547,9 +1703,6 @@ while(ic2n && *ic2n)
 
 
 ret = select(nfds + 1, &rfds, &wfds, NULL, &tv);
-
-if (ret == 0)
-    return PICA_OK;
 
 if (ret == -1)
     {
@@ -1563,6 +1716,8 @@ if (ret == -1)
 #endif
     }
 
+//printf("select() returned %i\n", ret);//debug
+
 //processing listeners, c2n and c2c connections
 
 ilst = listeners;
@@ -1572,10 +1727,15 @@ while(ilst && *ilst)
     ret = process_listener(*ilst, &rfds);
 
     if (ret != PICA_OK)
+        {
         callbacks.listener_error(*ilst, ret);
+        PICA_close_listener(*ilst);
+        }
 
     ilst++;
     }
+
+ic2n = connections;
 
 while(ic2n && *ic2n)
     {
@@ -1587,6 +1747,11 @@ while(ic2n && *ic2n)
 
     if (ret != PICA_OK)
         {
+        if ((*ic2n)->state == PICA_C2N_STATE_CONNECTED)
+            callbacks.c2n_closed_cb(*ic2n);
+        else
+            callbacks.c2n_failed_cb(*ic2n);
+
         PICA_close_c2n(*ic2n);
         }
     else
@@ -1822,7 +1987,7 @@ int PICA_write_c2n(struct PICA_c2n *ci)
 {
 int ret = PICA_ERRINVARG;
 
-if (PICA_C2N_STATE_CONNECTING == ci->state)
+if (PICA_C2N_STATE_WAITINGREP == ci->state)
 	ret = PICA_write_socket( ci->sck_comm, ci->write_buf, &ci->write_pos);
 else if (PICA_C2N_STATE_CONNECTED == ci->state)
     ret = PICA_write_ssl( ci->ssl_comm, ci->write_buf, &ci->write_pos, &ci->write_sslbytestowrite);
@@ -1940,7 +2105,7 @@ int ret;
 
 
 //ret=SSL_read(ci->ssl_comm, ci->read_buf + ci->read_pos, PICA_CONNREADBUFSIZE - ci->read_pos);
-if (PICA_C2N_STATE_CONNECTING == ci->state)
+if (PICA_C2N_STATE_WAITINGREP == ci->state)
 	ret = PICA_read_socket(ci->sck_comm, ci->read_buf, &ci->read_pos, PICA_CONNREADBUFSIZE);
 else if (PICA_C2N_STATE_CONNECTED == ci->state)
 	ret = PICA_read_ssl(ci->ssl_comm,  ci->read_buf, &ci->read_pos, PICA_CONNREADBUFSIZE);
@@ -1949,7 +2114,7 @@ else if (PICA_C2N_STATE_CONNECTED == ci->state)
 
 if (ret == PICA_OK)
 	{
-    if (PICA_C2N_STATE_CONNECTING == ci->state)
+    if (PICA_C2N_STATE_WAITINGREP == ci->state)
 		if(!PICA_processdatastream( ci->read_buf, &(ci->read_pos), ci, c2n_init_messages, MSGINFO_MSGSNUM(c2n_init_messages)))
 			return PICA_ERRSERV;
 	
