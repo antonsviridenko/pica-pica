@@ -1159,6 +1159,8 @@ if (1 != SSL_CTX_set_tmp_dh(a->ctx, dh))
 
 DH_free(dh);
 
+SSL_CTX_set_options(a->ctx, SSL_OP_SINGLE_DH_USE);
+
 if (!PICA_get_id_from_cert_file(cert_file, a->id))
     {
     ret_err = PICA_ERRINVCERT;
