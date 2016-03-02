@@ -3,7 +3,7 @@
 
 AC_PREREQ([2.68])
 AC_INIT([Pica Pica Messenger], [0.6dev], [http://picapica.im/bugzilla/], [pica-pica], [http://picapica.im])
-AM_INIT_AUTOMAKE([-Wall  foreign])
+AM_INIT_AUTOMAKE([-Wall  foreign subdir-objects])
 AC_CONFIG_SRCDIR([PICA_node.c])
 
 AC_CANONICAL_HOST
