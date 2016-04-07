@@ -53,7 +53,7 @@ typedef unsigned __int64 uint64_t;
 #define OPENSSL_THREAD_DEFINES
 #include <openssl/opensslconf.h>
 #if defined(OPENSSL_THREADS)
-  // thread support enabled
+// thread support enabled
 #else
 #error "THREAD SUPPORT IS NOT ENABLED IN OPENSSL!"
 #endif
@@ -119,165 +119,165 @@ struct PICA_c2c;
 
 struct PICA_acc
 {
-unsigned char id[PICA_ID_SIZE]; //SHA224 hash of user's certificate in DER format
-SSL_CTX* ctx;
+	unsigned char id[PICA_ID_SIZE]; //SHA224 hash of user's certificate in DER format
+	SSL_CTX* ctx;
 };
 
 enum PICA_c2n_state
 {
-PICA_C2N_STATE_NEW = 0,
-PICA_C2N_STATE_CONNECTING,
-PICA_C2N_STATE_WAITINGREP,
-PICA_C2N_STATE_WAITINGTLS,
-PICA_C2N_STATE_CONNECTED
+	PICA_C2N_STATE_NEW = 0,
+	PICA_C2N_STATE_CONNECTING,
+	PICA_C2N_STATE_WAITINGREP,
+	PICA_C2N_STATE_WAITINGTLS,
+	PICA_C2N_STATE_CONNECTED
 };
 
 struct PICA_c2n
 {
-struct PICA_acc *acc;
+	struct PICA_acc *acc;
 //#warning "sockaddr!"
-struct sockaddr_in srv_addr; // sockaddr !!
+	struct sockaddr_in srv_addr; // sockaddr !!
 //unsigned char id[PICA_ID_SIZE]; //SHA224 hash of user's certificate in DER format
 //SSL_CTX* ctx;
-SOCKET sck_comm;
-SSL* ssl_comm;
+	SOCKET sck_comm;
+	SSL* ssl_comm;
 
 
-enum PICA_c2n_state state;
+	enum PICA_c2n_state state;
 
-unsigned char *read_buf;
-unsigned char *write_buf;
-unsigned int read_pos;
-unsigned int write_pos;
-unsigned int write_buflen;
-unsigned int write_sslbytestowrite;
+	unsigned char *read_buf;
+	unsigned char *write_buf;
+	unsigned int read_pos;
+	unsigned int write_pos;
+	unsigned int write_buflen;
+	unsigned int write_sslbytestowrite;
 
-struct PICA_c2c *chan_list_head;
-struct PICA_c2c *chan_list_end;
+	struct PICA_c2c *chan_list_head;
+	struct PICA_c2c *chan_list_end;
 
-int init_resp_ok;
-unsigned char node_ver_major, node_ver_minor;
+	int init_resp_ok;
+	unsigned char node_ver_major, node_ver_minor;
 };
 
 enum PICA_c2c_state
 {
-PICA_C2C_STATE_NEW = 0,
-PICA_C2C_STATE_ACTIVE
+	PICA_C2C_STATE_NEW = 0,
+	PICA_C2C_STATE_ACTIVE
 };
 
 struct PICA_c2c
 {
-struct PICA_acc *acc;
-struct PICA_c2n *conn;//соединение с сервером, через которое установлен данный логический канал связи
-unsigned char peer_id[PICA_ID_SIZE];
-SOCKET sck_data;
-SSL *ssl;
-int outgoing;//1 если создание канала инициировано локальным клиентом, 0 - если собеседником
-X509 *peer_cert;
+	struct PICA_acc *acc;
+	struct PICA_c2n *conn;//соединение с сервером, через которое установлен данный логический канал связи
+	unsigned char peer_id[PICA_ID_SIZE];
+	SOCKET sck_data;
+	SSL *ssl;
+	int outgoing;//1 если создание канала инициировано локальным клиентом, 0 - если собеседником
+	X509 *peer_cert;
 //unsigned char msgbuf[PICA_CHNMSGBUFLEN];
 
-unsigned char *read_buf;
-unsigned char *write_buf;
-unsigned int read_pos;
-unsigned int write_pos;
-unsigned int write_buflen;
-unsigned int write_sslbytestowrite;
+	unsigned char *read_buf;
+	unsigned char *write_buf;
+	unsigned int read_pos;
+	unsigned int write_pos;
+	unsigned int write_buflen;
+	unsigned int write_sslbytestowrite;
 
-struct PICA_c2c *next;
-struct PICA_c2c *prev;
-enum PICA_c2c_state state;
-time_t timestamp;
-int sendfilestate;
-uint64_t sendfile_size;
-uint64_t sendfile_pos;
-FILE *sendfile_stream;
+	struct PICA_c2c *next;
+	struct PICA_c2c *prev;
+	enum PICA_c2c_state state;
+	time_t timestamp;
+	int sendfilestate;
+	uint64_t sendfile_size;
+	uint64_t sendfile_pos;
+	FILE *sendfile_stream;
 
-int recvfilestate;
-uint64_t recvfile_size;
-uint64_t recvfile_pos;
-FILE *recvfile_stream;
+	int recvfilestate;
+	uint64_t recvfile_size;
+	uint64_t recvfile_pos;
+	FILE *recvfile_stream;
 };
 
 struct PICA_listener
 {
-struct PICA_acc *acc;
-SOCKET  sck_listener;
+	struct PICA_acc *acc;
+	SOCKET  sck_listener;
 
-int public_port;
-int local_port;
+	int public_port;
+	int local_port;
 
-in_addr_t public_addr_ipv4;
-const char *public_addr_dns;
+	in_addr_t public_addr_ipv4;
+	const char *public_addr_dns;
 
 };
 
 struct PICA_client_callbacks
 {
 //получение сообщения.
-void (*newmsg_cb)(const unsigned char *peer_id,const char* msgbuf,unsigned int nb,int type);
+	void (*newmsg_cb)(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type);
 //получение подтверждения о доставке сообщения
-void (*msgok_cb)(const unsigned char *peer_id);
+	void (*msgok_cb)(const unsigned char *peer_id);
 //создание канала с собеседником
-void (*c2c_established_cb)(const unsigned char *peer_id);
-//создать канал не удалось		
-void (*c2c_failed)(const unsigned char *peer_id);
+	void (*c2c_established_cb)(const unsigned char *peer_id);
+//создать канал не удалось
+	void (*c2c_failed)(const unsigned char *peer_id);
 //входящий запрос на создание канала от пользователя с номером caller_id
 //возвращаемое значение: 0 - отклонить запрос, ненулевое значение - принять запрос
-int (*accept_cb)(const unsigned char  *caller_id);
+	int (*accept_cb)(const unsigned char  *caller_id);
 //запрошенный пользователь не найден, в оффлайне или отказался от общения
-void (*notfound_cb)(const unsigned char  *callee_id);
+	void (*notfound_cb)(const unsigned char  *callee_id);
 //
-void (*c2c_closed_cb)(const unsigned char *peer_id, int reason);
+	void (*c2c_closed_cb)(const unsigned char *peer_id, int reason);
 
-void (*nodelist_cb)(int type, void *addr_bin, const char *addr_str, unsigned int port);
+	void (*nodelist_cb)(int type, void *addr_bin, const char *addr_str, unsigned int port);
 //сертификат собеседника в формате PEM. Функция должна сравнить предъявленный сертификат с сохранённым (если есть) и вернуть 1 при успешной проверке, 0 - при неуспешной
-int (*peer_cert_verify_cb)(const unsigned char *peer_id, const char *cert_pem, unsigned int nb);
+	int (*peer_cert_verify_cb)(const unsigned char *peer_id, const char *cert_pem, unsigned int nb);
 // returns 0 if file is rejected, 1 if accepted, 2 if decision is postponed
-int (*accept_file_cb)(const unsigned char  *peer_id, uint64_t  file_size, const char *filename, unsigned int filename_size);
+	int (*accept_file_cb)(const unsigned char  *peer_id, uint64_t  file_size, const char *filename, unsigned int filename_size);
 
-void (*accepted_file_cb)(const unsigned char *peer_id);
+	void (*accepted_file_cb)(const unsigned char *peer_id);
 
-void (*denied_file_cb)(const unsigned char *peer_id);
+	void (*denied_file_cb)(const unsigned char *peer_id);
 
-void (*file_progress)(const unsigned char *peer_id, uint64_t sent, uint64_t received);
+	void (*file_progress)(const unsigned char *peer_id, uint64_t sent, uint64_t received);
 
-void (*file_control)(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd);
+	void (*file_control)(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd);
 
-void (*file_finished)(const unsigned char *peer_id, int sending);
+	void (*file_finished)(const unsigned char *peer_id, int sending);
 
-void (*c2n_established_cb)(struct PICA_c2n *c2n);
+	void (*c2n_established_cb)(struct PICA_c2n *c2n);
 
-void (*c2n_failed_cb)(struct PICA_c2n *c2n);
+	void (*c2n_failed_cb)(struct PICA_c2n *c2n);
 
-void (*c2n_closed_cb)(struct PICA_c2n *c2n);
+	void (*c2n_closed_cb)(struct PICA_c2n *c2n);
 
-void (*listener_error)(struct PICA_listener *lst, int errorcode);
+	void (*listener_error)(struct PICA_listener *lst, int errorcode);
 };
 
- 	
+
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-//read certificate from cert_file in PEM format, store id in buffer pointed by id 
+//read certificate from cert_file in PEM format, store id in buffer pointed by id
 int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id);
 //read certificate from C string in PEM format, store id in buffer pointed by id
 int PICA_get_id_from_cert_string(const char *cert_pem, unsigned char *id);
 int PICA_client_init(struct PICA_client_callbacks *clcbs);
 
 int PICA_new_c2n
-    (const struct PICA_acc *acc,
-     const char *nodeaddr,
-     unsigned int port,
-/*      const char *CA_file,
-      const char *cert_file,
-      const char *pkey_file,
-      const char *dh_param_file,
-      int (*password_cb)(char *buf, int size, int rwflag, void *userdata), //move callback to PICA_client_callbacks? */
-      struct PICA_c2n **ci);
+(const struct PICA_acc *acc,
+ const char *nodeaddr,
+ unsigned int port,
+ /*      const char *CA_file,
+       const char *cert_file,
+       const char *pkey_file,
+       const char *dh_param_file,
+       int (*password_cb)(char *buf, int size, int rwflag, void *userdata), //move callback to PICA_client_callbacks? */
+ struct PICA_c2n **ci);
 
-int PICA_new_c2c(struct PICA_c2n *ci,const unsigned char *peer_id, struct PICA_listener *l,struct PICA_c2c **chn);
+int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_listener *l, struct PICA_c2c **chn);
 
 int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int public_port, int local_port, struct PICA_listener **l);
 
@@ -292,15 +292,15 @@ int PICA_open_acc(const char *cert_file,
 
 int PICA_read_c2n(struct PICA_c2n *ci);
 
-int PICA_read(struct PICA_c2n *ci,int timeout);
+int PICA_read(struct PICA_c2n *ci, int timeout);
 int PICA_write(struct PICA_c2n *ci);
 
 //connections, listeners - NULL-terminated arrays of pointers to appropriate structures
 // timeout - timeout in milliseconds
 int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners, int timeout);
 
-int PICA_send_msg(struct PICA_c2c *chn, char *buf,unsigned int len);
-int PICA_read_msg(struct PICA_c2c *chn,char *buf,unsigned int *n);
+int PICA_send_msg(struct PICA_c2c *chn, char *buf, unsigned int len);
+int PICA_read_msg(struct PICA_c2c *chn, char *buf, unsigned int *n);
 
 //filename - ASCII or UTF-8 encoded string
 int PICA_send_file(struct PICA_c2c *chn, const char *filepath);

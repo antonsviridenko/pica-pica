@@ -1,4 +1,4 @@
- 
+
 #ifndef PICA_NODECONFIG_H
 #define PICA_NODECONFIG_H
 
@@ -8,7 +8,7 @@
 
 #ifndef PICA_SYSCONFDIR
 #define PICA_SYSCONFDIR "/etc"
-#endif 
+#endif
 
 #ifndef PICA_LOCALSTATEDIR
 #define PICA_LOCALSTATEDIR "/var"
@@ -22,12 +22,12 @@
 
 struct nodeconfig
 {
-char			*announced_addr;
-char 			*listen_port; 
-char 			*nodes_db_file;
-char			*config_file;
-char			*CA_cert_file;
-int 			disable_reserved_addrs;
+	char			*announced_addr;
+	char 			*listen_port;
+	char 			*nodes_db_file;
+	char			*config_file;
+	char			*CA_cert_file;
+	int 			disable_reserved_addrs;
 //int			conn_speed_limit;
 };
 

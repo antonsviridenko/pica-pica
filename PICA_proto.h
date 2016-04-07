@@ -122,8 +122,8 @@
 
 struct PICA_proto_msg
 {
-unsigned char head[2];
-unsigned char tail[0];
+	unsigned char head[2];
+	unsigned char tail[0];
 };
 
 
