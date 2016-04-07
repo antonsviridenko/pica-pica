@@ -47,6 +47,7 @@ static unsigned int procmsg_DENIEDFILE(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_FILEFRAGMENT(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_FILECONTROL(unsigned char*,unsigned int,void*);
 static unsigned int procmsg_INITRESP_c2c(unsigned char*,unsigned int,void*);
+static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb,void* p);
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size);
@@ -76,6 +77,7 @@ struct PICA_msginfo c2n_init_messages[] = {
 };
 
 struct PICA_msginfo c2c_init_messages[] = {
+    {PICA_PROTO_C2CCONNREQ, PICA_MSG_FIXED_SIZE,PICA_PROTO_C2CCONNREQ_SIZE, procmsg_C2CCONNREQ},
 	{PICA_PROTO_INITRESPOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_INITRESPOK_SIZE, procmsg_INITRESP_c2c},
 	{PICA_PROTO_VERDIFFER, PICA_MSG_FIXED_SIZE, PICA_PROTO_VERDIFFER_SIZE, procmsg_INITRESP_c2c}
 };
@@ -400,6 +402,22 @@ error_ret:
 callbacks.c2c_failed(chnl->peer_id);
 PICA_close_c2c(chnl);
 return err_ret;
+}
+
+static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb,void* p)
+{
+struct PICA_c2c *cc=(struct PICA_c2n *)p;
+
+if (buf[2] == PICA_C2CPROTO_VER_HIGH && buf[3] == PICA_C2CPROTO_VER_LOW)
+    {
+    //send ok
+    }
+else
+    {
+    //send verdiffer, disconnect after sending
+    }
+
+return 1;
 }
 
 static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb,void* p)
