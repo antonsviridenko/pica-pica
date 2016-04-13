@@ -206,7 +206,7 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 	return preverify_ok;
 }
 
-static int add_chaninfo(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsigned char *peer_id, int is_outgoing)
+static int c2n_alloc_c2c(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsigned char *peer_id, int is_outgoing)
 {
 	struct PICA_c2c *chnl, *ipt;
 
@@ -239,34 +239,16 @@ static int add_chaninfo(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsign
 		ci->chan_list_end = chnl;
 	}
 
+	chnl->state = PICA_C2C_STATE_NEW;
+
 	return 1;
 }
 
-static int establish_data_connection(struct PICA_c2c *chnl)
+static int c2c_stage2_connid(struct PICA_c2c *chnl)
 {
-	char* DN_str;
-//unsigned char buf[12];
-	int ret, err_ret;
-	unsigned int tmp_uid;
 	struct PICA_proto_msg *mp;
 
-	chnl->sck_data = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-
-	{
-		struct sockaddr_in addr = chnl->conn->srv_addr;
-
-		addr.sin_port = htons(ntohs(addr.sin_port));
-
-		ret = connect( chnl->sck_data, (struct sockaddr*)&addr, sizeof(struct sockaddr_in));
-/////////////////state_
-		if (ret == SOCKET_ERROR)
-		{
-			err_ret = PICA_ERRSOCK;
-			goto error_ret;
-		}
-	}
-
-	mp = c2c_writebuf_push( chnl, PICA_PROTO_CONNID, PICA_PROTO_CONNID_SIZE);
+	mp = c2c_writebuf_push(chnl, PICA_PROTO_CONNID, PICA_PROTO_CONNID_SIZE);
 	if (mp)
 	{
 		if (chnl->outgoing)
@@ -279,6 +261,8 @@ static int establish_data_connection(struct PICA_c2c *chnl)
 			memcpy(mp->tail, chnl->peer_id, PICA_ID_SIZE);//вызвывающий
 			memcpy(mp->tail + PICA_ID_SIZE, chnl->acc->id, PICA_ID_SIZE);//вызываемый
 		}
+
+		chnl->state = PICA_C2C_STATE_CONNID;
 	}
 	else
 	{
@@ -286,14 +270,11 @@ static int establish_data_connection(struct PICA_c2c *chnl)
 		goto error_ret;
 	}
 
-	do
-	{
-		err_ret = PICA_write_c2c(chnl);
-		if (PICA_OK != err_ret)
-			goto error_ret;
-	}
-	while( chnl->write_pos > 0);
+	return PICA_OK;
+}
 
+static int c2c_stage3_starttls(struct PICA_c2c *chnl)
+{
 	chnl->ssl = SSL_new(chnl->acc->ctx);
 
 	if (!chnl->ssl)
@@ -315,22 +296,29 @@ static int establish_data_connection(struct PICA_c2c *chnl)
 	SSL_set_verify(chnl->ssl, SSL_VERIFY_PEER, verify_callback);
 	SSL_set_verify_depth(chnl->ssl, 1);//peer certificate and one CA
 
-
 	if (chnl->outgoing)
 		ret = SSL_connect(chnl->ssl);
 	else
 		ret = SSL_accept(chnl->ssl);
-/////////////////state_
-//printf("verify result:%i\n",(int)SSL_get_verify_result(chnl->ssl));//debug
 
-	if (ret != 1)
+	if (ret == 0)
+		return PICA_ERRSSL;
+
+	if (ret < 0)
 	{
-		//printf("ret=%i of SSL_connect or accept\n",ret);//debug
-		//printf("SSL_get_error says:%i\n",SSL_get_error(chnl->ssl,ret));//debug
-		err_ret = PICA_ERRSSL;
-		goto error_ret_;
+		ret = SSL_get_error(chnl->ssl, ret);
+
+		if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
+			return PICA_ERRSSL;
 	}
 
+	chnl->state = PICA_C2C_STATE_WAITINGTLS;
+
+	return PICA_OK;
+}
+
+static int c2c_verify_peer_cert(struct PICA_c2c *chnl)
+{
 //проверить сертификат собеседника
 
 	chnl->peer_cert = SSL_get_peer_certificate(chnl->ssl);
@@ -396,6 +384,89 @@ static int establish_data_connection(struct PICA_c2c *chnl)
 		BIO_free(mem);
 	}
 
+	return PICA_OK;
+}
+
+static int c2c_stage4_sendc2cconnreq(struct PICA_c2c *chnl)
+{
+	struct PICA_proto_msg *mp;
+
+	mp = c2c_writebuf_push(chnl, PICA_PROTO_C2CCONNREQ, PICA_PROTO_C2CCONNREQ_SIZE);
+
+	if (!mp)
+		return PICA_ERRNOMEM;
+
+	mp->tail[0] = PICA_C2CPROTO_VER_HIGH;
+	mp->tail[1] = PICA_C2CPROTO_VER_LOW;
+
+	chnl->state = PICA_C2C_STATE_WAITINGREP;
+
+	return PICA_OK;
+}
+
+static int c2c_start(struct PICA_c2c *chnl)
+{
+	char* DN_str;
+	int ret, err_ret;
+	unsigned int tmp_uid;
+
+
+	chnl->sck_data = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+	IOCTLSETNONBLOCKINGSOCKET(chnl->sck_data, 1);
+
+	{
+		struct sockaddr_in addr = chnl->conn->srv_addr;
+
+		addr.sin_port = htons(ntohs(addr.sin_port));
+
+		chnl->state = PICA_C2C_STATE_CONNECTING;
+
+		ret = connect(chnl->sck_data, (struct sockaddr*)&addr, sizeof(struct sockaddr_in));
+
+		if (ret == 0)
+			return c2c_stage2_connid(chnl);
+
+/////////////////state_
+		if (ret == SOCKET_ERROR)
+		{
+#ifndef WIN32
+			if (errno == EINPROGRESS || errno == EINTR)
+				return PICA_OK;
+#else
+			if (WSAGetLastError() == WSAEWOULDBLOCK)
+				return PICA_OK;
+#endif
+
+			err_ret = PICA_ERRSOCK;
+			goto error_ret;
+		}
+	}
+
+
+/* --- move to process_c2c
+	do
+	{
+		err_ret = PICA_write_c2c(chnl);
+		if (PICA_OK != err_ret)
+			goto error_ret;
+	}
+	while( chnl->write_pos > 0);
+*/
+
+/////////////////state_
+//printf("verify result:%i\n",(int)SSL_get_verify_result(chnl->ssl));//debug
+
+	if (ret != 1)
+	{
+		//printf("ret=%i of SSL_connect or accept\n",ret);//debug
+		//printf("SSL_get_error says:%i\n",SSL_get_error(chnl->ssl,ret));//debug
+		err_ret = PICA_ERRSSL;
+		goto error_ret_;
+	}
+
+
+
 	chnl->state = PICA_C2C_STATE_ACTIVE;
 
 	IOCTLSETNONBLOCKINGSOCKET(chnl->sck_data, 1);
@@ -413,14 +484,33 @@ error_ret:
 static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb, void* p)
 {
 	struct PICA_c2c *cc = (struct PICA_c2n *)p;
+	struct PICA_proto_msg *mp;
 
 	if (buf[2] == PICA_C2CPROTO_VER_HIGH && buf[3] == PICA_C2CPROTO_VER_LOW)
 	{
 		//send ok
+		mp = c2c_writebuf_push(cc, PICA_PROTO_INITRESPOK, PICA_PROTO_INITRESPOK_SIZE);
+
+		if (!mp)
+			return 0;
+
+		mp->tail[0] = 'O';
+		mp->tail[1] = 'K';
+
+		cc->state = PICA_C2C_STATE_ACTIVE;
 	}
 	else
 	{
 		//send verdiffer, disconnect after sending
+		mp = c2c_writebuf_push(cc, PICA_PROTO_VERDIFFER, PICA_PROTO_VERDIFFER_SIZE);
+
+		if (!mp)
+			return 0;
+
+		mp->tail[0] = PICA_C2CPROTO_VER_HIGH;
+		mp->tail[1] = PICA_C2CPROTO_VER_LOW;
+
+		cc->disconnect_on_empty_write_buf = 1;
 	}
 
 	return 1;
@@ -428,6 +518,7 @@ static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb, void
 
 static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, void* p)
 {
+	--
 }
 
 static unsigned int procmsg_INITRESP(unsigned char* buf, unsigned int nb, void* p)
@@ -474,7 +565,7 @@ static unsigned int procmsg_CONNREQINC(unsigned char* buf, unsigned int nb, void
 		else
 			return 0;
 
-		ret = add_chaninfo( ci, &_chnl, peer_id, 0);
+		ret = c2n_alloc_c2c( ci, &_chnl, peer_id, 0);
 
 		if (!ret)
 			return 0; //ERR_CHECK - кончилась память
@@ -487,7 +578,7 @@ static unsigned int procmsg_CONNREQINC(unsigned char* buf, unsigned int nb, void
 		}
 		while( ci->write_pos > 0);
 
-		ret = establish_data_connection(_chnl);
+		ret = c2c_start(_chnl);
 
 		if (ret != PICA_OK)
 			return 1;
@@ -562,7 +653,7 @@ static unsigned int procmsg_FOUND(unsigned char* buf, unsigned int nb, void* p)
 	if (!rq)
 		return 0;// ERR_CHECK -левое сообщение, такой запрос не посылался
 
-	ret = establish_data_connection(rq);
+	ret = c2c_start(rq);
 
 	if (ret != PICA_OK)
 		return 0;
@@ -1526,7 +1617,7 @@ int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_
 	if (!(ci && chn))
 		return PICA_ERRINVARG;
 
-	if (!add_chaninfo(ci, chn, peer_id, PICA_c2c_OUTGOING))
+	if (!c2n_alloc_c2c(ci, chn, peer_id, PICA_c2c_OUTGOING))
 		return PICA_ERRNOMEM;
 
 	chnl = *chn;
@@ -1651,11 +1742,30 @@ static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 {
-//if (ic2c->state == PICA_C2C_STATE_ACTIVE)
-//            {
-//
-//            }
-	return PICA_OK;
+	int ret = PICA_OK;
+
+	switch(c2c->state)
+	{
+	case PICA_C2C_STATE_NEW:
+		break;
+
+	case PICA_C2C_STATE_CONNECTING:
+		break;
+
+	case PICA_C2C_STATE_CONNID:
+		break;
+
+	case PICA_C2C_STATE_WAITINGTLS:
+		break;
+
+	case PICA_C2C_STATE_WAITINGREP:
+		break;
+
+	case PICA_C2C_STATE_ACTIVE:
+		break;
+	}
+
+	return ret;
 }
 
 static int process_listener(struct PICA_listener *lst, fd_set *rfds)
@@ -2018,6 +2128,9 @@ int PICA_write_c2n(struct PICA_c2n *ci)
 	else if (PICA_C2N_STATE_CONNECTED == ci->state)
 		ret = PICA_write_ssl( ci->ssl_comm, ci->write_buf, &ci->write_pos, &ci->write_sslbytestowrite);
 
+	if (ci->disconnect_on_empty_write_buf)
+		PICA_close_c2n(ci);
+
 	return ret;
 }
 
@@ -2029,6 +2142,9 @@ int PICA_write_c2c(struct PICA_c2c *chn)
 		ret = PICA_write_socket( chn->sck_data, chn->write_buf, &chn->write_pos);
 	else
 		ret = PICA_write_ssl( chn->ssl, chn->write_buf, &chn->write_pos, &chn->write_sslbytestowrite);
+
+	if (chn->disconnect_on_empty_write_buf)
+		PICA_close_c2c(chn);
 
 	return ret;
 }

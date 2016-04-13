@@ -157,11 +157,16 @@ struct PICA_c2n
 
 	int init_resp_ok;
 	unsigned char node_ver_major, node_ver_minor;
+	int disconnect_on_empty_write_buf;
 };
 
 enum PICA_c2c_state
 {
 	PICA_C2C_STATE_NEW = 0,
+	PICA_C2C_STATE_CONNECTING,
+	PICA_C2C_STATE_CONNID,
+	PICA_C2C_STATE_WAITINGTLS,
+	PICA_C2C_STATE_WAITINGREP,
 	PICA_C2C_STATE_ACTIVE
 };
 
@@ -196,6 +201,8 @@ struct PICA_c2c
 	uint64_t recvfile_size;
 	uint64_t recvfile_pos;
 	FILE *recvfile_stream;
+//this flag should be set when connection must be closed after sending last pushed packet
+	int disconnect_on_empty_write_buf;
 };
 
 struct PICA_listener
