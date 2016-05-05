@@ -429,7 +429,7 @@ static int c2c_start(struct PICA_c2c *chnl)
 	return PICA_OK;
 
 error_ret:
-	callbacks.c2c_failed(chnl->peer_id);
+	callbacks.c2c_failed_cb(chnl->peer_id);
 	PICA_close_c2c(chnl);
 	return err_ret;
 }
@@ -903,7 +903,7 @@ static unsigned int procmsg_FILEFRAGMENT(unsigned char* buf, unsigned int nb, vo
 	if (chan->recvfile_pos > chan->recvfile_size) //received more than file_size
 		return 0;
 
-	callbacks.file_progress(chan->peer_id, 0, chan->recvfile_pos);
+	callbacks.file_progress_cb(chan->peer_id, 0, chan->recvfile_pos);
 
 	if (chan->recvfile_pos == chan->recvfile_size)
 	{
@@ -911,7 +911,7 @@ static unsigned int procmsg_FILEFRAGMENT(unsigned char* buf, unsigned int nb, vo
 		fclose(chan->recvfile_stream);
 		chan->recvfile_stream = NULL;
 
-		callbacks.file_finished(chan->peer_id, 0);
+		callbacks.file_finished_cb(chan->peer_id, 0);
 	}
 
 	return 1;
@@ -998,7 +998,7 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 	}
 
 	fprintf(stderr, "procmsg_FILECONTROL  calling callback\n");
-	callbacks.file_control(chan->peer_id, sender_cmd, receiver_cmd);
+	callbacks.file_control_cb(chan->peer_id, sender_cmd, receiver_cmd);
 
 	return 1;
 }
@@ -1831,7 +1831,7 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 	if (ret != PICA_OK)
 		{
 			if (c2c->state > PICA_C2C_STATE_NEW && c2c->state < PICA_C2C_STATE_ACTIVE)
-				callbacks.c2c_failed(c2c->peer_id);
+				callbacks.c2c_failed_cb(c2c->peer_id);
 			else
 				callbacks.c2c_closed_cb(c2c->peer_id, ret);
 		}
@@ -1936,7 +1936,7 @@ int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listen
 
 		if (ret != PICA_OK)
 		{
-			callbacks.listener_error(*ilst, ret);
+			callbacks.listener_error_cb(*ilst, ret);
 			PICA_close_listener(*ilst);
 		}
 
@@ -2638,7 +2638,7 @@ int PICA_send_file_fragment(struct PICA_c2c *chn)
 
 	chn->sendfile_pos += fragment_size;
 
-	callbacks.file_progress(chn->peer_id, chn->sendfile_pos, 0);
+	callbacks.file_progress_cb(chn->peer_id, chn->sendfile_pos, 0);
 
 	if (chn->sendfile_pos >= chn->sendfile_size)
 	{
@@ -2646,7 +2646,7 @@ int PICA_send_file_fragment(struct PICA_c2c *chn)
 		fclose(chn->sendfile_stream);
 		chn->sendfile_stream = NULL;
 
-		callbacks.file_finished(chn->peer_id, 1);
+		callbacks.file_finished_cb(chn->peer_id, 1);
 	}
 
 	if (chn->sendfile_pos > chn->sendfile_size)

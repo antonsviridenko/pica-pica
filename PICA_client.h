@@ -228,7 +228,7 @@ struct PICA_client_callbacks
 //создание канала с собеседником
 	void (*c2c_established_cb)(const unsigned char *peer_id);
 //создать канал не удалось
-	void (*c2c_failed)(const unsigned char *peer_id);
+	void (*c2c_failed_cb)(const unsigned char *peer_id);
 //входящий запрос на создание канала от пользователя с номером caller_id
 //возвращаемое значение: 0 - отклонить запрос, ненулевое значение - принять запрос
 	int (*accept_cb)(const unsigned char  *caller_id);
@@ -247,11 +247,11 @@ struct PICA_client_callbacks
 
 	void (*denied_file_cb)(const unsigned char *peer_id);
 
-	void (*file_progress)(const unsigned char *peer_id, uint64_t sent, uint64_t received);
+	void (*file_progress_cb)(const unsigned char *peer_id, uint64_t sent, uint64_t received);
 
-	void (*file_control)(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd);
+	void (*file_control_cb)(const unsigned char *peer_id, unsigned int sender_cmd, unsigned int receiver_cmd);
 
-	void (*file_finished)(const unsigned char *peer_id, int sending);
+	void (*file_finished_cb)(const unsigned char *peer_id, int sending);
 
 	void (*c2n_established_cb)(struct PICA_c2n *c2n);
 
@@ -259,7 +259,7 @@ struct PICA_client_callbacks
 
 	void (*c2n_closed_cb)(struct PICA_c2n *c2n);
 
-	void (*listener_error)(struct PICA_listener *lst, int errorcode);
+	void (*listener_error_cb)(struct PICA_listener *lst, int errorcode);
 };
 
 
