@@ -173,7 +173,7 @@ enum PICA_c2c_state
 
 struct PICA_c2c
 {
-	struct PICA_acc *acc;
+	const struct PICA_acc *acc;
 	struct PICA_c2n *conn;//соединение с сервером, через которое установлен данный логический канал связи
 	unsigned char peer_id[PICA_ID_SIZE];
 	SOCKET sck_data;
@@ -208,7 +208,7 @@ struct PICA_c2c
 
 struct PICA_listener
 {
-	struct PICA_acc *acc;
+	const struct PICA_acc *acc;
 	SOCKET  sck_listener;
 
 	int public_port;

@@ -436,7 +436,7 @@ error_ret:
 
 static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb, void* p)
 {
-	struct PICA_c2c *cc = (struct PICA_c2n *)p;
+	struct PICA_c2c *cc = (struct PICA_c2c *)p;
 	struct PICA_proto_msg *mp;
 
 	if (cc->state != PICA_C2C_STATE_WAITINGC2CPROTOVER)
