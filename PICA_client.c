@@ -1595,8 +1595,8 @@ int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_
 	if (!(ci && chn))
 		return PICA_ERRINVARG;
 
-    if (ci->state != PICA_C2N_STATE_CONNECTED)
-        return PICA_ERRINVARG;
+	if (ci->state != PICA_C2N_STATE_CONNECTED)
+		return PICA_ERRINVARG;
 
 	if (!c2n_alloc_c2c(ci, chn, peer_id, PICA_c2c_OUTGOING))
 		return PICA_ERRNOMEM;
@@ -1897,7 +1897,7 @@ int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listen
 
 		while(ic2c)
 		{
-			if (ic2c->state == PICA_C2C_STATE_ACTIVE)
+			if (ic2c->state >= PICA_C2C_STATE_CONNECTING)
 			{
 				fdset_add(&rfds, ic2c->sck_data, &nfds);
 
