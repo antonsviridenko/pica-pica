@@ -171,6 +171,21 @@ enum PICA_c2c_state
 	PICA_C2C_STATE_ACTIVE
 };
 
+enum PICA_directc2c_config
+{
+	PICA_DIRECTC2C_CFG_DISABLED,
+	PICA_DIRECTC2C_CFG_CONNECTONLY,
+	PICA_DIRECTC2C_CFG_ALLOWINCOMING
+};
+
+enum PICA_directc2c_state
+{
+	PICA_DIRECTC2C_STATE_NEW,
+	PICA_DIRECTC2C_STATE_WAITINGINCOMING,
+	PICA_DIRECTC2C_STATE_CONNECTING,
+	PICA_DIRECTC2C_STATE_ACTIVE
+};
+
 struct PICA_c2c
 {
 	const struct PICA_acc *acc;
@@ -178,6 +193,8 @@ struct PICA_c2c
 	unsigned char peer_id[PICA_ID_SIZE];
 	SOCKET sck_data;
 	SSL *ssl;
+	SOCKET direct_sck;
+	SSL *direct_ssl;
 	int outgoing;//1 если создание канала инициировано локальным клиентом, 0 - если собеседником
 	X509 *peer_cert;
 //unsigned char msgbuf[PICA_CHNMSGBUFLEN];
@@ -192,6 +209,7 @@ struct PICA_c2c
 	struct PICA_c2c *next;
 	struct PICA_c2c *prev;
 	enum PICA_c2c_state state;
+	enum PICA_directc2c_state directc2c_state;
 	time_t timestamp;
 	int sendfilestate;
 	uint64_t sendfile_size;
