@@ -720,7 +720,7 @@ static unsigned int procmsg_MSGUTF8(unsigned char* buf, unsigned int nb, void* p
 
 	if (mp)
 	{
-		RAND_bytes( mp->tail, 2);
+		RAND_pseudo_bytes( mp->tail, 2);
 	}
 	else
 		return 0;
@@ -745,7 +745,7 @@ unsigned int procmsg_PINGREQ(unsigned char* buf, unsigned int nb, void* p)
 
 	if (mp)
 	{
-		RAND_bytes(mp->tail, 2);
+		RAND_pseudo_bytes(mp->tail, 2);
 	}
 	else
 		return 0;
@@ -766,7 +766,7 @@ int PICA_deny_file(struct PICA_c2c *chan)
 
 	if (mp)
 	{
-		RAND_bytes(mp->tail, 2);
+		RAND_pseudo_bytes(mp->tail, 2);
 	}
 	else
 		return PICA_ERRNOMEM;
@@ -792,7 +792,7 @@ int PICA_accept_file(struct PICA_c2c *chan, char *filename, unsigned int filenam
 
 	if (mp)
 	{
-		RAND_bytes(mp->tail, 2);
+		RAND_pseudo_bytes(mp->tail, 2);
 	}
 	else
 		return PICA_ERRNOMEM;
@@ -1371,7 +1371,7 @@ static int c2n_stage4_nodelistrequest(struct PICA_c2n *c2n)
 
 	if (mp)
 	{
-		RAND_bytes(mp->tail, 2);
+		RAND_pseudo_bytes(mp->tail, 2);
 	}
 	else
 		return PICA_ERRNOMEM;
@@ -1558,7 +1558,7 @@ mp = c2n_writebuf_push( cid, PICA_PROTO_CLNODELISTREQ, PICA_PROTO_CLNODELISTREQ_
 
 if (mp)
 	{
-	RAND_bytes(mp->tail, 2);
+	RAND_pseudo_bytes(mp->tail, 2);
 	}
 }
 */

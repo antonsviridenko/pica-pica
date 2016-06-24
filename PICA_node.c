@@ -353,7 +353,7 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 		return 0;
 	}
 
-	return 1;
+	return ;
 }
 
 
@@ -522,7 +522,7 @@ unsigned int procmsg_PINGREQ_client(unsigned char* buf, unsigned int size, void*
 
 	if ((mp = client_wbuf_push(c, PICA_PROTO_PINGREP, PICA_PROTO_PINGREP_SIZE)))
 	{
-		RAND_bytes(mp->tail, 2);
+		RAND_pseudo_bytes(mp->tail, 2);
 	}
 	else
 		return 0;
@@ -551,7 +551,7 @@ unsigned int procmsg_PINGREQ_node(unsigned char* buf, unsigned int size, void* p
 
 	if ((mp = nodelink_wbuf_push(n, PICA_PROTO_PINGREP, PICA_PROTO_PINGREP_SIZE)))
 	{
-		RAND_bytes(mp->tail, 2);
+		RAND_pseudo_bytes(mp->tail, 2);
 	}
 	else
 		return 0;
@@ -597,7 +597,7 @@ unsigned int procmsg_NODERESP(unsigned char* buf, unsigned int size, void* ptr)
 		mp = nodelink_wbuf_push(n, PICA_PROTO_NODELISTREQ, PICA_PROTO_NODELISTREQ_SIZE);
 		if (mp)
 		{
-			RAND_bytes(mp->tail, 2);
+			RAND_pseudo_bytes(mp->tail, 2);
 		}
 		else
 			return 0;
@@ -2002,7 +2002,7 @@ void process_timeouts_c2n()
 					if ((mp = client_wbuf_push(i_ptr, PICA_PROTO_PINGREQ, PICA_PROTO_PINGREQ_SIZE)))
 					{
 						PICA_debug3("sending PINGREQ to %p", i_ptr);
-						RAND_bytes(mp->tail, 2);
+						RAND_pseudo_bytes(mp->tail, 2);
 
 						i_ptr->tmst = time(0);
 						i_ptr->disconnect_ticking = 1;
@@ -2061,7 +2061,7 @@ void process_timeouts_n2n()
 					if ((mp = nodelink_wbuf_push(i_ptr, PICA_PROTO_PINGREQ, PICA_PROTO_PINGREQ_SIZE)))
 					{
 						PICA_debug3("sending PINGREQ to node %p", i_ptr);
-						RAND_bytes(mp->tail, 2);
+						RAND_pseudo_bytes(mp->tail, 2);
 
 						i_ptr->tmst = time(0);
 						i_ptr->disconnect_ticking = 1;
