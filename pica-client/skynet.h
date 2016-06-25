@@ -131,6 +131,14 @@ private:
 
     static void file_finished(const unsigned char *peer_id, int sending);
 
+	static void c2n_established_cb(struct PICA_c2n *c2n);
+
+	static void c2n_failed_cb(struct PICA_c2n *c2n);
+
+	static void c2n_closed_cb(struct PICA_c2n *c2n);
+
+	static void listener_error_cb(struct PICA_listener *lst, int errorcode);
+
 private slots:
     void nodethread_finished();
     void nodethread_connected(QString addr, quint16 port, NodeThread *thread);

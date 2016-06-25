@@ -31,7 +31,11 @@ PICA_client_callbacks cbs = {
                             denied_file_cb,
                             file_progress,
                             file_control,
-                            file_finished
+							file_finished,
+							c2n_established_cb,
+							c2n_failed_cb,
+							c2n_closed_cb,
+							listener_error_cb
                             };
 
 PICA_client_init(&cbs);
@@ -792,4 +796,24 @@ void SkyNet::file_finished(const unsigned char *peer_id, int sending)
         skynet->emit_OutgoingFileFinished(QByteArray((const char *)peer_id, PICA_ID_SIZE));
     else
         skynet->emit_IncomingFileFinished(QByteArray((const char *)peer_id, PICA_ID_SIZE));
+}
+
+void SkyNet::c2n_established_cb(struct PICA_c2n *c2n)
+{
+
+}
+
+void SkyNet::c2n_failed_cb(struct PICA_c2n *c2n)
+{
+
+}
+
+void SkyNet::c2n_closed_cb(struct PICA_c2n *c2n)
+{
+
+}
+
+void SkyNet::listener_error_cb(struct PICA_listener *lst, int errorcode)
+{
+
 }
