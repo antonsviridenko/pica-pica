@@ -19,7 +19,7 @@ FileTransferController::FileTransferController(QObject *parent) :
 
     connect(skynet, SIGNAL(OutgoingFileRequestDenied(QByteArray)), this, SLOT(file_denied_by_peer(QByteArray)));
 
-    connect(skynet, SIGNAL(ChannelClosed(QByteArray)), this, SLOT(file_peer_disconnected(QByteArray)));
+	connect(skynet, SIGNAL(c2cClosed(QByteArray)), this, SLOT(file_peer_disconnected(QByteArray)));
 }
 
 void FileTransferController::file_peer_disconnected(QByteArray peer_id)
