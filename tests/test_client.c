@@ -135,14 +135,14 @@ void c2n_established_cb(struct PICA_c2n *c2n)
 	printf("c2n_established_cb: %p\n my_id %s\n", c2n, PICA_id_to_base64(c2n->acc->id, NULL));
 }
 
-void c2n_failed_cb(struct PICA_c2n *c2n)
+void c2n_failed_cb(struct PICA_c2n *c2n, int error)
 {
-	printf("c2n_failed_cb: %p\n", c2n);
+	printf("c2n_failed_cb: %p error_code %i\n", c2n, error);
 }
 
-void c2n_closed_cb(struct PICA_c2n *c2n)
+void c2n_closed_cb(struct PICA_c2n *c2n, int error)
 {
-	printf("c2n_closed_cb: %p\n", c2n);
+	printf("c2n_closed_cb: %p error_code %i\n", c2n, error);
 }
 
 void listener_error(struct PICA_listener *lst, int errorcode)

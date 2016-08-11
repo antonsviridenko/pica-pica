@@ -273,9 +273,9 @@ struct PICA_client_callbacks
 
 	void (*c2n_established_cb)(struct PICA_c2n *c2n);
 
-	void (*c2n_failed_cb)(struct PICA_c2n *c2n);
+	void (*c2n_failed_cb)(struct PICA_c2n *c2n, int error);
 
-	void (*c2n_closed_cb)(struct PICA_c2n *c2n);
+	void (*c2n_closed_cb)(struct PICA_c2n *c2n, int error);
 
 	void (*listener_error_cb)(struct PICA_listener *lst, int errorcode);
 };

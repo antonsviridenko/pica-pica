@@ -1959,9 +1959,9 @@ int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listen
 		if (ret != PICA_OK)
 		{
 			if ((*ic2n)->state == PICA_C2N_STATE_CONNECTED)
-				callbacks.c2n_closed_cb(*ic2n);
+				callbacks.c2n_closed_cb(*ic2n, ret);
 			else
-				callbacks.c2n_failed_cb(*ic2n);
+				callbacks.c2n_failed_cb(*ic2n, ret);
 
 			PICA_close_c2n(*ic2n);
 		}
