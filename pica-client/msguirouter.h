@@ -27,7 +27,7 @@ public slots:
     void delivered(QByteArray to);
 
     void scary_cert_message(QByteArray peer_id, QString received_cert, QString stored_cert);
-    void notification(QString text);
+	void notification(QString text, bool is_critical);
 
     void trayicon_dclick();
 private:

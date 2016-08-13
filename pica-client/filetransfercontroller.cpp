@@ -217,7 +217,7 @@ void FileTransferController::send_file(QByteArray peer_id)
 
     if (ftdialogs_out.contains(peer_id))
     {
-        msguirouter->notification(tr("There is already file transfer in progress. Wait until it is finished."));
+		msguirouter->notification(tr("There is already file transfer in progress. Wait until it is finished."), true);
         return;
     }
 
@@ -230,13 +230,13 @@ void FileTransferController::send_file(QByteArray peer_id)
 
     if (!fi.exists())
         {
-            msguirouter->notification(tr("File \"%1\" does not exist.").arg(filepath));
+			msguirouter->notification(tr("File \"%1\" does not exist.").arg(filepath), true);
             return;
         }
 
     if (fi.size() == 0)
         {
-            msguirouter->notification(tr("Cannot send empty file."));
+			msguirouter->notification(tr("Cannot send empty file."), true);
         }
 
     skynet->SendFile(peer_id, filepath);
