@@ -23,7 +23,7 @@ MsgUIRouter::MsgUIRouter(QObject *parent) :
     connect(skynet, SIGNAL(UnableToDeliver(QByteArray,QString)), this, SLOT(delivery_failed(QByteArray,QString)));
     connect(skynet, SIGNAL(Delivered(QByteArray)), this, SLOT(delivered(QByteArray)));
     connect(skynet, SIGNAL(CertificateForged(QByteArray,QString,QString)), this, SLOT(scary_cert_message(QByteArray,QString,QString)));
-    connect(skynet, SIGNAL(ErrMsgFromNode(QString)), this, SLOT(notification(QString)));
+	connect(skynet, SIGNAL(StatusMsg(QString, bool)), this, SLOT(notification(QString, bool)));
     connect(systray, SIGNAL(doubleclicked()), this, SLOT(trayicon_dclick()));
 
 }
@@ -166,8 +166,8 @@ void MsgUIRouter::scary_cert_message(QByteArray peer_id, QString received_cert, 
     fcd.exec();
 }
 
-void MsgUIRouter::notification(QString text)
+void MsgUIRouter::notification(QString text, bool is_critical)
 {
     if (mainwindow)
-        mainwindow->AddNotification(text);
+		mainwindow->AddNotification(text, is_critical);
 }

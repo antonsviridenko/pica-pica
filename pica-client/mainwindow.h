@@ -23,7 +23,7 @@ public:
     explicit MainWindow(QWidget *parent = 0);
     ~MainWindow();
 
-    void AddNotification(QString &text);
+	void AddNotification(QString &text, bool is_critical);
 protected:
 
 private:

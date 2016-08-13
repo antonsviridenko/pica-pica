@@ -138,11 +138,13 @@ void MainWindow::showhide_click()
         hide_notifications();
 }
 
-void MainWindow::AddNotification(QString &text)
+void MainWindow::AddNotification(QString &text, bool is_critical)
 {
     notifications->addItem(text);
     notifications->item(notifications->count() -1) ->setForeground(QBrush(QColor(230, 10, 10, 196)));
-    show_notifications();
+
+	if (is_critical)
+		show_notifications();
 }
 
 
