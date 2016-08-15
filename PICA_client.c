@@ -172,7 +172,6 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 	char    buf[256];
 	X509   *err_cert;
 	int     err, depth;
-	SSL    *ssl;
 
 	err_cert = X509_STORE_CTX_get_current_cert(ctx);
 	err = X509_STORE_CTX_get_error(ctx);
@@ -208,7 +207,7 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 
 static int c2n_alloc_c2c(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsigned char *peer_id, int is_outgoing)
 {
-	struct PICA_c2c *chnl, *ipt;
+	struct PICA_c2c *chnl;
 
 	chnl = *chn = (struct PICA_c2c*)calloc(sizeof(struct PICA_c2c), 1);
 
@@ -380,9 +379,7 @@ static int c2c_stage4_sendc2cconnreq(struct PICA_c2c *chnl)
 
 static int c2c_start(struct PICA_c2c *chnl)
 {
-	char* DN_str;
 	int ret, err_ret;
-	unsigned int tmp_uid;
 
 
 	chnl->sck_data = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
