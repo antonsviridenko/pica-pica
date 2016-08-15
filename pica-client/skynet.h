@@ -2,12 +2,13 @@
 #define SKYNET_H
 
 #include "nodes.h"
-#include "nodethread.h"
 #include "../PICA_client.h"
 #include "../PICA_proto.h"
 #include "accounts.h"
 #include <QObject>
 #include <QMap>
+#include <QVector>
+#include <QPair>
 
 
 class SkyNet : public QObject
@@ -17,7 +18,6 @@ public:
     SkyNet();
     void Join(Accounts::AccountRecord &accrec);
     bool isSelfAware();
-    QString& Status();
     void Exit();
 
     void SendMessage(QByteArray to, QString msg);
@@ -38,7 +38,7 @@ signals:
     void LostSelfAwareness();
     void PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified);
     void CertificateForged(QByteArray peer_id, QString received_cert, QString stored_cert);
-    void ErrMsgFromNode(QString msg);
+	void StatusMsg(QString msg, bool is_critical);
     void ContactsUpdated();
     void IncomingFileRequestReceived(QByteArray peer_id, quint64 file_size, QString filename);
     void OutgoingFileRequestAccepted(QByteArray peer_id);
@@ -58,17 +58,18 @@ signals:
     void c2cClosed(QByteArray peer_id);
 
 private:
-    Nodes nodes;
-    QList<NodeThread*> threads;
+	Nodes nodes;
+	QList<QPair<struct PICA_c2n *, Nodes::NodeRecord> > connecting_nodes;
     bool self_aware;
     QString status;
-    struct PICA_c2n *nodelink;
+	struct PICA_c2n *active_nodelink;
     struct PICA_acc *acc;
     Accounts::AccountRecord skynet_account;
-    QMutex write_mutex;
+
     QMap<QByteArray, QList<QString> > msgqueues;
     QMap<QByteArray, QList<QString> > sndfilequeues;
-    int timer_id;
+	int retry_timer_id;
+	int event_loop_timer_id;
 
     void timerEvent(QTimerEvent * e);
 
@@ -133,16 +134,18 @@ private:
 
 	static void c2n_established_cb(struct PICA_c2n *c2n);
 
-	static void c2n_failed_cb(struct PICA_c2n *c2n);
+	static void c2n_failed_cb(struct PICA_c2n *c2n, int error);
 
-	static void c2n_closed_cb(struct PICA_c2n *c2n);
+	static void c2n_closed_cb(struct PICA_c2n *c2n, int error);
 
 	static void listener_error_cb(struct PICA_listener *lst, int errorcode);
 
 private slots:
-    void nodethread_finished();
-    void nodethread_connected(QString addr, quint16 port, NodeThread *thread);
-    void node_status_changed(QString addr,quint16 port,bool alive);
+	void nodelink_activated(PICA_c2n *c2n);
+	void nodelink_closed(PICA_c2n *c2n, int error);
+	void nodelink_failed(PICA_c2n *c2n, int error);
+
+	void node_status_changed(Nodes::NodeRecord nr,bool alive);
     void verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified);
 
 };

@@ -40,78 +40,134 @@ PICA_client_callbacks cbs = {
 
 PICA_client_init(&cbs);
 
-this->nodelink = NULL;
+this->active_nodelink = NULL;
 this->acc = NULL;
 
 connect(this, SIGNAL(PeerCertificateReceived(QByteArray,QString,bool*)), this, SLOT(verify_peer_cert(QByteArray,QString,bool*)),Qt::DirectConnection);
 
+event_loop_timer_id = startTimer(0);
+
 }
 
-void SkyNet::nodethread_finished()
+void SkyNet::nodelink_activated(PICA_c2n *c2n)
 {
-//удалить здесь завершившийся поток
-    for (int i=0;i<threads.count();i++)
-    {
-        if (threads[i]->isFinished())
-        {
-            delete threads.takeAt(i);
-            break;
-        }
-    }
+	for (int i = 0; i < connecting_nodes.size(); i++)
+	{
+		if (connecting_nodes[i].first == c2n)
+		{
+			node_status_changed(connecting_nodes[i].second, true);
+			connecting_nodes.removeAt(i);
+			break;
+		}
+	}
 
-    if (threads.count() == 0)
-    {
-        self_aware = false;
-        emit LostSelfAwareness();
-    }
+	if (self_aware)
+	{
+		PICA_close_c2n(c2n);
+	}
+	else
+	{
+		self_aware = true;
+		active_nodelink = c2n;
+
+		emit BecameSelfAware();
+		//
+		//restore old peer connections, if any
+		QList<QByteArray> c2c_peer_ids;
+
+		//load undelivered messages from history
+		if (msgqueues.isEmpty())
+		{
+			History h(config_dbname, Accounts::GetCurrentAccount().id);
+
+			msgqueues = h.GetUndeliveredMessages();
+		}
+
+		//load file transfers to be completed
+		// sndfilequeues = ...
+
+		QMap<QByteArray, QList<QString> > queues = msgqueues;
+
+		queues.unite(sndfilequeues);
+
+		c2c_peer_ids = queues.uniqueKeys();
+
+		for (int i = 0; i < c2c_peer_ids.size(); i++)
+		{
+			int ret;
+			struct PICA_c2c *chan = NULL;
+
+			ret = PICA_new_c2c(active_nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
+
+			qDebug()<<"restoring c2c to "<<c2c_peer_ids[i]<<" ret ="<<ret<<"\n";
+		}
+
+		//start timer
+		retry_timer_id = startTimer(10000);
+		//
+	}
+
+
 }
 
-void SkyNet::nodethread_connected(QString addr, quint16 port, NodeThread *thread)
+void SkyNet::nodelink_closed(PICA_c2n *c2n, int error)
 {
-    if (self_aware)
-    {
-        emit BecameSelfAware();
-
-    //restore old peer connections, if any
-    QList<QByteArray> c2c_peer_ids;
-
-    //load undelivered messages from history
-    if (msgqueues.isEmpty())
-    {
-        History h(config_dbname, Accounts::GetCurrentAccount().id);
-
-        msgqueues = h.GetUndeliveredMessages();
-    }
-
-    //load file transfers to be completed
-    // sndfilequeues = ...
-
-    QMap<QByteArray, QList<QString> > queues = msgqueues;
-
-    queues.unite(sndfilequeues);
-
-    c2c_peer_ids = queues.uniqueKeys();
-
-    for (int i = 0; i < c2c_peer_ids.size(); i++)
-    {
-        int ret;
-        write_mutex.lock();
-        struct PICA_c2c *chan = NULL;
-
-        ret = PICA_new_c2c(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
-
-        qDebug()<<"restoring c2c to "<<c2c_peer_ids[i]<<" ret ="<<ret<<"\n";
-        write_mutex.unlock();
-    }
-
-    //start timer
-    timer_id = startTimer(10000);
-    }
+	if (self_aware && c2n == active_nodelink)
+	{
+		active_nodelink = NULL;
+		emit LostSelfAwareness();
+	}
+	else
+	{
+		for (int i = 0; i < connecting_nodes.size(); i++)
+		{
+			if (connecting_nodes[i].first == c2n)
+			{
+				connecting_nodes.removeAt(i);
+				break;
+			}
+		}
+	}
 }
 
-void SkyNet::node_status_changed(QString addr, quint16 port, bool alive)
+void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 {
-    Nodes::NodeRecord nr = {addr, port};
+	for (int i = 0; i < connecting_nodes.size(); i++)
+	{
+		if (connecting_nodes[i].first == c2n)
+		{
+			switch(error)
+			{
+			case PICA_ERRPROTONEW:
+
+				emit StatusMsg(QString("Node %1:%2 has newer protocol version. Please check if update for pica-client is available")
+							   .arg(connecting_nodes[i].second.address)
+							   .arg(connecting_nodes[i].second.port),
+							   true);
+				break;
+
+			case PICA_ERRPROTOOLD:
+
+				emit StatusMsg(QString("Node %1:%2 has older protocol. Disconnected.")
+							   .arg(connecting_nodes[i].second.address)
+							   .arg(connecting_nodes[i].second.port),
+							   false);
+				break;
+			}
+
+			node_status_changed(connecting_nodes[i].second, false);
+			connecting_nodes.removeAt(i);
+			break;
+		}
+	}
+	if (connecting_nodes.empty())
+		emit LostSelfAwareness();
+}
+
+
+
+void SkyNet::node_status_changed(Nodes::NodeRecord nr, bool alive)
+{
     nodes.UpdateStatus(nr, alive);
 }
 
@@ -173,30 +229,54 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 
 void SkyNet::timerEvent(QTimerEvent *e)
 {
+	if (e->timerId() == event_loop_timer_id)
+	{
+		if (connecting_nodes.size() > 0 || self_aware)
+		{
+			int ret;
+			QVector<struct PICA_c2n *> nodelinks;
+
+			nodelinks.reserve(connecting_nodes.size() + 1);
+
+			for (int i = 0; i < connecting_nodes.size(); i++)
+				nodelinks.append(connecting_nodes[i].first);
+
+			if (self_aware)
+				nodelinks.append(active_nodelink);
+
+			nodelinks.append(NULL);
+
+			ret = PICA_event_loop(nodelinks.data(), NULL, 1);
+
+			if (ret != PICA_OK)
+				emit StatusMsg("event loop error!", true);//show some error message
+		}
+
+		return;
+	}
+
+
     if (self_aware)
     {
-        if (write_mutex.tryLock(10))
-        {
-            QMap<QByteArray, QList<QString> > queues = msgqueues;
-            queues.unite(sndfilequeues);
+		QMap<QByteArray, QList<QString> > queues = msgqueues;
+		queues.unite(sndfilequeues);
 
-            QList<QByteArray> c2c_peer_ids = queues.uniqueKeys();
+		QList<QByteArray> c2c_peer_ids = queues.uniqueKeys();
 
-            c2c_peer_ids = filter_existing_chans(c2c_peer_ids);
+		c2c_peer_ids = filter_existing_chans(c2c_peer_ids);
 
-            for (int i = 0; i < c2c_peer_ids.size(); i++)
-            {
-                int ret;
+		for (int i = 0; i < c2c_peer_ids.size(); i++)
+		{
+			int ret;
 
-                struct PICA_c2c *chan = NULL;
+			struct PICA_c2c *chan = NULL;
 
-                ret = PICA_new_c2c(nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
+			ret = PICA_new_c2c(active_nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
 
-                qDebug()<<"restoring c2c to "<<c2c_peer_ids[i]<<" ret ="<<ret<<" in timer event\n";
+			qDebug()<<"restoring c2c to "<<c2c_peer_ids[i]<<" ret ="<<ret<<" in timer event\n";
 
-            }
-            write_mutex.unlock();
-        }
+		}
+
     }
 else
     {
@@ -233,9 +313,9 @@ bool SkyNet::open_account()
 
 void SkyNet::Join(Accounts::AccountRecord &accrec)
 {
-    QList<Nodes::NodeRecord> nodelist;
     skynet_account = accrec;
-    nodelist = nodes.GetNodes();
+
+	QList<Nodes::NodeRecord> noderecords = nodes.GetNodes();
 
     if (!acc)
     {
@@ -243,12 +323,37 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
             return;
     }
 
-    if (nodelist.count()==0)
+	if (noderecords.count()==0)
     {
-        status = QObject::tr("No known Pica Pica nodes");
+		emit StatusMsg(QString(tr("No known Pica Pica nodes")), true);
         return;
     }
 
+	if (!connecting_nodes.empty())
+	{
+		for (int i = 0; i < connecting_nodes.size(); i++)
+			PICA_close_c2n(connecting_nodes[i].first);
+
+		connecting_nodes.clear();
+	}
+
+	for (int i = 0; i < noderecords.size();i++)
+	{
+		int ret;
+		struct PICA_c2n *c2n = NULL;
+
+		ret = PICA_new_c2n(acc, noderecords[i].address.toUtf8().constData(), noderecords[i].port, &c2n);
+
+		if (ret == PICA_OK)
+		{
+			connecting_nodes.append(QPair<struct PICA_c2n *, Nodes::NodeRecord>(c2n, noderecords[i]));
+		}
+		else
+		{
+			node_status_changed(noderecords[i], false);
+		}
+	}
+/*
     for (int i=0;i<nodelist.count() && !self_aware;i++)
     {//TODO FIXME сделать запуск потоков порциями, а не все сразу
         threads.append(new NodeThread(nodelist[i],&self_aware, acc,&nodelink, &write_mutex));
@@ -256,18 +361,30 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
         connect(threads.last(), SIGNAL(NodeStatusChanged(QString,quint16,bool)), this, SLOT(node_status_changed(QString,quint16,bool)));
         connect(threads.last(), SIGNAL(ConnectedToNode(QString,quint16,NodeThread*)), this, SLOT(nodethread_connected(QString,quint16,NodeThread*)));
         connect(threads.last(), SIGNAL(ErrorMsg(QString)), this, SIGNAL(ErrMsgFromNode(QString)));
-    }
+	}*/
 
 }
 
 void SkyNet::Exit()
 {
-    for (int i = 0; i< threads.count(); i++)
-        threads[i]->CloseThread();
+	if (self_aware && active_nodelink)
+	{
+		PICA_close_c2n(active_nodelink);
+		active_nodelink = NULL;
+	}
 
     self_aware = false;
 
-    killTimer(timer_id);
+	killTimer(retry_timer_id);
+
+	msgqueues.clear();
+
+	for (int i = 0; i < connecting_nodes.size(); i++)
+		PICA_close_c2n(connecting_nodes[i].first);
+
+	connecting_nodes.clear();
+
+	emit LostSelfAwareness();
 }
 
 bool SkyNet::isSelfAware()
@@ -280,7 +397,7 @@ void SkyNet::SendFile(QByteArray to, QString filepath)
 int ret = PICA_OK;
 struct PICA_c2c *iptr;
 
-write_mutex.lock();//<<
+
 
 if ( (iptr = find_active_chan(to)) )
     {
@@ -291,7 +408,7 @@ if ( (iptr = find_active_chan(to)) )
             //show error somewhere somehow
         }
 
-        write_mutex.unlock();//>>
+
         return;
     }
 
@@ -303,14 +420,14 @@ if ( (iptr = find_active_chan(to)) )
     {
        struct PICA_c2c *chan = NULL;
 
-       ret = PICA_new_c2c(nodelink, (const unsigned char*)to.constData(), NULL, &chan);
+	   ret = PICA_new_c2c(active_nodelink, (const unsigned char*)to.constData(), NULL, &chan);
 
        QList<QString> l;
        l.append(filepath);
        sndfilequeues[to] = l;
     }
 
-write_mutex.unlock();//>>
+
 
     if (ret!= PICA_OK)
     {
@@ -323,7 +440,7 @@ void SkyNet::AcceptFile(QByteArray from, QString filepath)
 int ret = PICA_OK;
 struct PICA_c2c *iptr;
 
-write_mutex.lock();//<<
+
 if ( (iptr = find_active_chan(from)) )
     {
         ret = PICA_accept_file(iptr, filepath.toUtf8().data(), filepath.toUtf8().size());
@@ -334,7 +451,7 @@ if ( (iptr = find_active_chan(from)) )
             //show error somewhere somehow
         }
     }
-write_mutex.unlock();//>>
+
 }
 
 void SkyNet::DenyFile(QByteArray from)
@@ -342,7 +459,7 @@ void SkyNet::DenyFile(QByteArray from)
 int ret = PICA_OK;
 struct PICA_c2c *iptr;
 
-write_mutex.lock();//<<
+
 if ( (iptr = find_active_chan(from)) )
     {
         ret = PICA_deny_file(iptr);
@@ -353,7 +470,7 @@ if ( (iptr = find_active_chan(from)) )
             //show error somewhere somehow
         }
     }
-write_mutex.unlock();//>>
+
 }
 
 void SkyNet::PauseFile(QByteArray peer_id, bool pause_sending)
@@ -361,7 +478,7 @@ void SkyNet::PauseFile(QByteArray peer_id, bool pause_sending)
 int ret = PICA_OK;
 struct PICA_c2c *iptr;
 
-write_mutex.lock();//<<
+
 if ( (iptr = find_active_chan(peer_id)) )
     {
         qDebug() << "calling PICA_pause_file(" << iptr << "," << pause_sending << ")\n";
@@ -372,7 +489,7 @@ if ( (iptr = find_active_chan(peer_id)) )
             qDebug() << "PICA_pause_file() returned " << ret << "\n";
         }
     }
-write_mutex.unlock();//>>
+
 }
 
 void SkyNet::ResumeFile(QByteArray peer_id, bool resume_sending)
@@ -380,7 +497,7 @@ void SkyNet::ResumeFile(QByteArray peer_id, bool resume_sending)
 int ret = PICA_OK;
 struct PICA_c2c *iptr;
 
-write_mutex.lock();//<<
+
 if ( (iptr = find_active_chan(peer_id)) )
     {
         ret = PICA_resume_file(iptr, (int)resume_sending );
@@ -390,7 +507,7 @@ if ( (iptr = find_active_chan(peer_id)) )
             //show error somewhere somehow
         }
     }
-write_mutex.unlock();//>>
+
 }
 
 void SkyNet::CancelFile(QByteArray peer_id, bool cancel_sending)
@@ -398,7 +515,7 @@ void SkyNet::CancelFile(QByteArray peer_id, bool cancel_sending)
 int ret = PICA_OK;
 struct PICA_c2c *iptr;
 
-write_mutex.lock();//<<
+
 if ( (iptr = find_active_chan(peer_id)) )
     {
         ret = PICA_cancel_file(iptr, (int)cancel_sending );
@@ -408,7 +525,7 @@ if ( (iptr = find_active_chan(peer_id)) )
             //show error somewhere somehow
         }
     }
-write_mutex.unlock();//>>
+
 }
 
 void SkyNet::SendMessage(QByteArray to, QString msg)
@@ -416,7 +533,7 @@ void SkyNet::SendMessage(QByteArray to, QString msg)
 int ret = PICA_OK;
 struct PICA_c2c *iptr;
 
-write_mutex.lock();//<<
+
 
 if ( (iptr = find_active_chan(to)) )
 {
@@ -427,7 +544,7 @@ if ( (iptr = find_active_chan(to)) )
     if (ret != PICA_OK)
         emit UnableToDeliver(to, msg);
 
-    write_mutex.unlock();//>>
+
     return;
 }
 
@@ -439,7 +556,7 @@ if ( (iptr = find_active_chan(to)) )
     {
         struct PICA_c2c *chan = NULL;
 
-        ret = PICA_new_c2c(nodelink, (const unsigned char*)to.constData(), NULL, &chan);
+		ret = PICA_new_c2c(active_nodelink, (const unsigned char*)to.constData(), NULL, &chan);
 
         QList<QString> l;
         l.append(msg);
@@ -447,7 +564,7 @@ if ( (iptr = find_active_chan(to)) )
     }
 
 
-write_mutex.unlock();//>>
+
 
     if (ret != PICA_OK)
         emit UnableToDeliver(to, msg);
@@ -506,10 +623,10 @@ void SkyNet::flush_queues(QByteArray to)
 
 struct PICA_c2c * SkyNet::find_active_chan(QByteArray peer_id)
 {
-if (!nodelink)
+if (!active_nodelink)
   return NULL;
 
-struct PICA_c2c *iptr = nodelink->chan_list_head;
+struct PICA_c2c *iptr = active_nodelink->chan_list_head;
 
 while(iptr)
     {
@@ -526,10 +643,10 @@ QList<QByteArray> SkyNet::filter_existing_chans(QList<QByteArray> peer_ids)
 {
     QList<QByteArray> ret = peer_ids;
 
-    if (!nodelink)
+	if (!active_nodelink)
       return ret;
 
-    struct PICA_c2c *iptr = nodelink->chan_list_head;
+	struct PICA_c2c *iptr = active_nodelink->chan_list_head;
 
     while(iptr)
         {
@@ -639,9 +756,6 @@ void SkyNet::emit_c2cClosed(QByteArray peer_id)
 
 
 //callbacks
-
-//all callbacks are executed in separate thread, created in Nodethread instance, REMEMBER THAT !!!
-// write_mutex is locked
 
 void SkyNet::newmsg_cb(const unsigned char *peer_id, const char *msgbuf, unsigned int nb, int type)
 {
@@ -800,17 +914,17 @@ void SkyNet::file_finished(const unsigned char *peer_id, int sending)
 
 void SkyNet::c2n_established_cb(struct PICA_c2n *c2n)
 {
-
+	skynet->nodelink_activated(c2n);
 }
 
-void SkyNet::c2n_failed_cb(struct PICA_c2n *c2n)
+void SkyNet::c2n_failed_cb(struct PICA_c2n *c2n, int error)
 {
-
+	skynet->nodelink_failed(c2n, error);
 }
 
-void SkyNet::c2n_closed_cb(struct PICA_c2n *c2n)
+void SkyNet::c2n_closed_cb(struct PICA_c2n *c2n, int error)
 {
-
+	skynet->nodelink_closed(c2n, error);
 }
 
 void SkyNet::listener_error_cb(struct PICA_listener *lst, int errorcode)
