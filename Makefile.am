@@ -71,8 +71,6 @@ pica-client/msguirouter.cpp \
 pica-client/msguirouter.h \
 pica-client/nodes.cpp \
 pica-client/nodes.h \
-pica-client/nodethread.cpp \
-pica-client/nodethread.h \
 pica-client/openssltool.cpp \
 pica-client/openssltool.h \
 pica-client/picaactioncenter.cpp \

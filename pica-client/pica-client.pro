@@ -22,7 +22,6 @@ SOURCES += main.cpp\
     accountswindow.cpp \
     accounts.cpp \
     dialogs/addaccountdialog.cpp \
-    nodethread.cpp \
     askpassword.cpp \
     msguirouter.cpp \
     picasystray.cpp \
@@ -51,7 +50,6 @@ HEADERS  += mainwindow.h \
     accountswindow.h \
     accounts.h \
     dialogs/addaccountdialog.h \
-    nodethread.h \
     askpassword.h \
     msguirouter.h \
     picasystray.h \
