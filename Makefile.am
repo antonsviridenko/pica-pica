@@ -117,7 +117,6 @@ moc_contactlistwidget.cpp \
 moc_forgedcertdialog.cpp \
 moc_mainwindow.cpp \
 moc_msguirouter.cpp \
-moc_nodethread.cpp \
 moc_picaactioncenter.cpp \
 moc_picasystray.cpp \
 moc_registeraccountdialog.cpp \
