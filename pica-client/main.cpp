@@ -135,7 +135,17 @@ static bool create_database()
      if (query.lastError().isValid())
              goto showerror;
 
-     query.exec("insert into schema_version values (2, strftime('%s','now'));"); //current schema version. update when needed
+	 query.exec("create table settings \
+					( \
+						name varchar(255) not null, \
+						value varchar(255) not null \
+					);"
+			);
+
+	 if (query.lastError().isValid())
+			 goto showerror;
+
+	 query.exec("insert into schema_version values (3, strftime('%s','now'));"); //current schema version. update when needed
 
     if (query.lastError().isValid())
     showerror:
@@ -362,6 +372,21 @@ static bool update_database()
         query.exec("insert into schema_version values (2, strftime('%s','now'));");
         schema_ver = 2;
     }
+
+	if (schema_ver == 2)
+	{
+		 query.exec("create table settings \
+					( \
+						name varchar(255) not null, \
+						value varchar(255) not null \
+					);"
+			);
+
+		if (query.lastError().isValid())
+			goto showerror;
+
+		schema_ver = 3;
+	}
 
 if (query.lastError().isValid())
 showerror:
