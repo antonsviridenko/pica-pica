@@ -385,6 +385,7 @@ static bool update_database()
 		if (query.lastError().isValid())
 			goto showerror;
 
+		query.exec("insert into schema_version values (3, strftime('%s','now'));");
 		schema_ver = 3;
 	}
 
