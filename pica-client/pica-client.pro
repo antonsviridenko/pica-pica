@@ -37,7 +37,8 @@ SOURCES += main.cpp\
     dialogs/filetransferdialog.cpp \
     filetransfercontroller.cpp \
     sound.cpp \
-    dialogs/settingsdialog.cpp
+    dialogs/settingsdialog.cpp \
+    settings.cpp
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -68,7 +69,8 @@ HEADERS  += mainwindow.h \
     dialogs/filetransferdialog.h \
     filetransfercontroller.h \
     sound.h \
-    dialogs/settingsdialog.h
+    dialogs/settingsdialog.h \
+    settings.h
 
 
 DEFINES = PICA_MULTITHREADED
