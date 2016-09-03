@@ -138,7 +138,8 @@ static bool create_database()
 	 query.exec("create table settings \
 					( \
 						name varchar(255) not null, \
-						value varchar(255) not null \
+                        value varchar(255) not null, \
+                        constraint pk primary key (name) on conflict replace \
 					);"
 			);
 
@@ -378,7 +379,8 @@ static bool update_database()
 		 query.exec("create table settings \
 					( \
 						name varchar(255) not null, \
-						value varchar(255) not null \
+                        value varchar(255) not null, \
+                        constraint pk primary key (name) on conflict replace \
 					);"
 			);
 
