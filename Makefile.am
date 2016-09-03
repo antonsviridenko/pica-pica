@@ -88,6 +88,8 @@ pica-client/filetransfercontroller.cpp \
 pica-client/filetransfercontroller.h \
 pica-client/sound.cpp \
 pica-client/sound.h \
+pica-client/settings.cpp \
+pica-client/settings.h \
  \
 pica-client/dialogs/addaccountdialog.cpp \
 pica-client/dialogs/addaccountdialog.h \
@@ -101,6 +103,8 @@ pica-client/dialogs/showpicaiddialog.cpp \
 pica-client/dialogs/showpicaiddialog.h \
 pica-client/dialogs/filetransferdialog.cpp \
 pica-client/dialogs/filetransferdialog.h \
+pica-client/dialogs/settingsdialog.cpp \
+pica-client/dialogs/settingsdialog.h \
 PICA_client.c \
 PICA_client.h \
 PICA_msgproc.c \
