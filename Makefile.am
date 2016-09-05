@@ -126,6 +126,7 @@ moc_picasystray.cpp \
 moc_registeraccountdialog.cpp \
 moc_filetransferdialog.cpp \
 moc_skynet.cpp \
+moc_settingsdialog.cpp \
 moc_viewcertdialog.cpp \
 moc_showpicaiddialog.cpp \
 moc_dhparam.cpp \
