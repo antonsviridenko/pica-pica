@@ -210,6 +210,7 @@ struct PICA_c2c
 	struct PICA_c2c *prev;
 	enum PICA_c2c_state state;
 	enum PICA_directc2c_state directc2c_state;
+	enum PICA_directc2c_config directc2c_config;
 	time_t timestamp;
 	int sendfilestate;
 	uint64_t sendfile_size;
