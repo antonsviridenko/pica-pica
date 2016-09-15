@@ -111,6 +111,9 @@ void MainWindow::createMenus()
 
     nodesMenu=menuBar()->addMenu(tr("&Nodes"));
 
+	settingsMenu = menuBar()->addMenu(tr("&Settings"));
+	settingsMenu->addAction(action_center->SettingsAct());
+
     helpMenu=menuBar()->addMenu(tr("&Help"));
     helpMenu->addAction(action_center->AboutAct());
 

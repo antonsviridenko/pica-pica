@@ -7,6 +7,7 @@
 #include "accounts.h"
 #include "dialogs/showpicaiddialog.h"
 #include "sound.h"
+#include "dialogs/settingsdialog.h"
 
 #include <QMessageBox>
 
@@ -27,6 +28,9 @@ PicaActionCenter::PicaActionCenter(QObject *parent) :
     muteSoundsAct = new QAction(tr("&Mute Sounds"), this);
     muteSoundsAct->setCheckable(true);
     connect(muteSoundsAct, SIGNAL(triggered(bool)), this, SLOT(muteSounds(bool)));
+
+	settingsAct = new QAction(tr("&Configure Messenger..."), this);
+	connect(settingsAct, SIGNAL(triggered(bool)), this, SLOT(showsettings()));
 }
 
 void PicaActionCenter::about()
@@ -53,6 +57,12 @@ void PicaActionCenter::exit()
 
     skynet->Exit();
     QApplication::instance()->quit();
+}
+
+void PicaActionCenter::showsettings()
+{
+	SettingsDialog sd;
+	sd.exec();
 }
 
 void PicaActionCenter::showmyid()
