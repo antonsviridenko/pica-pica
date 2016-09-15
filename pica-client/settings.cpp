@@ -18,6 +18,24 @@ QString Settings::GetLastError()
     return lasterr.text();
 }
 
+bool Settings::isEmpty()
+{
+	QSqlQuery query;
+
+	query.exec("select count(*) from settings");
+
+	lasterr = query.lastError();
+
+	query.next();
+
+	if (query.isValid() && query.value(0).toInt() == 0)
+	{
+		return true;
+	}
+
+	return false;
+}
+
 QVariant Settings::loadValue(QString name, QVariant defval)
 {
     QSqlQuery query;

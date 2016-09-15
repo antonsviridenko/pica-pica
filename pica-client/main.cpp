@@ -14,6 +14,8 @@
 #include <QIcon>
 #include "../PICA_client.h"
 #include "dhparam.h"
+#include "settings.h"
+#include "dialogs/settingsdialog.h"
 
 //globals
 QString config_dir;
@@ -492,6 +494,15 @@ int main(int argc, char *argv[])
 	picapica_ico_sit = QIcon("share\\picapica-icon-sit.png");
     picapica_ico_fly = QIcon("share\\picapica-icon-fly.png");
 #endif
+
+	Settings st(config_dbname);
+
+	if (st.isEmpty()) //show settings dialog on first start
+	{
+		SettingsDialog sd;
+
+		sd.exec();
+	}
 
     PicaActionCenter ac;
     action_center = &ac;

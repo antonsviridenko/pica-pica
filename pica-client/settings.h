@@ -12,6 +12,7 @@ public:
 
     QVariant loadValue(QString name, QVariant defval);
     void storeValue(QString name, QString val);
+	bool isEmpty();
 
     QString GetLastError();
 
