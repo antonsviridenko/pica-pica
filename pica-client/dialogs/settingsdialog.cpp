@@ -65,6 +65,8 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
     connect(btCancel, SIGNAL(clicked()), this, SLOT(Cancel()));
 
     loadSettings();
+
+	setWindowTitle(tr("Pica Pica Messenger Settings"));
 }
 
 void SettingsDialog::OK()
