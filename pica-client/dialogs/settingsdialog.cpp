@@ -1,6 +1,6 @@
 #include "settingsdialog.h"
-#include "settings.h"
-#include "globals.h"
+#include "../settings.h"
+#include "../globals.h"
 
 #include <QGroupBox>
 #include <QVBoxLayout>
