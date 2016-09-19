@@ -36,6 +36,7 @@ private:
 private slots:
     void OK();
     void Cancel();
+	void toggleIncomingConnections(bool checked);
 
 };
 

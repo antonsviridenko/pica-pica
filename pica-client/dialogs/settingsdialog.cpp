@@ -21,6 +21,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	rbEnableIncomingConns = new QRadioButton(tr("Enable incoming direct connections"), this);
 
 	rbEnableIncomingConns->setChecked(true);
+	connect(rbEnableIncomingConns, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
 
 	QLabel *lbAddr = new QLabel(tr("Public address for incoming connections"), this);
 	addr = new QLineEdit(tr("0.0.0.0"), this);
@@ -71,6 +72,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
     loadSettings();
 
 	setWindowTitle(tr("Pica Pica Messenger Settings"));
+}
+
+void SettingsDialog::toggleIncomingConnections(bool checked)
+{
+	addr->setEnabled(checked);
+	publicPort->setEnabled(checked);
+	localPort->setEnabled(checked);
 }
 
 void SettingsDialog::OK()
