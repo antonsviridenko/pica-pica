@@ -17,14 +17,16 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	QVBoxLayout *directc2cLayout = new QVBoxLayout();
 
 	rbDisableDirectConns = new QRadioButton(tr("Disable direct connections"), this);
-	rbEnableOutgoingConns = new QRadioButton(tr("Enable only outgoing direct connections"), this);
+	rbEnableOutgoingConns = new QRadioButton(tr("Connect to the remote peer directly if possible"), this);
 	rbEnableIncomingConns = new QRadioButton(tr("Enable incoming direct connections"), this);
 
 	rbEnableIncomingConns->setChecked(true);
 
 	QLabel *lbAddr = new QLabel(tr("Public address for incoming connections"), this);
 	addr = new QLineEdit(tr("0.0.0.0"), this);
+	QLabel *lbPubPort = new QLabel(tr("External TCP port for incoming connections"), this);
 	publicPort = new QSpinBox(this);
+	QLabel *lbLocPort = new QLabel(tr("Local TCP port for incoming connections"), this);
 	localPort = new QSpinBox(this);
 
 	publicPort->setRange(1, 65535);
@@ -40,7 +42,9 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	directc2cLayout->addWidget(rbEnableIncomingConns);
 	directc2cLayout->addWidget(lbAddr);
 	directc2cLayout->addWidget(addr);
+	directc2cLayout->addWidget(lbPubPort);
 	directc2cLayout->addWidget(publicPort);
+	directc2cLayout->addWidget(lbLocPort);
 	directc2cLayout->addWidget(localPort);
 	directc2cLayout->addStretch(1);
 
