@@ -186,7 +186,7 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 	if (!preverify_ok)
 	{
 		printf("verify error:num=%d:%s:depth=%d:%s\n", err,
-		       X509_verify_cert_error_string(err), depth, buf);
+			   X509_verify_cert_error_string(err), depth, buf);
 	}
 
 
@@ -239,8 +239,7 @@ static int c2n_alloc_c2c(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsig
 	}
 
 	chnl->state = PICA_C2C_STATE_NEW;
-    chnl->directc2c_config = PICA_DIRECTC2C_CFG_DISABLED;
-    chnl->directc2c_state = PICA_DIRECTC2C_STATE_NEW;
+	chnl->directc2c_state = PICA_DIRECTC2C_STATE_NEW;
 
 	return 1;
 }
@@ -657,10 +656,10 @@ static unsigned int procmsg_CLNODELIST(unsigned char* buf, unsigned int nb, void
 		case PICA_PROTO_NEWNODE_IPV4:
 
 			callbacks.nodelist_cb(
-			    PICA_PROTO_NEWNODE_IPV4,
-			    buf + pos + 1,
-			    inet_ntop(AF_INET, buf + pos + 1, ipaddr_string, INET6_ADDRSTRLEN),
-			    ntohs(*(uint16_t*)(buf + pos + 5))
+				PICA_PROTO_NEWNODE_IPV4,
+				buf + pos + 1,
+				inet_ntop(AF_INET, buf + pos + 1, ipaddr_string, INET6_ADDRSTRLEN),
+				ntohs(*(uint16_t*)(buf + pos + 5))
 			);
 
 			pos += PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
@@ -669,10 +668,10 @@ static unsigned int procmsg_CLNODELIST(unsigned char* buf, unsigned int nb, void
 		case PICA_PROTO_NEWNODE_IPV6:
 
 			callbacks.nodelist_cb(
-			    PICA_PROTO_NEWNODE_IPV6,
-			    buf + pos + 1,
-			    inet_ntop(AF_INET6, buf + pos + 1, ipaddr_string, INET6_ADDRSTRLEN),
-			    ntohs(*(uint16_t*)(buf + pos + 17))
+				PICA_PROTO_NEWNODE_IPV6,
+				buf + pos + 1,
+				inet_ntop(AF_INET6, buf + pos + 1, ipaddr_string, INET6_ADDRSTRLEN),
+				ntohs(*(uint16_t*)(buf + pos + 17))
 			);
 
 			pos += PICA_PROTO_NODELIST_ITEM_IPV6_SIZE;
@@ -686,10 +685,10 @@ static unsigned int procmsg_CLNODELIST(unsigned char* buf, unsigned int nb, void
 			buf[pos + 2 + buf[pos + 1]] = '\0'; // and replace it with string terminating zero
 
 			callbacks.nodelist_cb(
-			    PICA_PROTO_NEWNODE_DNS,
-			    buf + pos + 2,
-			    buf + pos + 2,
-			    port
+				PICA_PROTO_NEWNODE_DNS,
+				buf + pos + 2,
+				buf + pos + 2,
+				port
 			);
 
 			buf[pos + 2 + buf[pos + 1]] = temp_zeroswap;
@@ -877,7 +876,7 @@ static unsigned int procmsg_FILEFRAGMENT(unsigned char* buf, unsigned int nb, vo
 	 *Allow incoming FILEFRAGMENTs while paused
 	 */
 	if (chan->recvfilestate != PICA_CHANRECVFILESTATE_RECEIVING
-	        && chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
+			&& chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
 		return 0;
 
 	if (nb - 4 !=  *(uint16_t*)(buf + 2))
@@ -927,7 +926,7 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 	fprintf(stderr, "procmsg_FILECONTROL sender_cmd = %i receiver_cmd = %i\n", sender_cmd, receiver_cmd);//debug
 
 	if ((chan->sendfilestate == PICA_CHANSENDFILESTATE_IDLE || chan->sendfilestate == PICA_CHANSENDFILESTATE_SENTREQ)
-	        && receiver_cmd != PICA_PROTO_FILECONTROL_VOID)
+			&& receiver_cmd != PICA_PROTO_FILECONTROL_VOID)
 		return 0;
 
 	if (chan->recvfilestate == PICA_CHANRECVFILESTATE_IDLE && sender_cmd != PICA_PROTO_FILECONTROL_VOID)
@@ -1088,8 +1087,8 @@ int PICA_client_init(struct PICA_client_callbacks *clcbs)
 }
 
 static int check_pkey_passphrase(const char *pkey_file,
-                                 int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
-                                 void *userdata)
+								 int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
+								 void *userdata)
 {
 	RSA *rsa;
 	FILE *f;
@@ -1121,10 +1120,6 @@ static int check_pkey_passphrase(const char *pkey_file,
 }
 
 
-int PICA_configure_directc2c(struct PICA_c2n *ci, PICA_directc2c_config mode, const char *public_addr, int public_port)
-{
-	implement me
-}
 
 // Opens socket to listen for incoming direct c2c connections bypassing nodes
 //
@@ -1214,10 +1209,10 @@ error_ret_1: //(1)
 }
 
 int PICA_open_acc(const char *cert_file,
-                  const char *pkey_file,
-                  const char *dh_param_file,
-                  int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
-                  struct PICA_acc **acc)
+				  const char *pkey_file,
+				  const char *dh_param_file,
+				  int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
+				  struct PICA_acc **acc)
 {
 	int ret, ret_err;
 	DH *dh = NULL;
@@ -1404,9 +1399,9 @@ static int c2n_stage4_nodelistrequest(struct PICA_c2n *c2n)
 //PICA_OK - успешное завершение функции
 //....
 
-int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr,
-                 unsigned int port,
-                 struct PICA_c2n **ci)
+int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int port,
+				 enum PICA_directc2c_config direct_c2c_mode, struct PICA_listener *l,
+				 struct PICA_c2n **ci)
 {
 	int ret, ret_err;
 	struct PICA_c2n *cid;
@@ -1422,6 +1417,13 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr,
 		return PICA_ERRNOMEM;
 
 	cid->acc = acc;
+
+	cid->directc2c_config = direct_c2c_mode;
+
+	if (direct_c2c_mode == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+	{
+		cid->directc2c_listener = l;
+	}
 
 	cid->read_buf = calloc(PICA_CONNREADBUFSIZE, 1);//(2)
 	if (!cid->read_buf)
@@ -1528,14 +1530,14 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr,
 	if (cid->init_resp_ok != 1)
 		{
 		if (cid->init_resp_ok == -1)
-	        {
-	        if (cid->node_ver_major > PICA_PROTO_VER_HIGH ||
-	                (cid->node_ver_major == PICA_PROTO_VER_HIGH && cid->node_ver_minor > PICA_PROTO_VER_LOW))
-	            ret_err = PICA_ERRPROTONEW;
-	        else
-	            ret_err = PICA_ERRPROTOOLD;
-	        }
-	    goto error_ret_4;
+			{
+			if (cid->node_ver_major > PICA_PROTO_VER_HIGH ||
+					(cid->node_ver_major == PICA_PROTO_VER_HIGH && cid->node_ver_minor > PICA_PROTO_VER_LOW))
+				ret_err = PICA_ERRPROTONEW;
+			else
+				ret_err = PICA_ERRPROTOOLD;
+			}
+		goto error_ret_4;
 		}
 
 	//printf("6\n");//debug
@@ -1552,8 +1554,8 @@ if (ret!=1)
 	//printf("SSL_accept  ret=%i\n  SSL_get_error=%i\n",ret,SSL_get_error(cid->ssl_comm,ret));//debug
 		//ERR_CHECK
 	ret_err=PICA_ERRSSL;
-    goto error_ret_4;
-    }*/ /*
+	goto error_ret_4;
+	}*/ /*
 cid->state = PICA_C2N_STATE_CONNECTED;//<<<!!!
 
 {
@@ -1682,7 +1684,7 @@ static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 			else
 			{
 				if (c2n->node_ver_major > PICA_PROTO_VER_HIGH ||
-				        (c2n->node_ver_major == PICA_PROTO_VER_HIGH && c2n->node_ver_minor > PICA_PROTO_VER_LOW))
+						(c2n->node_ver_major == PICA_PROTO_VER_HIGH && c2n->node_ver_minor > PICA_PROTO_VER_LOW))
 					ret = PICA_ERRPROTONEW;
 				else
 					ret = PICA_ERRPROTOOLD;
@@ -1895,7 +1897,7 @@ int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listen
 		fdset_add(&rfds, (*ic2n)->sck_comm, &nfds);
 
 		if ((*ic2n)->write_pos || (*ic2n)->state == PICA_C2N_STATE_CONNECTING
-		        || (*ic2n)->state  == PICA_C2N_STATE_WAITINGTLS)
+				|| (*ic2n)->state  == PICA_C2N_STATE_WAITINGTLS)
 			fdset_add(&wfds, (*ic2n)->sck_comm, &nfds);
 
 		ic2c = (*ic2n)->chan_list_head;
@@ -2569,7 +2571,7 @@ int PICA_cancel_file(struct PICA_c2c *chan, int sending)
 	if (sending)
 	{
 		if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENDING
-		        && chan->sendfilestate != PICA_CHANSENDFILESTATE_PAUSED)
+				&& chan->sendfilestate != PICA_CHANSENDFILESTATE_PAUSED)
 			return PICA_ERRINVARG;
 
 		fclose(chan->sendfile_stream);
@@ -2581,7 +2583,7 @@ int PICA_cancel_file(struct PICA_c2c *chan, int sending)
 	else
 	{
 		if (chan->recvfilestate != PICA_CHANRECVFILESTATE_RECEIVING
-		        && chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
+				&& chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
 			return PICA_ERRINVARG;
 
 		fclose(chan->recvfile_stream);
@@ -2774,9 +2776,9 @@ const char *PICA_inet_ntop(int af, const void *src, char *dst, size_t size)
 
 	case AF_INET6:
 		sprintf(dst, "%x%02x:%x%02x:%x%02x:%x%02x:%x%02x:%x%02x:%x%02x:%x%02x", chsrc[0], chsrc[1], chsrc[2], chsrc[3],
-		        chsrc[4], chsrc[5], chsrc[6], chsrc[7],
-		        chsrc[8], chsrc[9], chsrc[10], chsrc[11],
-		        chsrc[12], chsrc[13], chsrc[14], chsrc[15]);
+				chsrc[4], chsrc[5], chsrc[6], chsrc[7],
+				chsrc[8], chsrc[9], chsrc[10], chsrc[11],
+				chsrc[12], chsrc[13], chsrc[14], chsrc[15]);
 		break;
 
 	default:

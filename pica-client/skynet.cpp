@@ -342,7 +342,8 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 		int ret;
 		struct PICA_c2n *c2n = NULL;
 
-		ret = PICA_new_c2n(acc, noderecords[i].address.toUtf8().constData(), noderecords[i].port, &c2n);
+		ret = PICA_new_c2n(acc, noderecords[i].address.toUtf8().constData(), noderecords[i].port,
+						   PICA_DIRECTC2C_CFG_DISABLED, NULL, &c2n);
 
 		if (ret == PICA_OK)
 		{

@@ -132,6 +132,13 @@ enum PICA_c2n_state
 	PICA_C2N_STATE_CONNECTED
 };
 
+enum PICA_directc2c_config
+{
+	PICA_DIRECTC2C_CFG_DISABLED,
+	PICA_DIRECTC2C_CFG_CONNECTONLY,
+	PICA_DIRECTC2C_CFG_ALLOWINCOMING
+};
+
 struct PICA_c2n
 {
 	struct PICA_acc *acc;
@@ -144,6 +151,8 @@ struct PICA_c2n
 
 
 	enum PICA_c2n_state state;
+	enum PICA_directc2c_config directc2c_config;
+	struct PICA_listener *directc2c_listener;
 
 	unsigned char *read_buf;
 	unsigned char *write_buf;
@@ -169,13 +178,6 @@ enum PICA_c2c_state
 	PICA_C2C_STATE_WAITINGREP,
 	PICA_C2C_STATE_WAITINGC2CPROTOVER,
 	PICA_C2C_STATE_ACTIVE
-};
-
-enum PICA_directc2c_config
-{
-	PICA_DIRECTC2C_CFG_DISABLED,
-	PICA_DIRECTC2C_CFG_CONNECTONLY,
-	PICA_DIRECTC2C_CFG_ALLOWINCOMING
 };
 
 enum PICA_directc2c_state
@@ -210,7 +212,6 @@ struct PICA_c2c
 	struct PICA_c2c *prev;
 	enum PICA_c2c_state state;
 	enum PICA_directc2c_state directc2c_state;
-	enum PICA_directc2c_config directc2c_config;
 	time_t timestamp;
 	int sendfilestate;
 	uint64_t sendfile_size;
@@ -293,23 +294,13 @@ int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id);
 int PICA_get_id_from_cert_string(const char *cert_pem, unsigned char *id);
 int PICA_client_init(struct PICA_client_callbacks *clcbs);
 
-int PICA_new_c2n
-(const struct PICA_acc *acc,
- const char *nodeaddr,
- unsigned int port,
- /*      const char *CA_file,
-       const char *cert_file,
-       const char *pkey_file,
-       const char *dh_param_file,
-       int (*password_cb)(char *buf, int size, int rwflag, void *userdata), //move callback to PICA_client_callbacks? */
- struct PICA_c2n **ci);
+int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int port,
+				 enum PICA_directc2c_config direct_c2c_mode, struct PICA_listener *l,
+				 struct PICA_c2n **ci);
 
 int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_listener *l, struct PICA_c2c **chn);
 
 int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int public_port, int local_port, struct PICA_listener **l);
-
-int PICA_configure_directc2c(struct PICA_c2n *ci, PICA_directc2c_config mode, const char *public_addr, int public_port);
-
 
 // <<<////
 int PICA_open_acc(const char *cert_file,
