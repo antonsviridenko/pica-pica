@@ -308,6 +308,8 @@ int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_
 
 int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int public_port, int local_port, struct PICA_listener **l);
 
+int PICA_configure_directc2c(struct PICA_c2n *ci, PICA_directc2c_config mode, const char *public_addr, int public_port);
+
 
 // <<<////
 int PICA_open_acc(const char *cert_file,

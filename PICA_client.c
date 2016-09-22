@@ -1120,6 +1120,12 @@ static int check_pkey_passphrase(const char *pkey_file,
 	return PICA_OK;
 }
 
+
+int PICA_configure_directc2c(struct PICA_c2n *ci, PICA_directc2c_config mode, const char *public_addr, int public_port)
+{
+	implement me
+}
+
 // Opens socket to listen for incoming direct c2c connections bypassing nodes
 //
 // acc - pointer to opened account
