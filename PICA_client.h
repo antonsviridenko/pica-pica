@@ -311,11 +311,6 @@ int PICA_open_acc(const char *cert_file,
                   struct PICA_acc **acc);
 // <<<////
 
-int PICA_read_c2n(struct PICA_c2n *ci);
-
-int PICA_read(struct PICA_c2n *ci, int timeout);
-int PICA_write(struct PICA_c2n *ci);
-
 //connections, listeners - NULL-terminated arrays of pointers to appropriate structures
 // timeout - timeout in milliseconds
 int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners, int timeout);

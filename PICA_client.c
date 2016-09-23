@@ -52,6 +52,15 @@ static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb, void
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size);
 
+static int PICA_write_c2n(struct PICA_c2n *ci);
+static int PICA_write_c2c(struct PICA_c2c *chn);
+static int PICA_write_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned int *btw);
+static int PICA_write_socket(SOCKET s, unsigned char *buf, unsigned int *ppos);
+static int PICA_read_c2n(struct PICA_c2n *ci);
+static int PICA_read_c2c(struct PICA_c2c *chn);
+static int PICA_read_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned int size);
+static int PICA_read_socket(SOCKET s, unsigned char *buf, unsigned int *ppos, unsigned int size);
+
 #define MSGINFO_MSGSNUM(arr) (sizeof(arr)/sizeof(struct PICA_msginfo))
 const struct PICA_msginfo  c2n_messages[] =
 {
@@ -2070,9 +2079,6 @@ int PICA_write_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned in
 	}
 	return PICA_OK;
 }
-
-//int PICA_read_socket()
-//int PICA_read_ssl()
 
 int PICA_write_c2n(struct PICA_c2n *ci)
 {
