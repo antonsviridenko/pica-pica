@@ -239,7 +239,7 @@ static int c2n_alloc_c2c(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsig
 	}
 
 	chnl->state = PICA_C2C_STATE_NEW;
-	chnl->directc2c_state = PICA_DIRECTC2C_STATE_NEW;
+	chnl->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;
 
 	return 1;
 }
