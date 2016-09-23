@@ -545,7 +545,7 @@ static unsigned int procmsg_CONNREQINC(unsigned char* buf, unsigned int nb, void
 		else
 			return 0;
 
-		ret = c2n_alloc_c2c( ci, &_chnl, peer_id, 0);
+		ret = c2n_alloc_c2c( ci, &_chnl, peer_id, PICA_C2C_INCOMING);
 
 		if (!ret)
 			return 0; //ERR_CHECK - кончилась память
@@ -1605,7 +1605,7 @@ int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_
 	if (ci->state != PICA_C2N_STATE_CONNECTED)
 		return PICA_ERRINVARG;
 
-	if (!c2n_alloc_c2c(ci, chn, peer_id, PICA_c2c_OUTGOING))
+	if (!c2n_alloc_c2c(ci, chn, peer_id, PICA_C2C_OUTGOING))
 		return PICA_ERRNOMEM;
 
 	chnl = *chn;

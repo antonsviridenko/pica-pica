@@ -112,8 +112,8 @@ typedef unsigned __int64 uint64_t;
 #define PICA_C2C_ACTIVATE_TIMEOUT 30
 
 
-#define PICA_c2c_INCOMING 0
-#define PICA_c2c_OUTGOING 1
+#define PICA_C2C_INCOMING 0
+#define PICA_C2C_OUTGOING 1
 
 struct PICA_c2n;
 struct PICA_c2c;
