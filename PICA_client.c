@@ -1838,6 +1838,11 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 		break;
 	}
 
+	if (c2c->state != PICA_C2C_STATE_ACTIVE && (time(0) - c2c->timestamp) > PICA_C2C_ACTIVATE_TIMEOUT)
+	{
+		ret = PICA_ERRTIMEDOUT;
+	}
+
 	if (ret != PICA_OK)
 		{
 			if (c2c->state > PICA_C2C_STATE_NEW && c2c->state < PICA_C2C_STATE_ACTIVE)
@@ -1998,138 +2003,6 @@ int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listen
 		ic2n++;
 	}
 
-	return PICA_OK;
-}
-
-int PICA_read(struct PICA_c2n *ci, int timeout)
-{
-	fd_set fds;
-	struct timeval tv = {0, 1000};
-	struct PICA_c2c *ipt, *kill_ptr = 0;
-	int ret, nfds;
-
-//puts("PICA_read<<");//debug
-
-	tv.tv_usec = timeout;
-
-	FD_ZERO(&fds);
-
-	nfds = ci->sck_comm;
-	FD_SET(ci->sck_comm, &fds);
-
-	ipt = ci->chan_list_head;
-
-	while(ipt)
-	{
-		if (ipt->state == PICA_C2C_STATE_ACTIVE)
-		{
-			FD_SET(ipt->sck_data, &fds);
-
-			if (ipt->sck_data > nfds)
-				nfds = ipt->sck_data;
-		}
-
-		if (ipt->state != PICA_C2C_STATE_ACTIVE && (time(0) - ipt->timestamp) > PICA_CHAN_ACTIVATE_TIMEOUT)
-		{
-			kill_ptr = ipt;
-		}
-
-		ipt = ipt->next;
-
-		if (kill_ptr)
-		{
-			PICA_close_c2c(kill_ptr);
-			kill_ptr = 0;
-		}
-	}
-
-//#warning "make sockets non-blocking!!!!"
-
-	ret = select(nfds + 1, &fds, 0, 0, &tv);
-
-	if (ret > 0)
-	{
-
-		if (FD_ISSET(ci->sck_comm, &fds))
-		{
-			ret = PICA_read_c2n(ci);
-			if (ret != PICA_OK)
-				return ret;
-		}
-
-		ipt = ci->chan_list_head;
-		while(ipt)
-		{
-			if (ipt->state == PICA_C2C_STATE_ACTIVE && FD_ISSET(ipt->sck_data, &fds))
-			{
-				if (PICA_OK != (ret = PICA_read_c2c(ipt)) )
-				{
-					puts("PICA_read_c2c() failed");//debug
-					callbacks.c2c_closed_cb(ipt->peer_id, ret);
-					kill_ptr = ipt;
-				}
-
-			}
-
-			ipt = ipt->next;
-
-			if (kill_ptr)
-			{
-				PICA_close_c2c(kill_ptr);
-				kill_ptr = 0;
-			}
-		}
-
-	}
-//puts("PICA_read>>");//debug
-
-	return PICA_OK;
-}
-
-int PICA_write(struct PICA_c2n *ci)
-{
-	struct PICA_c2c *ipt, *kill_ptr = 0;
-	int ret = PICA_OK;
-
-//puts("PICA_write>>");//debug
-
-	if (ci->write_pos)
-		ret = PICA_write_c2n(ci);
-
-	if (PICA_OK != ret)
-		return ret;
-
-	ipt = ci->chan_list_head;
-
-	while(ipt)
-	{
-		if (ipt->write_pos)
-		{
-			if (PICA_OK != (ret = PICA_write_c2c(ipt)))
-			{
-				fprintf(stderr, "PICA_write_c2c() failed, ret = %i\n", ret); //debug
-				callbacks.c2c_closed_cb(ipt->peer_id, ret);
-				kill_ptr = ipt;
-			}
-		}
-		else if (ipt->sendfilestate == PICA_CHANSENDFILESTATE_SENDING)
-		{
-			if (PICA_OK != (ret = PICA_send_file_fragment(ipt)))
-			{
-				callbacks.c2c_closed_cb(ipt->peer_id, ret);
-				kill_ptr = ipt;
-			}
-		}
-		ipt = ipt->next;
-
-		if (kill_ptr)
-		{
-			PICA_close_c2c(kill_ptr);
-			kill_ptr = 0;
-		}
-	}
-
-//puts("PICA_write<<");//debug
 	return PICA_OK;
 }
 

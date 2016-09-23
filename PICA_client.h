@@ -89,6 +89,7 @@ typedef unsigned __int64 uint64_t;
 
 #define PICA_ERRINVPKEYPASSPHRASE -22
 #define PICA_ERRINVPKEYFILE -23
+#define PICA_ERRTIMEDOUT -24
 
 //#define PICA_CHNMSGBUFLEN 104
 
@@ -108,7 +109,7 @@ typedef unsigned __int64 uint64_t;
 #define PICA_CHANRECVFILESTATE_PAUSED 25
 #define PICA_CHANRECVFILESTATE_WAITACCEPT 26
 
-#define PICA_CHAN_ACTIVATE_TIMEOUT 30
+#define PICA_C2C_ACTIVATE_TIMEOUT 30
 
 
 #define PICA_c2c_INCOMING 0
@@ -320,7 +321,6 @@ int PICA_write(struct PICA_c2n *ci);
 int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners, int timeout);
 
 int PICA_send_msg(struct PICA_c2c *chn, char *buf, unsigned int len);
-int PICA_read_msg(struct PICA_c2c *chn, char *buf, unsigned int *n);
 
 //filename - ASCII or UTF-8 encoded string
 int PICA_send_file(struct PICA_c2c *chn, const char *filepath);
