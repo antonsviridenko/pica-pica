@@ -47,7 +47,10 @@ static unsigned int procmsg_DENIEDFILE(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_FILEFRAGMENT(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_FILECONTROL(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_INITRESP_c2c(unsigned char*, unsigned int, void*);
-static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb, void* p);
+static unsigned int procmsg_C2CCONNREQ(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_PICA_PROTO_C2CDIRECT_ADDRLIST(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_PICA_PROTO_C2CDIRECT_FAILED(unsigned char*, unsigned int, void*);
+
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size);
@@ -79,7 +82,9 @@ const struct PICA_msginfo  c2c_messages[] =
 	{PICA_PROTO_ACCEPTEDFILE, PICA_MSG_FIXED_SIZE, PICA_PROTO_ACCEPTEDFILE_SIZE, procmsg_ACCEPTEDFILE},
 	{PICA_PROTO_DENIEDFILE, PICA_MSG_FIXED_SIZE, PICA_PROTO_DENIEDFILE_SIZE, procmsg_DENIEDFILE},
 	{PICA_PROTO_FILEFRAGMENT, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_FILEFRAGMENT},
-	{PICA_PROTO_FILECONTROL, PICA_MSG_FIXED_SIZE, PICA_PROTO_FILECONTROL_SIZE, procmsg_FILECONTROL}
+	{PICA_PROTO_FILECONTROL, PICA_MSG_FIXED_SIZE, PICA_PROTO_FILECONTROL_SIZE, procmsg_FILECONTROL},
+	{PICA_PROTO_C2CDIRECT_ADDRLIST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_PICA_PROTO_C2CDIRECT_ADDRLIST},
+	{PICA_PROTO_C2CDIRECT_FAILED, PICA_MSG_FIXED_SIZE, PICA_PROTO_C2CDIRECT_FAILED_SIZE, procmsg_PICA_PROTO_C2CDIRECT_FAILED}
 };
 
 struct PICA_msginfo c2n_init_messages[] =
@@ -508,6 +513,16 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, vo
 
 
 	return 1;
+}
+
+static unsigned int procmsg_PICA_PROTO_C2CDIRECT_ADDRLIST(unsigned char* buf, unsigned int nb, void* p)
+{
+	--
+}
+
+static unsigned int procmsg_PICA_PROTO_C2CDIRECT_FAILED(unsigned char* buf, unsigned int nb, void* p)
+{
+	--
 }
 
 static unsigned int procmsg_INITRESP(unsigned char* buf, unsigned int nb, void* p)
@@ -1865,6 +1880,19 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 
 static int process_listener(struct PICA_listener *lst, fd_set *rfds)
 {
+	if (FD_ISSET(lst->sck_listener, rfds))
+	{
+		SOCKET s;
+		struct sockaddr_in addr;
+		int addrsize = sizeof(struct sockaddr_in);
+
+		s = accept(lst->sck_listener, (struct sockaddr*)&addr, &addrsize);
+
+		if (s >= 0)
+		{
+
+		}
+	}
 	return PICA_OK;
 }
 
