@@ -1904,13 +1904,12 @@ static void fdset_add(fd_set *fds, int fd, int *max)
 		*max = fd;
 }
 
-int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listeners, int timeout)
+int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 {
 	fd_set rfds, wfds;
 	struct timeval tv;
 	int ret, nfds = 0;
 	struct PICA_c2n **ic2n;
-	struct PICA_listener **ilst;
 
 //puts("PICA_event_loop");//debug
 
@@ -1919,14 +1918,6 @@ int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listen
 
 	FD_ZERO(&rfds);
 	FD_ZERO(&wfds);
-
-	ilst = listeners;
-
-	while(ilst && *ilst)
-	{
-		fdset_add(&rfds, (*ilst)->sck_listener, &nfds);
-		ilst++;
-	}
 
 	ic2n = connections;
 
@@ -1941,6 +1932,8 @@ int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listen
 		if ((*ic2n)->write_pos || (*ic2n)->state == PICA_C2N_STATE_CONNECTING
 				|| (*ic2n)->state  == PICA_C2N_STATE_WAITINGTLS)
 			fdset_add(&wfds, (*ic2n)->sck_comm, &nfds);
+
+		fdset_add(&rfds, (*ic2n)->directc2c_listener->sck_listener, &nfds);
 
 		ic2c = (*ic2n)->chan_list_head;
 
@@ -1980,21 +1973,6 @@ int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listen
 
 //processing listeners, c2n and c2c connections
 
-	ilst = listeners;
-
-	while(ilst && *ilst)
-	{
-		ret = process_listener(*ilst, &rfds);
-
-		if (ret != PICA_OK)
-		{
-			callbacks.listener_error_cb(*ilst, ret);
-			PICA_close_listener(*ilst);
-		}
-
-		ilst++;
-	}
-
 	ic2n = connections;
 
 	while(ic2n && *ic2n)
@@ -2017,6 +1995,16 @@ int PICA_event_loop(struct PICA_c2n **connections, struct PICA_listener **listen
 		else
 		{
 			struct PICA_c2c *kill_ptr = 0;
+
+			//processing listener associated with current c2n
+			ret = process_listener((*ic2n)->directc2c_listener, &rfds);
+
+			if (ret != PICA_OK)
+			{
+				callbacks.listener_error_cb((*ic2n)->directc2c_listener, ret);
+				PICA_close_listener((*ic2n)->directc2c_listener);
+			}
+
 
 			ic2c = (*ic2n)->chan_list_head;
 

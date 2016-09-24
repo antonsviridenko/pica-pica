@@ -246,7 +246,7 @@ void SkyNet::timerEvent(QTimerEvent *e)
 
 			nodelinks.append(NULL);
 
-			ret = PICA_event_loop(nodelinks.data(), NULL, 1);
+			ret = PICA_event_loop(nodelinks.data(), 1);
 
 			if (ret != PICA_OK)
 				emit StatusMsg("event loop error!", true);//show some error message
