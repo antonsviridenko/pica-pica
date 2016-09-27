@@ -227,6 +227,14 @@ struct PICA_c2c
 	int disconnect_on_empty_write_buf;
 };
 
+struct PICA_listener_conn
+{
+	SOCKET sck;
+	SSL *ssl;
+	X509 *peer_cert;
+	struct PICA_listener_conn *next;
+};
+
 struct PICA_listener
 {
 	const struct PICA_acc *acc;
@@ -238,6 +246,7 @@ struct PICA_listener
 	in_addr_t public_addr_ipv4;
 	const char *public_addr_dns;
 
+	struct PICA_listener_conn *accepted_connections;
 };
 
 struct PICA_client_callbacks

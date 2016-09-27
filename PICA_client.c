@@ -1196,6 +1196,8 @@ int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int p
 	flag = 1;
 	setsockopt(lst->sck_listener, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
 
+	IOCTLSETNONBLOCKINGSOCKET(lst->sck_listener, 1);
+
 	memset(&s, 0, sizeof(s));
 	s.sin_family = AF_INET;
 	s.sin_addr.s_addr = INADDR_ANY;
@@ -1878,6 +1880,46 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 	return ret;
 }
 
+static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
+{
+	struct PICA_listener_conn *nc;
+	int ret;
+
+	nc = calloc(1, sizeof(struct PICA_listener_conn));
+
+	nc->sck = s;
+	nc->ssl = SSL_new(lst->acc->ctx);
+
+	SSL_set_fd(nc->ssl, nc->sck);
+	ret = SSL_accept(nc->ssl);
+
+	if (ret == 0)
+	{
+		free(nc);
+		return;
+	}
+
+	if (ret < 0)
+	{
+		ret = SSL_get_error(nc->ssl, ret);
+
+		if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
+		{
+			free(nc);
+			return;
+		}
+	}
+
+	nc->next = lst->accepted_connections;
+
+	lst->accepted_connections = nc;
+}
+
+static int process_listener_conn()
+{
+	--
+}
+
 static int process_listener(struct PICA_listener *lst, fd_set *rfds)
 {
 	if (FD_ISSET(lst->sck_listener, rfds))
@@ -1890,9 +1932,10 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds)
 
 		if (s >= 0)
 		{
-
+			listener_add_connection(lst, s);
 		}
 	}
+
 	return PICA_OK;
 }
 
