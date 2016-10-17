@@ -1915,13 +1915,45 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 	lst->accepted_connections = nc;
 }
 
-static int process_listener_conn()
+static int process_listener_conn(struct PICA_listener_conn *conn, fd_set *rfds, fd_set *wfds)
 {
-	--
+	if (conn->peer_cert == NULL)
+	{
+		if (FD_ISSET(conn->sck, rfds) || FD_ISSET(conn->sck, wfds))
+		{
+			int ret;
+			ret = SSL_accept(conn->ssl);
+
+			if (ret == 1)
+			{
+				conn->peer_cert = SSL_get_peer_certificate(conn->ssl);
+
+				if (!conn->peer_cert)
+					return PICA_ERRSSL;
+
+				return PICA_OK;
+			}
+
+			if (ret == 0)
+				return PICA_ERRSSL;
+
+			if (ret < 0)
+			{
+				ret = SSL_get_error(conn->ssl, ret);
+
+				if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
+					return PICA_ERRSSL;
+			}
+		}
+	}
+
+	return PICA_OK;
 }
 
-static int process_listener(struct PICA_listener *lst, fd_set *rfds)
+static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfds)
 {
+	struct PICA_listener_conn *conn;
+
 	if (FD_ISSET(lst->sck_listener, rfds))
 	{
 		SOCKET s;
@@ -1934,6 +1966,17 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds)
 		{
 			listener_add_connection(lst, s);
 		}
+	}
+
+	conn = lst->accepted_connections;
+
+	while(conn)
+	{
+		if (process_listener_conn(conn, rfds, wfds) != PICA_OK)
+			{
+			--- close listener conn
+			}
+		conn = conn->next;
 	}
 
 	return PICA_OK;
@@ -2040,7 +2083,7 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			struct PICA_c2c *kill_ptr = 0;
 
 			//processing listener associated with current c2n
-			ret = process_listener((*ic2n)->directc2c_listener, &rfds);
+			ret = process_listener((*ic2n)->directc2c_listener, &rfds, &wfds);
 
 			if (ret != PICA_OK)
 			{
@@ -2700,6 +2743,8 @@ void PICA_close_listener(struct PICA_listener *l)
 	CLOSE(l->sck_listener);
 	free(l->public_addr_dns);
 	free(l);
+
+	-- close accepted connections
 }
 
 #ifdef WIN32
