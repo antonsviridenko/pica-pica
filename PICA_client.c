@@ -1972,11 +1972,18 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 
 	while(conn)
 	{
+		struct PICA_listener_conn *kill_ptr = NULL;
+
 		if (process_listener_conn(conn, rfds, wfds) != PICA_OK)
 			{
-			--- close listener conn
+				kill_ptr = conn;
 			}
 		conn = conn->next;
+
+		if (kill_ptr)
+		{
+			listener_close_conn(kill_ptr);
+		}
 	}
 
 	return PICA_OK;
@@ -2738,13 +2745,29 @@ void PICA_close_acc(struct PICA_acc *a)
 	free(a);
 }
 
+void listener_close_conn(struct PICA_listener_conn *c)
+{
+	SSL_free(c->ssl);
+	SHUTDOWN(c->sck);
+	CLOSE(c->sck);
+
+	X509_free(c->peer_cert);
+	free(c);
+}
+
 void PICA_close_listener(struct PICA_listener *l)
 {
 	CLOSE(l->sck_listener);
 	free(l->public_addr_dns);
-	free(l);
 
-	-- close accepted connections
+	while(l->accepted_connections)
+	{
+		struct PICA_listener_conn *c = l->accepted_connections;
+		l->accepted_connections = c->next;
+		listener_close_conn(c);
+	}
+
+	free(l);
 }
 
 #ifdef WIN32
