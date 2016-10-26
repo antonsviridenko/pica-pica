@@ -2017,6 +2017,7 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 	while(ic2n && *ic2n)
 	{
 		struct PICA_c2c *ic2c;
+		struct PICA_listener_conn *ilstcon;
 
 		//printf("event_loop: adding c2n %p\n", *ic2n);//debug
 
@@ -2027,6 +2028,15 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			fdset_add(&wfds, (*ic2n)->sck_comm, &nfds);
 
 		fdset_add(&rfds, (*ic2n)->directc2c_listener->sck_listener, &nfds);
+
+		ilstcon = (*ic2n)->directc2c_listener->accepted_connections;
+
+		while (ilstcon)
+		{
+			fdset_add(&rfds, ilstcon->sck, &nfds);
+			fdset_add(&wfds, ilstcon->sck, &nfds);
+			ilstcon = ilstcon->next;
+		}
 
 		ic2c = (*ic2n)->chan_list_head;
 
