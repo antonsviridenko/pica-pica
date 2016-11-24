@@ -2035,15 +2035,18 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 				|| (*ic2n)->state  == PICA_C2N_STATE_WAITINGTLS)
 			fdset_add(&wfds, (*ic2n)->sck_comm, &nfds);
 
-		fdset_add(&rfds, (*ic2n)->directc2c_listener->sck_listener, &nfds);
-
-		ilstcon = (*ic2n)->directc2c_listener->accepted_connections;
-
-		while (ilstcon)
+		if ((*ic2n)->directc2c_listener)
 		{
-			fdset_add(&rfds, ilstcon->sck, &nfds);
-			fdset_add(&wfds, ilstcon->sck, &nfds);
-			ilstcon = ilstcon->next;
+			fdset_add(&rfds, (*ic2n)->directc2c_listener->sck_listener, &nfds);
+
+			ilstcon = (*ic2n)->directc2c_listener->accepted_connections;
+
+			while (ilstcon)
+			{
+				fdset_add(&rfds, ilstcon->sck, &nfds);
+				fdset_add(&wfds, ilstcon->sck, &nfds);
+				ilstcon = ilstcon->next;
+			}
 		}
 
 		ic2c = (*ic2n)->chan_list_head;
@@ -2108,12 +2111,15 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			struct PICA_c2c *kill_ptr = 0;
 
 			//processing listener associated with current c2n
-			ret = process_listener((*ic2n)->directc2c_listener, &rfds, &wfds);
-
-			if (ret != PICA_OK)
+			if ((*ic2n)->directc2c_listener)
 			{
-				callbacks.listener_error_cb((*ic2n)->directc2c_listener, ret);
-				PICA_close_listener((*ic2n)->directc2c_listener);
+				ret = process_listener((*ic2n)->directc2c_listener, &rfds, &wfds);
+
+				if (ret != PICA_OK)
+				{
+					callbacks.listener_error_cb((*ic2n)->directc2c_listener, ret);
+					PICA_close_listener((*ic2n)->directc2c_listener);
+				}
 			}
 
 
