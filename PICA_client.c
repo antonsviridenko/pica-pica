@@ -32,6 +32,7 @@ static int PICA_send_file_fragment(struct PICA_c2c *chn);
 static int PICA_sendfile_open_read(struct PICA_c2c *chn, const char *filename_utf8, uint64_t *file_size);
 static int PICA_recvfile_open_write(struct PICA_c2c *chn, const char *filename_utf8, unsigned int filenamesize);
 static int PICA_send_filecontrol(struct PICA_c2c *chan, int senderctl, int receiverctl);
+static int PICA_send_directc2caddrlist(struct PICA_c2c *chn);
 
 static unsigned int procmsg_INITRESP(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_CONNREQINC(unsigned char*, unsigned int, void*);
@@ -468,6 +469,9 @@ static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb, void
 		cc->state = PICA_C2C_STATE_ACTIVE;
 
 		callbacks.c2c_established_cb(cc->peer_id);
+
+		if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+			PICA_send_directc2caddrlist(cc);
 	}
 	else
 	{
@@ -501,6 +505,10 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, vo
 	case PICA_PROTO_INITRESPOK:
 		cc->state = PICA_C2C_STATE_ACTIVE;
 		callbacks.c2c_established_cb(cc->peer_id);
+
+		if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+			PICA_send_directc2caddrlist(cc);
+
 		break;
 
 	case PICA_PROTO_VERDIFFER:
@@ -2434,6 +2442,27 @@ struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgi
 	chn->write_pos += size;
 
 	return mp;
+}
+
+int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
+{
+	if (chn->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING && chn->conn->directc2c_listener)
+	{
+		struct PICA_proto_msg *mp;
+		//TODO send all possible interface addresses, not one
+		unsigned int len = PICA_PROTO_C2CDIRECT_IPV4_SIZE;
+
+		if ((mp = c2c_writebuf_push(chn, PICA_PROTO_C2CDIRECT_ADDRLIST, len + 4)))
+		{
+			*((uint16_t*)mp->tail) = len;
+			*((uint8_t*)mp->tail + 2) = PICA_PROTO_C2CDIRECT_IPV4;
+			*((uint8_t*)mp->tail + 3) = PICA_PROTO_C2CDIRECT_IPV4;
+			*((uint32_t*)mp->tail + 4) = chn->conn->directc2c_listener->public_addr_ipv4;
+			*((uint16_t*)mp->tail + 8) = htons(chn->conn->directc2c_listener->public_port);
+		}
+	}
+
+	return PICA_OK;
 }
 
 int PICA_send_msg(struct PICA_c2c *chn, char *buf, unsigned int len)
