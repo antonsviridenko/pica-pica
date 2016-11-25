@@ -1890,10 +1890,10 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 
 static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 {
-	struct PICA_listener_conn *nc;
+	struct PICA_c2c_direct *nc;
 	int ret;
 
-	nc = calloc(1, sizeof(struct PICA_listener_conn));
+	nc = calloc(1, sizeof(struct PICA_c2c_direct));
 
 	nc->sck = s;
 	nc->ssl = SSL_new(lst->acc->ctx);
@@ -1923,7 +1923,7 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 	lst->accepted_connections = nc;
 }
 
-static int process_listener_conn(struct PICA_listener_conn *conn, fd_set *rfds, fd_set *wfds)
+static int process_listener_conn(struct PICA_c2c_direct *conn, fd_set *rfds, fd_set *wfds)
 {
 	if (conn->peer_cert == NULL)
 	{
@@ -1960,7 +1960,7 @@ static int process_listener_conn(struct PICA_listener_conn *conn, fd_set *rfds, 
 
 static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfds)
 {
-	struct PICA_listener_conn *conn;
+	struct PICA_c2c_direct *conn;
 
 	if (FD_ISSET(lst->sck_listener, rfds))
 	{
@@ -1980,7 +1980,7 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 
 	while(conn)
 	{
-		struct PICA_listener_conn *kill_ptr = NULL;
+		struct PICA_c2c_direct *kill_ptr = NULL;
 
 		if (process_listener_conn(conn, rfds, wfds) != PICA_OK)
 			{
@@ -2025,7 +2025,7 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 	while(ic2n && *ic2n)
 	{
 		struct PICA_c2c *ic2c;
-		struct PICA_listener_conn *ilstcon;
+		struct PICA_c2c_direct *ilstcon;
 
 		//printf("event_loop: adding c2n %p\n", *ic2n);//debug
 
@@ -2790,7 +2790,7 @@ void PICA_close_acc(struct PICA_acc *a)
 	free(a);
 }
 
-void listener_close_conn(struct PICA_listener_conn *c)
+void listener_close_conn(struct PICA_c2c_direct *c)
 {
 	SSL_free(c->ssl);
 	SHUTDOWN(c->sck);
@@ -2807,7 +2807,7 @@ void PICA_close_listener(struct PICA_listener *l)
 
 	while(l->accepted_connections)
 	{
-		struct PICA_listener_conn *c = l->accepted_connections;
+		struct PICA_c2c_direct *c = l->accepted_connections;
 		l->accepted_connections = c->next;
 		listener_close_conn(c);
 	}

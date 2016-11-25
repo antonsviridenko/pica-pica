@@ -189,6 +189,14 @@ enum PICA_directc2c_state
 	PICA_DIRECTC2C_STATE_ACTIVE
 };
 
+struct PICA_c2c_direct
+{
+	SOCKET sck;
+	SSL *ssl;
+	X509 *peer_cert;
+	struct PICA_c2c_direct *next;
+};
+
 struct PICA_c2c
 {
 	const struct PICA_acc *acc;
@@ -196,8 +204,7 @@ struct PICA_c2c
 	unsigned char peer_id[PICA_ID_SIZE];
 	SOCKET sck_data;
 	SSL *ssl;
-	SOCKET direct_sck;
-	SSL *direct_ssl;
+	struct PICA_c2c_direct *direct;
 	int outgoing;//1 если создание канала инициировано локальным клиентом, 0 - если собеседником
 	X509 *peer_cert;
 //unsigned char msgbuf[PICA_CHNMSGBUFLEN];
@@ -227,14 +234,6 @@ struct PICA_c2c
 	int disconnect_on_empty_write_buf;
 };
 
-struct PICA_listener_conn
-{
-	SOCKET sck;
-	SSL *ssl;
-	X509 *peer_cert;
-	struct PICA_listener_conn *next;
-};
-
 struct PICA_listener
 {
 	const struct PICA_acc *acc;
@@ -246,7 +245,7 @@ struct PICA_listener
 	in_addr_t public_addr_ipv4;
 	const char *public_addr_dns;
 
-	struct PICA_listener_conn *accepted_connections;
+	struct PICA_c2c_direct *accepted_connections;
 };
 
 struct PICA_client_callbacks
