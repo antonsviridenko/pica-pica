@@ -7,13 +7,21 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QVariant>
+#include <QListWidget>
+#include <QNetworkInterface>
+#include <QHostAddress>
+#include <QTabWidget>
 
 SettingsDialog::SettingsDialog(QWidget *parent) :
 	QDialog(parent)
 {
 	QVBoxLayout *settingsLayout = new QVBoxLayout();
 
-	QGroupBox *groupBox = new QGroupBox(tr("Direct Connections"), this);
+	QTabWidget *tabW = new QTabWidget(this);
+	QWidget* directc2ctab = new QWidget(0);
+	QWidget* soundstab = new QWidget(0);
+
+	//QGroupBox *groupBox = new QGroupBox(tr("Direct Connections"), directc2ctab);
 	QVBoxLayout *directc2cLayout = new QVBoxLayout();
 
 	rbDisableDirectConns = new QRadioButton(tr("Disable direct connections"), this);
@@ -36,6 +44,12 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	publicPort->setValue(2298);
 	localPort->setValue(2298);
 
+	QListWidget *lwAddrs = new QListWidget(this);
+	QList<QHostAddress> hostIfAddrs = QNetworkInterface::allAddresses();
+	QHostAddress ifAddr;
+
+	foreach (ifAddr, hostIfAddrs)
+		lwAddrs->addItem(ifAddr.toString());
 
 
 	directc2cLayout->addWidget(rbDisableDirectConns);
@@ -47,11 +61,16 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	directc2cLayout->addWidget(publicPort);
 	directc2cLayout->addWidget(lbLocPort);
 	directc2cLayout->addWidget(localPort);
+	directc2cLayout->addWidget(lwAddrs);
 	directc2cLayout->addStretch(1);
 
-	groupBox->setLayout(directc2cLayout);
+	//groupBox->setLayout(directc2cLayout);
+	directc2ctab->setLayout(directc2cLayout);
 
-	settingsLayout->addWidget(groupBox);
+	//settingsLayout->addWidget(groupBox);
+	tabW->addTab(directc2ctab, tr("Direct Connections"));
+	tabW->addTab(soundstab, tr("Sounds"));
+	settingsLayout->addWidget(tabW);
 
     QHBoxLayout *buttonsLayout = new QHBoxLayout;
 
