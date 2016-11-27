@@ -204,7 +204,11 @@ struct PICA_c2c
 	unsigned char peer_id[PICA_ID_SIZE];
 	SOCKET sck_data;
 	SSL *ssl;
+
 	struct PICA_c2c_direct *direct;
+	uint8_t *directc2c_addrlist;
+	uint8_t *directc2c_addrpos;
+
 	int outgoing;//1 если создание канала инициировано локальным клиентом, 0 - если собеседником
 	X509 *peer_cert;
 //unsigned char msgbuf[PICA_CHNMSGBUFLEN];
