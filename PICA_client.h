@@ -191,6 +191,15 @@ enum PICA_directc2c_state
 	PICA_DIRECTC2C_STATE_ACTIVE
 };
 
+enum PICA_directc2c_connection_state
+{
+	PICA_DIRECTC2C_CONNSTATE_NEW = 0,
+	PICA_DIRECTC2C_CONNSTATE_CONNECTING,
+	PICA_DIRECTC2C_CONNSTATE_WAITINGTLS,
+	PICA_DIRECTC2C_CONNSTATE_ACTIVE,
+	PICA_DIRECTC2C_CONNSTATE_FAILED
+};
+
 struct PICA_c2c_direct
 {
 	int is_outgoing;
@@ -202,6 +211,8 @@ struct PICA_c2c_direct
 	uint8_t *addrpos;
 
 	struct sockaddr_in addr;
+
+	enum PICA_directc2c_connection_state state;
 
 	struct PICA_c2c_direct *next;
 };
