@@ -56,6 +56,9 @@ static unsigned int procmsg_PICA_PROTO_C2CDIRECT_FAILED(unsigned char*, unsigned
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size);
 
+static int process_first_async_connect_result(int connect_ret);
+static int check_async_connect_result(int sock, struct sockaddr* a, int addrlen);
+
 static int PICA_write_c2n(struct PICA_c2n *ci);
 static int PICA_write_c2c(struct PICA_c2c *chn);
 static int PICA_write_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned int *btw);
@@ -424,19 +427,8 @@ static int c2c_start(struct PICA_c2c *chnl)
 			return PICA_OK;
 		}
 
-		if (ret == SOCKET_ERROR)
-		{
-#ifndef WIN32
-			if (errno == EINPROGRESS || errno == EINTR)
-				return PICA_OK;
-#else
-			if (WSAGetLastError() == WSAEWOULDBLOCK)
-				return PICA_OK;
-#endif
-
-			err_ret = PICA_ERRSOCK;
+		if ((err_ret = process_first_async_connect_result(ret)) != PICA_OK)
 			goto error_ret;
-		}
 	}
 
 	return PICA_OK;
@@ -523,9 +515,74 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, vo
 	return 1;
 }
 
+static int c2c_direct_connect_next(struct PICA_c2c_direct *dc2c, struct PICA_c2c *c2c)
+{
+	int ret;
+
+	if (dc2c->addrpos == 0)
+		dc2c->addrpos += 2;
+
+	if (dc2c->addrpos >= *(uint16_t*)dc2c->addrlist)
+		return PICA_OK;
+
+	switch(*dc2c->addrpos)
+	{
+	case PICA_PROTO_C2CDIRECT_IPV4:
+		dc2c->sck = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+		memset(&dc2c->addr, 0, sizeof(dc2c->addr));
+		dc2c->addr.sin_family = AF_INET;
+		dc2c->addr.sin_addr.s_addr = *((in_addr_t*)(dc2c->addrpos + 1));
+		dc2c->addr.sin_port = *((uint16_t*)(dc2c->addrpos + 5));
+
+		ret = connect(dc2c->sck, (struct sockaddr*)&dc2c->addr, sizeof(dc2c->addr));
+
+		if (ret)
+			...
+
+		dc2c->addrpos += PICA_PROTO_C2CDIRECT_ADDRLIST_ITEM_IPV4_SIZE;
+		break;
+
+	case PICA_PROTO_C2CDIRECT_IPV6:
+		break;
+
+	}
+
+
+}
+
 static unsigned int procmsg_PICA_PROTO_C2CDIRECT_ADDRLIST(unsigned char* buf, unsigned int nb, void* p)
 {
-	--
+	struct PICA_c2c *cc = (struct PICA_c2c *)p;
+
+	if (cc->conn->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
+	{
+		if (cc->directc2c_state != PICA_DIRECTC2C_STATE_INACTIVE)
+			return 1;
+
+		cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
+		cc->direct = calloc(1, sizeof(struct PICA_c2c_direct));
+
+		if (!cc->direct)
+			return 1;
+
+		cc->direct->is_outgoing = PICA_DIRECTC2C_OUTGOING;
+		cc->direct->sck = -1;
+		cc->direct->addrlist = malloc(nb - 2 + 1);
+
+		if (!cc->direct->addrlist)
+			return 1;
+
+		memcpy(cc->direct->addrlist, buf + 2, nb - 2);// copy size and address list
+		cc->direct->addrlist[nb - 2] = 0;
+		cc->direct->addrpos = 0;
+
+
+		ret = c2c_direct_connect_next(cc->direct, cc);
+		...
+	}
+
+	return 1;
 }
 
 static unsigned int procmsg_PICA_PROTO_C2CDIRECT_FAILED(unsigned char* buf, unsigned int nb, void* p)
@@ -1526,20 +1583,8 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
 	if (ret == 0)
 		return c2n_stage2_sendreq(cid);
 
-	if (ret == SOCKET_ERROR)
-	{
-#ifndef WIN32
-		if (errno == EINPROGRESS || errno == EINTR)
-			return PICA_OK;
-#else
-		if (WSAGetLastError() == WSAEWOULDBLOCK)
-			return PICA_OK;
-#endif
-
-		ret_err = PICA_ERRSOCK;
+	if ((ret_err = process_first_async_connect_result(ret)) != PICA_OK)
 		goto error_ret_4;
-	}
-
 
 
 	/*
@@ -1653,6 +1698,24 @@ int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_
 	else
 		return PICA_ERRNOMEM;
 
+
+	return PICA_OK;
+}
+
+static int process_first_async_connect_result(int connect_ret)
+{
+	if (connect_ret == SOCKET_ERROR)
+	{
+#ifndef WIN32
+		if (errno == EINPROGRESS || errno == EINTR)
+			return PICA_OK;
+#else
+		if (WSAGetLastError() == WSAEWOULDBLOCK)
+			return PICA_OK;
+#endif
+
+		return PICA_ERRSOCK;
+	}
 
 	return PICA_OK;
 }
@@ -1895,6 +1958,7 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 
 	nc = calloc(1, sizeof(struct PICA_c2c_direct));
 
+	nc->is_outgoing = PICA_DIRECTC2C_INCOMING;
 	nc->sck = s;
 	nc->ssl = SSL_new(lst->acc->ctx);
 
@@ -1990,7 +2054,7 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 
 		if (kill_ptr)
 		{
-			listener_close_conn(kill_ptr);
+			PICA_close_directc2c(kill_ptr);
 		}
 	}
 
@@ -2456,15 +2520,14 @@ int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 	{
 		struct PICA_proto_msg *mp;
 		//TODO send all possible interface addresses, not one
-		unsigned int len = PICA_PROTO_C2CDIRECT_IPV4_SIZE;
+		unsigned int len = PICA_PROTO_C2CDIRECT_ADDRLIST_ITEM_IPV4_SIZE;
 
 		if ((mp = c2c_writebuf_push(chn, PICA_PROTO_C2CDIRECT_ADDRLIST, len + 4)))
 		{
 			*((uint16_t*)mp->tail) = len;
 			*((uint8_t*)mp->tail + 2) = PICA_PROTO_C2CDIRECT_IPV4;
-			*((uint8_t*)mp->tail + 3) = PICA_PROTO_C2CDIRECT_IPV4;
-			*((uint32_t*)mp->tail + 4) = chn->conn->directc2c_listener->public_addr_ipv4;
-			*((uint16_t*)mp->tail + 8) = htons(chn->conn->directc2c_listener->public_port);
+			*((uint32_t*)mp->tail + 3) = chn->conn->directc2c_listener->public_addr_ipv4;
+			*((uint16_t*)mp->tail + 7) = htons(chn->conn->directc2c_listener->public_port);
 		}
 	}
 
@@ -2697,6 +2760,20 @@ int PICA_send_file_fragment(struct PICA_c2c *chn)
 
 	return PICA_OK;
 }
+void PICA_close_directc2c(struct PICA_c2c_direct *d)
+{
+	if (d->peer_cert)
+		X509_free(d->peer_cert);
+
+	if (d->addrlist)
+		free(d->addrlist);
+
+	SSL_free(c->ssl);
+	SHUTDOWN(c->sck);
+	CLOSE(c->sck);
+
+	free(d);
+}
 
 void PICA_close_c2c(struct PICA_c2c *chn)
 {
@@ -2759,6 +2836,9 @@ void PICA_close_c2c(struct PICA_c2c *chn)
 //puts("PICA_close_c2c_chkp5");//debug
 	CLOSE(chn->sck_data);
 //puts("PICA_close_c2c_chkp6");//debug
+	if (chn->direct)
+		PICA_close_directc2c(chn->direct);
+
 	free(chn);
 //puts("PICA_close_c2c_chkp7");//debug
 }
@@ -2790,15 +2870,6 @@ void PICA_close_acc(struct PICA_acc *a)
 	free(a);
 }
 
-void listener_close_conn(struct PICA_c2c_direct *c)
-{
-	SSL_free(c->ssl);
-	SHUTDOWN(c->sck);
-	CLOSE(c->sck);
-
-	X509_free(c->peer_cert);
-	free(c);
-}
 
 void PICA_close_listener(struct PICA_listener *l)
 {
@@ -2809,7 +2880,7 @@ void PICA_close_listener(struct PICA_listener *l)
 	{
 		struct PICA_c2c_direct *c = l->accepted_connections;
 		l->accepted_connections = c->next;
-		listener_close_conn(c);
+		PICA_close_directc2c(c);
 	}
 
 	free(l);

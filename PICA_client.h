@@ -114,6 +114,8 @@ typedef unsigned __int64 uint64_t;
 
 #define PICA_C2C_INCOMING 0
 #define PICA_C2C_OUTGOING 1
+#define PICA_DIRECTC2C_INCOMING 0
+#define PICA_DIRECTC2C_OUTGOING 1
 
 struct PICA_c2n;
 struct PICA_c2c;
@@ -191,9 +193,16 @@ enum PICA_directc2c_state
 
 struct PICA_c2c_direct
 {
+	int is_outgoing;
 	SOCKET sck;
 	SSL *ssl;
 	X509 *peer_cert;
+
+	uint8_t *addrlist;
+	uint8_t *addrpos;
+
+	struct sockaddr_in addr;
+
 	struct PICA_c2c_direct *next;
 };
 
@@ -206,8 +215,6 @@ struct PICA_c2c
 	SSL *ssl;
 
 	struct PICA_c2c_direct *direct;
-	uint8_t *directc2c_addrlist;
-	uint8_t *directc2c_addrpos;
 
 	int outgoing;//1 если создание канала инициировано локальным клиентом, 0 - если собеседником
 	X509 *peer_cert;
