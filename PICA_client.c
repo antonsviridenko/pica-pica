@@ -49,8 +49,8 @@ static unsigned int procmsg_FILEFRAGMENT(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_FILECONTROL(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_INITRESP_c2c(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_C2CCONNREQ(unsigned char*, unsigned int, void*);
-static unsigned int procmsg_PICA_PROTO_C2CDIRECT_ADDRLIST(unsigned char*, unsigned int, void*);
-static unsigned int procmsg_PICA_PROTO_C2CDIRECT_FAILED(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char*, unsigned int, void*);
 
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
@@ -87,8 +87,8 @@ const struct PICA_msginfo  c2c_messages[] =
 	{PICA_PROTO_DENIEDFILE, PICA_MSG_FIXED_SIZE, PICA_PROTO_DENIEDFILE_SIZE, procmsg_DENIEDFILE},
 	{PICA_PROTO_FILEFRAGMENT, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_FILEFRAGMENT},
 	{PICA_PROTO_FILECONTROL, PICA_MSG_FIXED_SIZE, PICA_PROTO_FILECONTROL_SIZE, procmsg_FILECONTROL},
-	{PICA_PROTO_C2CDIRECT_ADDRLIST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_PICA_PROTO_C2CDIRECT_ADDRLIST},
-	{PICA_PROTO_C2CDIRECT_FAILED, PICA_MSG_FIXED_SIZE, PICA_PROTO_C2CDIRECT_FAILED_SIZE, procmsg_PICA_PROTO_C2CDIRECT_FAILED}
+	{PICA_PROTO_DIRECTC2C_ADDRLIST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST},
+	{PICA_PROTO_DIRECTC2C_FAILED, PICA_MSG_FIXED_SIZE, PICA_PROTO_DIRECTC2C_FAILED_SIZE, procmsg_PICA_PROTO_DIRECTC2C_FAILED}
 };
 
 struct PICA_msginfo c2n_init_messages[] =
@@ -515,7 +515,7 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, vo
 	return 1;
 }
 
-static int c2c_direct_connect_next(struct PICA_c2c_direct *dc2c, struct PICA_c2c *c2c)
+static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *c2c)
 {
 	int ret;
 
@@ -527,7 +527,7 @@ static int c2c_direct_connect_next(struct PICA_c2c_direct *dc2c, struct PICA_c2c
 
 	switch(*dc2c->addrpos)
 	{
-	case PICA_PROTO_C2CDIRECT_IPV4:
+	case PICA_PROTO_DIRECTC2C_IPV4:
 		dc2c->sck = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
 		memset(&dc2c->addr, 0, sizeof(dc2c->addr));
@@ -540,10 +540,10 @@ static int c2c_direct_connect_next(struct PICA_c2c_direct *dc2c, struct PICA_c2c
 		if (ret)
 			...
 
-		dc2c->addrpos += PICA_PROTO_C2CDIRECT_ADDRLIST_ITEM_IPV4_SIZE;
+		dc2c->addrpos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
 		break;
 
-	case PICA_PROTO_C2CDIRECT_IPV6:
+	case PICA_PROTO_DIRECTC2C_IPV6:
 		break;
 
 	}
@@ -551,7 +551,7 @@ static int c2c_direct_connect_next(struct PICA_c2c_direct *dc2c, struct PICA_c2c
 
 }
 
-static unsigned int procmsg_PICA_PROTO_C2CDIRECT_ADDRLIST(unsigned char* buf, unsigned int nb, void* p)
+static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, unsigned int nb, void* p)
 {
 	struct PICA_c2c *cc = (struct PICA_c2c *)p;
 
@@ -561,7 +561,7 @@ static unsigned int procmsg_PICA_PROTO_C2CDIRECT_ADDRLIST(unsigned char* buf, un
 			return 1;
 
 		cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
-		cc->direct = calloc(1, sizeof(struct PICA_c2c_direct));
+		cc->direct = calloc(1, sizeof(struct PICA_directc2c));
 
 		if (!cc->direct)
 			return 1;
@@ -578,14 +578,14 @@ static unsigned int procmsg_PICA_PROTO_C2CDIRECT_ADDRLIST(unsigned char* buf, un
 		cc->direct->addrpos = 0;
 
 
-		ret = c2c_direct_connect_next(cc->direct, cc);
+		ret = directc2c_connect_next(cc->direct, cc);
 		...
 	}
 
 	return 1;
 }
 
-static unsigned int procmsg_PICA_PROTO_C2CDIRECT_FAILED(unsigned char* buf, unsigned int nb, void* p)
+static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsigned int nb, void* p)
 {
 	--
 }
@@ -1953,10 +1953,10 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 
 static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 {
-	struct PICA_c2c_direct *nc;
+	struct PICA_directc2c *nc;
 	int ret;
 
-	nc = calloc(1, sizeof(struct PICA_c2c_direct));
+	nc = calloc(1, sizeof(struct PICA_directc2c));
 
 	nc->is_outgoing = PICA_DIRECTC2C_INCOMING;
 	nc->sck = s;
@@ -1987,7 +1987,7 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 	lst->accepted_connections = nc;
 }
 
-static int process_listener_conn(struct PICA_c2c_direct *conn, fd_set *rfds, fd_set *wfds)
+static int process_listener_conn(struct PICA_directc2c *conn, fd_set *rfds, fd_set *wfds)
 {
 	if (conn->peer_cert == NULL)
 	{
@@ -2024,7 +2024,7 @@ static int process_listener_conn(struct PICA_c2c_direct *conn, fd_set *rfds, fd_
 
 static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfds)
 {
-	struct PICA_c2c_direct *conn;
+	struct PICA_directc2c *conn;
 
 	if (FD_ISSET(lst->sck_listener, rfds))
 	{
@@ -2044,7 +2044,7 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 
 	while(conn)
 	{
-		struct PICA_c2c_direct *kill_ptr = NULL;
+		struct PICA_directc2c *kill_ptr = NULL;
 
 		if (process_listener_conn(conn, rfds, wfds) != PICA_OK)
 			{
@@ -2089,7 +2089,7 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 	while(ic2n && *ic2n)
 	{
 		struct PICA_c2c *ic2c;
-		struct PICA_c2c_direct *ilstcon;
+		struct PICA_directc2c *ilstcon;
 
 		//printf("event_loop: adding c2n %p\n", *ic2n);//debug
 
@@ -2520,12 +2520,12 @@ int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 	{
 		struct PICA_proto_msg *mp;
 		//TODO send all possible interface addresses, not one
-		unsigned int len = PICA_PROTO_C2CDIRECT_ADDRLIST_ITEM_IPV4_SIZE;
+		unsigned int len = PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
 
-		if ((mp = c2c_writebuf_push(chn, PICA_PROTO_C2CDIRECT_ADDRLIST, len + 4)))
+		if ((mp = c2c_writebuf_push(chn, PICA_PROTO_DIRECTC2C_ADDRLIST, len + 4)))
 		{
 			*((uint16_t*)mp->tail) = len;
-			*((uint8_t*)mp->tail + 2) = PICA_PROTO_C2CDIRECT_IPV4;
+			*((uint8_t*)mp->tail + 2) = PICA_PROTO_DIRECTC2C_IPV4;
 			*((uint32_t*)mp->tail + 3) = chn->conn->directc2c_listener->public_addr_ipv4;
 			*((uint16_t*)mp->tail + 7) = htons(chn->conn->directc2c_listener->public_port);
 		}
@@ -2760,7 +2760,7 @@ int PICA_send_file_fragment(struct PICA_c2c *chn)
 
 	return PICA_OK;
 }
-void PICA_close_directc2c(struct PICA_c2c_direct *d)
+void PICA_close_directc2c(struct PICA_directc2c *d)
 {
 	if (d->peer_cert)
 		X509_free(d->peer_cert);
@@ -2878,7 +2878,7 @@ void PICA_close_listener(struct PICA_listener *l)
 
 	while(l->accepted_connections)
 	{
-		struct PICA_c2c_direct *c = l->accepted_connections;
+		struct PICA_directc2c *c = l->accepted_connections;
 		l->accepted_connections = c->next;
 		PICA_close_directc2c(c);
 	}
