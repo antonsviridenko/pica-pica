@@ -523,7 +523,7 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 		dc2c->addrpos += 2;
 
 	if (dc2c->addrpos >= *(uint16_t*)dc2c->addrlist)
-		return PICA_OK;
+		return PICA_ERRNOTFOUND;
 
 	switch(*dc2c->addrpos)
 	{
@@ -535,10 +535,14 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 		dc2c->addr.sin_addr.s_addr = *((in_addr_t*)(dc2c->addrpos + 1));
 		dc2c->addr.sin_port = *((uint16_t*)(dc2c->addrpos + 5));
 
+		dc2c->state = PICA_DIRECTC2C_CONNSTATE_CONNECTING;
+
 		ret = connect(dc2c->sck, (struct sockaddr*)&dc2c->addr, sizeof(dc2c->addr));
 
-		if (ret)
-			...
+		ret = process_first_async_connect_result(ret);
+
+		if (ret != PICA_OK)
+			dc2c->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
 
 		dc2c->addrpos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
 		break;
@@ -548,12 +552,13 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 
 	}
 
-
+	return PICA_OK;
 }
 
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, unsigned int nb, void* p)
 {
 	struct PICA_c2c *cc = (struct PICA_c2c *)p;
+	int ret;
 
 	if (cc->conn->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
 	{
@@ -567,6 +572,7 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 			return 1;
 
 		cc->direct->is_outgoing = PICA_DIRECTC2C_OUTGOING;
+		cc->direct->state = PICA_DIRECTC2C_CONNSTATE_NEW;
 		cc->direct->sck = -1;
 		cc->direct->addrlist = malloc(nb - 2 + 1);
 
@@ -579,7 +585,11 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 
 
 		ret = directc2c_connect_next(cc->direct, cc);
-		...
+
+		if (ret == PICA_ERRNOTFOUND)
+		{
+			cc->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;
+		}
 	}
 
 	return 1;
