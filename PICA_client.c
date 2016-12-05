@@ -588,7 +588,7 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 
 		if (ret == PICA_ERRNOTFOUND)
 		{
-			cc->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;
+			cc->directc2c_state = PICA_DIRECTC2C_STATE_FAILEDTOCONNECT;
 		}
 	}
 
