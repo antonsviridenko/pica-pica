@@ -562,10 +562,18 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 
 	if (cc->conn->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
 	{
-		if (cc->directc2c_state != PICA_DIRECTC2C_STATE_INACTIVE)
-			return 1;
+		//if (cc->directc2c_state != PICA_DIRECTC2C_STATE_INACTIVE)
+		//	return 1;
 
-		cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
+		//if (cc->outgoing == PICA_C2C_OUTGOING)
+		//	cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
+		//else if (cc->outgoing == PICA_C2C_INCOMING)
+		//	cc->directc2c_state = PICA_DIRECTC2C_STATE_WAITINGINCOMING;
+		//else
+		//	return 0;
+		if (cc->directc2c_state != PICA_DIRECTC2C_STATE_WAITINGINCOMING)
+			cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
+
 		cc->direct = calloc(1, sizeof(struct PICA_directc2c));
 
 		if (!cc->direct)
@@ -583,6 +591,8 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 		cc->direct->addrlist[nb - 2] = 0;
 		cc->direct->addrpos = 0;
 
+		if (cc->directc2c_state == PICA_DIRECTC2C_STATE_WAITINGINCOMING)
+			return 1;//connect later, if no incoming connection is accepted and DIRECTC2C_FAILED is received
 
 		ret = directc2c_connect_next(cc->direct, cc);
 
@@ -597,7 +607,23 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsigned int nb, void* p)
 {
-	--
+	struct PICA_c2c *cc = (struct PICA_c2c *)p;
+	int ret;
+
+	if (cc->directc2c_state != PICA_DIRECTC2C_STATE_WAITINGINCOMING)
+		return 0;
+
+	if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_DISABLED)
+		return 0;
+
+	ret = directc2c_connect_next(cc->direct, cc);
+
+	if (ret == PICA_ERRNOTFOUND)
+	{
+		cc->directc2c_state = PICA_DIRECTC2C_STATE_FAILEDTOCONNECT;
+	}
+
+	return 1;
 }
 
 static unsigned int procmsg_INITRESP(unsigned char* buf, unsigned int nb, void* p)
@@ -2538,6 +2564,9 @@ int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 			*((uint8_t*)mp->tail + 2) = PICA_PROTO_DIRECTC2C_IPV4;
 			*((uint32_t*)mp->tail + 3) = chn->conn->directc2c_listener->public_addr_ipv4;
 			*((uint16_t*)mp->tail + 7) = htons(chn->conn->directc2c_listener->public_port);
+
+			if (chn->outgoing == PICA_C2C_INCOMING)
+				chn->directc2c_state = PICA_DIRECTC2C_STATE_WAITINGINCOMING;
 		}
 	}
 
@@ -2778,9 +2807,9 @@ void PICA_close_directc2c(struct PICA_directc2c *d)
 	if (d->addrlist)
 		free(d->addrlist);
 
-	SSL_free(c->ssl);
-	SHUTDOWN(c->sck);
-	CLOSE(c->sck);
+	SSL_free(d->ssl);
+	SHUTDOWN(d->sck);
+	CLOSE(d->sck);
 
 	free(d);
 }
