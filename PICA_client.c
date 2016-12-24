@@ -1987,6 +1987,45 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 	return ret;
 }
 
+static struct PICA_c2c * find_matching_c2c(struct PICA_c2n *c2n, struct PICA_directc2c *d)
+{
+	--
+}
+
+static void process_directc2c(struct PICA_c2n *c2n)
+{
+	//process accepted connections
+	if (c2n->directc2c_listener)
+	{
+		PICA_directc2c *d;
+		PICA_c2c *c2c;
+
+		d = c2n->directc2c_listener->accepted_connections;
+
+		while(d)
+		{
+			if (d->state == PICA_DIRECTC2C_STATE_ACTIVE)
+			{
+				if ((c2c = find_matching_c2c(c2n, d)))
+				{
+					if (c2c->direct)
+						PICA_close_directc2c(c2c->direct);
+
+					c2c->direct = d;
+					...
+				}
+				else
+				{
+					--
+				}
+			}
+			d = d->next;
+		}
+	}
+	//process outgoing connections
+	--
+}
+
 static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 {
 	struct PICA_directc2c *nc;
@@ -1997,6 +2036,7 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 	nc->is_outgoing = PICA_DIRECTC2C_INCOMING;
 	nc->sck = s;
 	nc->ssl = SSL_new(lst->acc->ctx);
+	nc->state = PICA_DIRECTC2C_CONNSTATE_NEW;
 
 	SSL_set_fd(nc->ssl, nc->sck);
 	ret = SSL_accept(nc->ssl);
@@ -2017,6 +2057,8 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 			return;
 		}
 	}
+
+	nc->state = PICA_DIRECTC2C_CONNSTATE_WAITINGTLS;
 
 	nc->next = lst->accepted_connections;
 
@@ -2039,6 +2081,7 @@ static int process_listener_conn(struct PICA_directc2c *conn, fd_set *rfds, fd_s
 				if (!conn->peer_cert)
 					return PICA_ERRSSL;
 
+				conn->state = PICA_DIRECTC2C_CONNSTATE_ACTIVE;
 				return PICA_OK;
 			}
 
@@ -2240,6 +2283,12 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 					PICA_close_c2c(kill_ptr);
 					kill_ptr = 0;
 				}
+			}
+
+			//processing direct c2c connections associated with current c2n
+			if ((*ic2n)->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
+			{
+				process_directc2c(*ic2n);
 			}
 		}
 		ic2n++;
