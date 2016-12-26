@@ -2059,6 +2059,10 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 	nc->state = PICA_DIRECTC2C_CONNSTATE_NEW;
 
 	SSL_set_fd(nc->ssl, nc->sck);
+
+	SSL_set_verify(nc->ssl, SSL_VERIFY_PEER, verify_callback);
+	SSL_set_verify_depth(nc->ssl, 1);
+
 	ret = SSL_accept(nc->ssl);
 
 	if (ret == 0)
