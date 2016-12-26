@@ -1989,7 +1989,27 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 
 static struct PICA_c2c * find_matching_c2c(struct PICA_c2n *c2n, struct PICA_directc2c *d)
 {
-	--
+	struct PICA_c2c *c2c;
+	unsigned char idbuf[PICA_ID_SIZE];
+
+	if (!PICA_id_from_X509(d->peer_cert, idbuf))
+		return NULL;
+
+	c2c = c2n->chan_list_head;
+
+	while(c2c)
+	{
+		if (c2c->directc2c_state == PICA_DIRECTC2C_STATE_WAITINGINCOMING)
+		{
+			if (memcmp(idbuf, c2c->peer_id, PICA_ID_SIZE) == 0)
+			{
+				return c2c;
+			}
+		}
+		c2c = c2c->next;
+	}
+
+	return NULL;
 }
 
 static void process_directc2c(struct PICA_c2n *c2n)
@@ -1997,8 +2017,8 @@ static void process_directc2c(struct PICA_c2n *c2n)
 	//process accepted connections
 	if (c2n->directc2c_listener)
 	{
-		PICA_directc2c *d;
-		PICA_c2c *c2c;
+		struct PICA_directc2c *d;
+		struct PICA_c2c *c2c;
 
 		d = c2n->directc2c_listener->accepted_connections;
 
