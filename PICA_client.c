@@ -33,6 +33,8 @@ static int PICA_sendfile_open_read(struct PICA_c2c *chn, const char *filename_ut
 static int PICA_recvfile_open_write(struct PICA_c2c *chn, const char *filename_utf8, unsigned int filenamesize);
 static int PICA_send_filecontrol(struct PICA_c2c *chan, int senderctl, int receiverctl);
 static int PICA_send_directc2caddrlist(struct PICA_c2c *chn);
+static int PICA_send_directc2cfailed(struct PICA_c2c *chn);
+static int PICA_send_directc2c_switch(struct PICA_c2c *chn);
 
 static unsigned int procmsg_INITRESP(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_CONNREQINC(unsigned char*, unsigned int, void*);
@@ -51,6 +53,7 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_C2CCONNREQ(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char*, unsigned int, void*);
 
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
@@ -88,7 +91,8 @@ const struct PICA_msginfo  c2c_messages[] =
 	{PICA_PROTO_FILEFRAGMENT, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_FILEFRAGMENT},
 	{PICA_PROTO_FILECONTROL, PICA_MSG_FIXED_SIZE, PICA_PROTO_FILECONTROL_SIZE, procmsg_FILECONTROL},
 	{PICA_PROTO_DIRECTC2C_ADDRLIST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST},
-	{PICA_PROTO_DIRECTC2C_FAILED, PICA_MSG_FIXED_SIZE, PICA_PROTO_DIRECTC2C_FAILED_SIZE, procmsg_PICA_PROTO_DIRECTC2C_FAILED}
+	{PICA_PROTO_DIRECTC2C_FAILED, PICA_MSG_FIXED_SIZE, PICA_PROTO_DIRECTC2C_FAILED_SIZE, procmsg_PICA_PROTO_DIRECTC2C_FAILED},
+	{PICA_PROTO_DIRECTC2C_SWITCH, PICA_MSG_FIXED_SIZE, PICA_PROTO_DIRECTC2C_SWITCH_SIZE, procmsg_PICA_PROTO_DIRECTC2C_SWITCH}
 };
 
 struct PICA_msginfo c2n_init_messages[] =
@@ -2024,7 +2028,7 @@ static void process_directc2c(struct PICA_c2n *c2n)
 
 		while(d)
 		{
-			if (d->state == PICA_DIRECTC2C_STATE_ACTIVE)
+			if (d->state == PICA_DIRECTC2C_CONNSTATE_ACTIVE)
 			{
 				if ((c2c = find_matching_c2c(c2n, d)))
 				{
@@ -2036,6 +2040,7 @@ static void process_directc2c(struct PICA_c2n *c2n)
 				}
 				else
 				{
+					//close and remove from listener's list
 					--
 				}
 			}
@@ -2644,6 +2649,16 @@ int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 	}
 
 	return PICA_OK;
+}
+
+static int PICA_send_directc2cfailed(struct PICA_c2c *chn)
+{
+	--
+}
+
+static int PICA_send_directc2c_switch(struct PICA_c2c *chn)
+{
+	--
 }
 
 int PICA_send_msg(struct PICA_c2c *chn, char *buf, unsigned int len)
