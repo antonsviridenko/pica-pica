@@ -2653,12 +2653,30 @@ int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 
 static int PICA_send_directc2cfailed(struct PICA_c2c *chn)
 {
-	--
+	struct PICA_proto_msg *mp;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_DIRECTC2C_FAILED, PICA_PROTO_DIRECTC2C_FAILED_SIZE)))
+	{
+		RAND_pseudo_bytes(mp->tail, 2);
+	}
+	else
+		return PICA_ERRNOMEM;
+
+	return PICA_OK;
 }
 
 static int PICA_send_directc2c_switch(struct PICA_c2c *chn)
 {
-	--
+	struct PICA_proto_msg *mp;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_DIRECTC2C_SWITCH, PICA_PROTO_DIRECTC2C_SWITCH_SIZE)))
+	{
+		RAND_pseudo_bytes(mp->tail, 2);
+	}
+	else
+		return PICA_ERRNOMEM;
+
+	return PICA_OK;
 }
 
 int PICA_send_msg(struct PICA_c2c *chn, char *buf, unsigned int len)
