@@ -627,7 +627,14 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsi
 		cc->directc2c_state = PICA_DIRECTC2C_STATE_FAILEDTOCONNECT;
 	}
 
+	cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
+
 	return 1;
+}
+
+unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char*, unsigned int, void*)
+{
+	---
 }
 
 static unsigned int procmsg_INITRESP(unsigned char* buf, unsigned int nb, void* p)
@@ -1514,6 +1521,34 @@ static int c2n_stage4_nodelistrequest(struct PICA_c2n *c2n)
 	return PICA_OK;
 }
 
+static int directc2c_stage2_starttls(struct PICA_directc2c *d, struct PICA_c2c *c2c)
+{
+	int ret;
+
+	d->ssl = SSL_new(c2c->acc->ctx);
+
+	SSL_set_fd(d->ssl, d->sck);
+	SSL_set_verify(d->ssl, SSL_VERIFY_PEER, verify_callback);
+	SSL_set_verify_depth(d->ssl, 1);
+
+	ret = SSL_connect(d->ssl);
+
+	if (ret == 0)
+		return PICA_ERRSSL;
+
+	if (ret < 0)
+	{
+		ret = SSL_get_error(d->ssl, ret);
+
+		if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
+			return PICA_ERRSSL;
+	}
+
+	d->state = PICA_DIRECTC2C_CONNSTATE_WAITINGTLS;
+
+	return PICA_OK;
+}
+
 /*адрес сервера, сертификат клиента и закрытый ключ*/
 
 //Осуществляет подключение к серверу по указанному адресу.
@@ -2016,15 +2051,19 @@ static struct PICA_c2c * find_matching_c2c(struct PICA_c2n *c2n, struct PICA_dir
 	return NULL;
 }
 
-static void process_directc2c(struct PICA_c2n *c2n)
+static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 {
+	struct PICA_directc2c *d;
+	struct PICA_c2c *c2c;
+	int ret;
+
 	//process accepted connections
 	if (c2n->directc2c_listener)
 	{
-		struct PICA_directc2c *d;
-		struct PICA_c2c *c2c;
+		struct PICA_directc2c **pdprev;
 
 		d = c2n->directc2c_listener->accepted_connections;
+		pdprev = &c2n->directc2c_listener->accepted_connections;
 
 		while(d)
 		{
@@ -2036,19 +2075,104 @@ static void process_directc2c(struct PICA_c2n *c2n)
 						PICA_close_directc2c(c2c->direct);
 
 					c2c->direct = d;
-					...
+
+					ret = PICA_send_directc2c_switch(c2c);---//??? who should send first?
+
+					if (ret != PICA_OK)
+					{
+						PICA_close_directc2c(d);
+						c2c->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;
+					}
+					else
+					{
+						c2c->directc2c_state = PICA_DIRECTC2C_STATE_ACTIVE;
+					}
+
+					//remove from listener's list
+					*pdprev = d->next;
+					d->next = 0;
 				}
 				else
 				{
 					//close and remove from listener's list
-					--
+					*pdprev = d->next;
+					PICA_close_directc2c(d);
 				}
 			}
+			pdprev = &d->next;
 			d = d->next;
+			-- killptr?
 		}
 	}
 	//process outgoing connections
-	--
+	c2c = c2n->chan_list_head;
+	while(c2c)
+	{
+		if (c2c->directc2c_state == PICA_DIRECTC2C_STATE_FAILEDTOCONNECT)
+		{
+			if (c2c->outgoing == PICA_C2C_OUTGOING && c2c->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+			{
+				ret = PICA_send_directc2cfailed(c2c);
+
+				if (ret == PICA_OK)
+					c2c->directc2c_state = PICA_DIRECTC2C_STATE_WAITINGINCOMING;
+				else
+					c2c->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;
+			}
+			else
+				c2c->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;
+		}
+
+		if (c2c->directc2c_state == PICA_DIRECTC2C_STATE_CONNECTING)
+		{
+			d = c2c->direct;
+			ret = PICA_OK;
+
+			switch(d->state)
+			{
+				case PICA_DIRECTC2C_CONNSTATE_CONNECTING:
+
+				if (FD_ISSET(d->sck, wfds))
+				{
+					ret = check_async_connect_result(d->sck, (struct sockaddr*)&d->addr, sizeof(d->addr));
+
+					if (ret == PICA_OK)
+					{
+						ret = directc2c_stage2_starttls(d, c2c);
+					}
+					else
+					{
+						ret = directc2c_connect_next(d, c2c);
+
+						if (ret == PICA_ERRNOTFOUND)
+							c2c->directc2c_state = PICA_DIRECTC2C_STATE_FAILEDTOCONNECT;
+					}
+				}
+				break;
+
+				case PICA_DIRECTC2C_CONNSTATE_WAITINGTLS:
+				break;
+
+				case PICA_DIRECTC2C_CONNSTATE_FAILED:
+				break;
+
+				case PICA_DIRECTC2C_CONNSTATE_ACTIVE:
+				break;
+				--
+			}
+
+			if (ret != PICA_OK)
+			{
+				PICA_close_directc2c(d);
+				c2c->direct = 0;
+
+				if (c2c->directc2c_state != PICA_DIRECTC2C_STATE_FAILEDTOCONNECT)
+					c2c->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;//fallback to c2c through node?
+			}
+
+		}
+		c2c = c2c->next;
+	}
 }
 
 static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
@@ -2133,6 +2257,7 @@ static int process_listener_conn(struct PICA_directc2c *conn, fd_set *rfds, fd_s
 static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfds)
 {
 	struct PICA_directc2c *conn;
+	struct PICA_directc2c **pprevconn;
 
 	if (FD_ISSET(lst->sck_listener, rfds))
 	{
@@ -2149,6 +2274,7 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 	}
 
 	conn = lst->accepted_connections;
+	pprevconn = &lst->accepted_connections;
 
 	while(conn)
 	{
@@ -2158,10 +2284,13 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 			{
 				kill_ptr = conn;
 			}
+
+		pprevconn = &conn->next;
 		conn = conn->next;
 
 		if (kill_ptr)
 		{
+			*pprevconn = kill_ptr->next;
 			PICA_close_directc2c(kill_ptr);
 		}
 	}
@@ -2232,6 +2361,13 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 				if (ic2c->write_pos || ic2c->state == PICA_C2C_STATE_CONNECTING || ic2c->state == PICA_C2C_STATE_WAITINGTLS
 						|| ic2c->sendfilestate == PICA_CHANSENDFILESTATE_SENDING)
 					fdset_add(&wfds, ic2c->sck_data, &nfds);
+			}
+
+			if (ic2c->state == PICA_C2C_STATE_ACTIVE && ic2c->directc2c_state == PICA_DIRECTC2C_STATE_CONNECTING
+				&& ic2c->direct && ic2c->direct->state >= PICA_DIRECTC2C_CONNSTATE_CONNECTING)// CHECK CONDITIONS!
+			{
+				fdset_add(&rfds, ic2c->direct->sck, &nfds);
+				fdset_add(&wfds, ic2c->direct->sck, &nfds);
 			}
 
 			ic2c = ic2c->next;
@@ -2317,7 +2453,7 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			//processing direct c2c connections associated with current c2n
 			if ((*ic2n)->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
 			{
-				process_directc2c(*ic2n);
+				process_directc2c(*ic2n, &rfds, &wfds);
 			}
 		}
 		ic2n++;
@@ -2916,6 +3052,8 @@ void PICA_close_directc2c(struct PICA_directc2c *d)
 	SSL_free(d->ssl);
 	SHUTDOWN(d->sck);
 	CLOSE(d->sck);
+
+	d->next = NULL;
 
 	free(d);
 }
