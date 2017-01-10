@@ -61,6 +61,7 @@ static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned i
 
 static int process_first_async_connect_result(int connect_ret);
 static int check_async_connect_result(int sock, struct sockaddr* a, int addrlen);
+static int process_async_ssl_errors(SSL *ssl, int ret);
 
 static int PICA_write_c2n(struct PICA_c2n *ci);
 static int PICA_write_c2c(struct PICA_c2c *chn);
@@ -1777,6 +1778,24 @@ int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_
 	return PICA_OK;
 }
 
+static int process_async_ssl_errors(SSL *ssl, int ret)
+{
+	if (ret < 0)
+		switch(SSL_get_error(ssl, ret))
+		{
+		case SSL_ERROR_WANT_WRITE:
+		case SSL_ERROR_WANT_READ:
+			break;
+		default:
+			return PICA_ERRSSL;
+		};
+
+	if (ret == 0)
+		return PICA_ERRDISCONNECT;
+
+	return PICA_OK;
+}
+
 static int process_first_async_connect_result(int connect_ret)
 {
 	if (connect_ret == SOCKET_ERROR)
@@ -2051,6 +2070,28 @@ static struct PICA_c2c * find_matching_c2c(struct PICA_c2n *c2n, struct PICA_dir
 	return NULL;
 }
 
+static int directc2c_verify_peer_cert(struct PICA_directc2c *d, struct PICA_c2c *c2c)
+{
+	unsigned char idbuf[PICA_ID_SIZE];
+
+	d->peer_cert = SSL_get_peer_certificate(d->ssl);
+
+	if (!d->peer_cert)
+		return PICA_ERRNOPEERCERT;
+
+	if (PICA_id_from_X509(d->peer_cert, idbuf) == 0)
+	{
+		return PICA_ERRNOPEERCERT;
+	}
+
+	if (memcmp(idbuf, c2c->peer_id, PICA_ID_SIZE) != 0)
+	{
+		return PICA_ERRINVPEERCERT;
+	}
+
+	return PICA_OK;
+}
+
 static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 {
 	struct PICA_directc2c *d;
@@ -2151,6 +2192,25 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 				break;
 
 				case PICA_DIRECTC2C_CONNSTATE_WAITINGTLS:
+				if (FD_ISSET(d->sck, wfds) || FD_ISSET(d->sck, rfds))
+				{
+					ret = SSL_connect(d->ssl);
+
+					ret = process_async_ssl_errors(d->ssl, ret);
+
+					if (ret != PICA_OK)
+						break;
+
+					ret = directc2c_verify_peer_cert(d, c2c);
+
+					if (ret != PICA_OK)
+						break;
+
+					d->state = PICA_DIRECTC2C_STATE_ACTIVE;
+
+					---//? send switch message
+
+				}
 				break;
 
 				case PICA_DIRECTC2C_CONNSTATE_FAILED:
@@ -2269,6 +2329,7 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 
 		if (s >= 0)
 		{
+			IOCTLSETNONBLOCKINGSOCKET(s, 1);
 			listener_add_connection(lst, s);
 		}
 	}
