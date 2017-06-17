@@ -633,9 +633,20 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsi
 	return 1;
 }
 
-unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char*, unsigned int, void*)
+unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char* buf, unsigned int nb, void* p)
 {
-	---
+	struct PICA_c2c *cc = (struct PICA_c2c *)p;
+	int ret;
+
+	if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_DISABLED)
+		return 0;
+
+	if (cc->directc2c_state != PICA_DIRECTC2C_STATE_WAITINGINCOMING && cc->directc2c_state != PICA_DIRECTC2C_STATE_CONNECTING)
+		return 0;
+
+	cc->switched_to_directc2c_read = 1;
+
+	return 1;
 }
 
 static unsigned int procmsg_INITRESP(unsigned char* buf, unsigned int nb, void* p)
@@ -2098,6 +2109,8 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 	struct PICA_c2c *c2c;
 	int ret;
 
+	fputs("process_directc2c()\n", stderr);//debug
+
 	//process accepted connections
 	if (c2n->directc2c_listener)
 	{
@@ -2117,7 +2130,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 					c2c->direct = d;
 
-					ret = PICA_send_directc2c_switch(c2c);---//??? who should send first?
+					ret = PICA_send_directc2c_switch(c2c);//??? who should send first?
 
 					if (ret != PICA_OK)
 					{
@@ -2142,7 +2155,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 			}
 			pdprev = &d->next;
 			d = d->next;
-			-- killptr?
+			//-- killptr?
 		}
 	}
 	//process outgoing connections
@@ -2183,10 +2196,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 					}
 					else
 					{
-						ret = directc2c_connect_next(d, c2c);
-
-						if (ret == PICA_ERRNOTFOUND)
-							c2c->directc2c_state = PICA_DIRECTC2C_STATE_FAILEDTOCONNECT;
+						d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
 					}
 				}
 				break;
@@ -2196,29 +2206,42 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 				{
 					ret = SSL_connect(d->ssl);
 
-					ret = process_async_ssl_errors(d->ssl, ret);
+					if (ret != 1)
+					{
+						ret = process_async_ssl_errors(d->ssl, ret);
 
-					if (ret != PICA_OK)
+						if (ret != PICA_OK)
+							d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
+
 						break;
+					}
 
 					ret = directc2c_verify_peer_cert(d, c2c);
 
 					if (ret != PICA_OK)
 						break;
 
-					d->state = PICA_DIRECTC2C_STATE_ACTIVE;
+					ret = PICA_send_directc2c_switch(c2c);
 
-					---//? send switch message
+					if (ret != PICA_OK)
+						break;
+
+					d->state = PICA_DIRECTC2C_CONNSTATE_ACTIVE;
 
 				}
 				break;
 
 				case PICA_DIRECTC2C_CONNSTATE_FAILED:
+				ret = directc2c_connect_next(d, c2c);
+
+				if (ret == PICA_ERRNOTFOUND)
+					c2c->directc2c_state = PICA_DIRECTC2C_STATE_FAILEDTOCONNECT;
 				break;
 
 				case PICA_DIRECTC2C_CONNSTATE_ACTIVE:
+				c2c->directc2c_state = PICA_DIRECTC2C_STATE_ACTIVE;
 				break;
-				--
+
 			}
 
 			if (ret != PICA_OK)
@@ -2608,17 +2631,39 @@ int PICA_write_c2c(struct PICA_c2c *chn)
 	int ret = PICA_ERRINVARG;
 
 	if (chn->state != PICA_C2C_STATE_ACTIVE && chn->state != PICA_C2C_STATE_CONNID && chn->state != PICA_C2C_STATE_WAITINGREP)
-		{
-			fputs("PICA_write_c2c() was called for incorrect state!\n", stderr);
-			exit(-1);
-		}
+	{
+		fputs("PICA_write_c2c() was called for incorrect state!\n", stderr);
+		exit(-1);
+	}
 
 	if (PICA_C2C_STATE_CONNID == chn->state)
 		ret = PICA_write_socket(chn->sck_data, chn->write_buf, &chn->write_pos);
 	else
-		ret = PICA_write_ssl(chn->ssl, chn->write_buf, &chn->write_pos, &chn->write_sslbytestowrite);
+	{
+		SSL *ssl_to_write = chn->ssl;
 
-	if (chn->disconnect_on_empty_write_buf)
+		if (chn->switched_to_directc2c_write)
+			ssl_to_write = chn->direct->ssl;
+
+		if (chn->directc2c_write_barrier_pos)
+		{
+			if (chn->directc2c_write_before_barrier_pos == 0)
+				chn->directc2c_write_before_barrier_pos = chn->directc2c_write_barrier_pos;
+
+			ret = PICA_write_ssl(chn->ssl, chn->write_buf, &chn->directc2c_write_before_barrier_pos, &chn->write_sslbytestowrite);
+
+			if (ret == PICA_OK && chn->directc2c_write_before_barrier_pos == 0)
+			{
+				chn->switched_to_directc2c_write = 1;
+				memmove(chn->write_buf, chn->write_buf + chn->directc2c_write_barrier_pos, chn->write_pos - chn->directc2c_write_barrier_pos);
+				chn->directc2c_write_barrier_pos = 0;
+			}
+		}
+		else
+			ret = PICA_write_ssl(ssl_to_write, chn->write_buf, &chn->write_pos, &chn->write_sslbytestowrite);
+	}
+
+	if (chn->disconnect_on_empty_write_buf && chn->write_pos == 0)
 		PICA_close_c2c(chn);
 
 	return ret;
@@ -2699,6 +2744,7 @@ int PICA_read_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned int
 int PICA_read_c2c(struct PICA_c2c *chn)
 {
 	int ret;
+	SSL *ssl_to_read = chn->ssl;
 
 	if (chn->state != PICA_C2C_STATE_WAITINGREP && chn->state != PICA_C2C_STATE_WAITINGC2CPROTOVER && chn->state != PICA_C2C_STATE_ACTIVE)
 		{
@@ -2706,7 +2752,10 @@ int PICA_read_c2c(struct PICA_c2c *chn)
 			exit(-1);
 		}
 
-	ret = PICA_read_ssl(chn->ssl, chn->read_buf, &chn->read_pos, PICA_CHANREADBUFSIZE);
+	if (chn->switched_to_directc2c_read)
+		ssl_to_read = chn->direct->ssl;
+
+	ret = PICA_read_ssl(ssl_to_read, chn->read_buf, &chn->read_pos, PICA_CHANREADBUFSIZE);
 
 	if (ret == PICA_OK)
 	{
@@ -2872,6 +2921,8 @@ static int PICA_send_directc2c_switch(struct PICA_c2c *chn)
 	}
 	else
 		return PICA_ERRNOMEM;
+
+	chn->directc2c_write_barrier_pos = chn->write_pos;
 
 	return PICA_OK;
 }

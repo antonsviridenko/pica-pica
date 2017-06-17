@@ -255,6 +255,10 @@ struct PICA_c2c
 	FILE *recvfile_stream;
 //this flag should be set when connection must be closed after sending last pushed packet
 	int disconnect_on_empty_write_buf;
+	int switched_to_directc2c_write;
+	int switched_to_directc2c_read;
+	unsigned int directc2c_write_barrier_pos;
+	unsigned int directc2c_write_before_barrier_pos;
 };
 
 struct PICA_listener
