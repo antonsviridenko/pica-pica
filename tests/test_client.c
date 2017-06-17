@@ -11,6 +11,9 @@ struct sockaddr_in a;
 struct PICA_acc *acc;
 struct PICA_c2n *c;
 struct PICA_c2c *chn;
+enum PICA_directc2c_config directc2c_cfg = PICA_DIRECTC2C_CFG_DISABLED;
+struct PICA_listener *l = NULL;
+
 
 int _outgoing_chnl = 0;
 
@@ -138,11 +141,13 @@ void c2n_established_cb(struct PICA_c2n *c2n)
 void c2n_failed_cb(struct PICA_c2n *c2n, int error)
 {
 	printf("c2n_failed_cb: %p error_code %i\n", c2n, error);
+	c = NULL;
 }
 
 void c2n_closed_cb(struct PICA_c2n *c2n, int error)
 {
 	printf("c2n_closed_cb: %p error_code %i\n", c2n, error);
+	c = NULL;
 }
 
 void listener_error(struct PICA_listener *lst, int errorcode)
@@ -175,18 +180,66 @@ struct PICA_client_callbacks cbs =
 
 int main(int argc, char** argv)
 {
-	int ret;
+	int ret, opt;
 	unsigned char peer_id[PICA_ID_SIZE];
 	struct PICA_c2n* c2ns[] = {NULL, NULL};
 
 	fd_set stdinfds;
 	struct timeval tv;
 
-	if (argc < 4)
+	const char *nodeaddr = NULL, *nodeport = NULL,
+		   *certfile = NULL, *peerid = NULL,
+		   *localdirectaddr = NULL, *extport = NULL,
+		   *locport = NULL;
+
+	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:")) != -1)
 	{
-		puts("usage: test_client      address port  cert_filename  [peer id]\ncert_filename should point to file that contains client certificate, private key and Diffie-Hellman parameters in PEM format");
+		switch(opt)
+		{
+		case 'a':
+			nodeaddr = optarg;
+		break;
+
+		case 'p':
+			nodeport = optarg;
+		break;
+
+		case 'c':
+			certfile = optarg;
+		break;
+
+		case 'i':
+			peerid = optarg;
+		break;
+
+		case 'd':
+			localdirectaddr = optarg;
+		break;
+
+		case 'e':
+			extport = optarg;
+		break;
+
+		case 'l':
+			locport = optarg;
+		break;
+
+		default:
+			fprintf(stderr, "invalid arg %s\n", optarg);
+			return -1;
+		}
+	}
+
+	if (argc < 4 || !nodeaddr || !nodeport || !certfile)
+	{
+		puts("usage: test_client -a node address -p node port -c cert_filename  [-i peer id]\n\
+		-d local address for direct incoming c2c connections\n\
+		-e external port for incoming direct connections\n\
+		-l internal port to listen for incoming direct connections\n\
+cert_filename should point to file that contains client certificate, private key and Diffie-Hellman parameters in PEM format");
 		return 0;
 	}
+
 
 	puts(SSLeay_version(SSLEAY_VERSION));
 	printf("Calling PICA_init...\n");
@@ -194,18 +247,18 @@ int main(int argc, char** argv)
 	PICA_client_init(&cbs);
 
 	printf("opening account...");
-	ret = PICA_open_acc(argv[3], argv[3], argv[3], NULL, &acc);
+	ret = PICA_open_acc(certfile, certfile, certfile, NULL, &acc);
 
 	if (ret != PICA_OK)
 	{
-		printf("failed to open account, ret = %i\n", ret);
+		fprintf(stderr, "failed to open account, ret = %i\n", ret);
 		return 1;
 	}
 
 	printf("making connection...\n");
 
 //PICA_new_c2n(const char *nodeaddr, unsigned int port, const char *CA_file, const char *cert_file, const char *pkey_file, const char* password, struct PICA_c2n **ci)
-	ret = PICA_new_c2n(acc, argv[1], atoi(argv[2]), /*"trusted_CA.pem"*/ &c);
+	ret = PICA_new_c2n(acc, nodeaddr, atoi(nodeport), directc2c_cfg, l, &c);
 
 	ERR_print_errors_fp(stdout);
 
@@ -220,12 +273,12 @@ int main(int argc, char** argv)
 	c2ns[0] = c;
 
 
-	while(PICA_event_loop(c2ns, NULL, 500) == PICA_OK)
+	while(PICA_event_loop(c2ns, 500) == PICA_OK)
 	{
 		//puts("event loop...");
-		if (argc == 5 && connected_to_node == 1 && c2c_active == 0 && c2c_in_progress == 0)
+		if (peerid && connected_to_node == 1 && c2c_active == 0 && c2c_in_progress == 0)
 		{
-			if (PICA_id_from_base64(argv[4], peer_id) == NULL)
+			if (PICA_id_from_base64(peerid, peer_id) == NULL)
 			{
 				puts("invalid peer_id");
 				return 1;
@@ -233,7 +286,7 @@ int main(int argc, char** argv)
 
 			printf("Creating c2c to %s...\n", PICA_id_to_base64(peer_id, NULL));
 
-			ret = PICA_new_c2c(c, peer_id, NULL, &chn);
+			ret = PICA_new_c2c(c, peer_id, l, &chn);
 			//sleep(17);//timeout test
 			if (ret != PICA_OK)
 			{
@@ -284,15 +337,12 @@ int main(int argc, char** argv)
 
 
 
-	sleep(10);
 
 	if (chn)
-	{
-		puts("--------");
 		PICA_close_c2c(chn);
-	}
 
-	PICA_close_c2n(c);
+	if (c)
+		PICA_close_c2n(c);
 
 	return 0;
 }
