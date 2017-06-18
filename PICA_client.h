@@ -209,7 +209,7 @@ struct PICA_directc2c
 	X509 *peer_cert;
 
 	uint8_t *addrlist;
-	uint8_t *addrpos;
+	int addrpos;
 
 	struct sockaddr_in addr;
 
