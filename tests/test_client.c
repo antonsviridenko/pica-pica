@@ -153,6 +153,7 @@ void c2n_closed_cb(struct PICA_c2n *c2n, int error)
 void listener_error(struct PICA_listener *lst, int errorcode)
 {
 	printf("listener_error: %p error code %i\n", lst, errorcode);
+	l = NULL;
 }
 
 struct PICA_client_callbacks cbs =
@@ -192,7 +193,7 @@ int main(int argc, char** argv)
 		   *localdirectaddr = NULL, *extport = NULL,
 		   *locport = NULL;
 
-	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:")) != -1)
+	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:t")) != -1)
 	{
 		switch(opt)
 		{
@@ -224,6 +225,10 @@ int main(int argc, char** argv)
 			locport = optarg;
 		break;
 
+		case 't':
+			directc2c_cfg = PICA_DIRECTC2C_CFG_CONNECTONLY;
+		break;
+
 		default:
 			fprintf(stderr, "invalid arg %s\n", optarg);
 			return -1;
@@ -236,9 +241,11 @@ int main(int argc, char** argv)
 		-d local address for direct incoming c2c connections\n\
 		-e external port for incoming direct connections\n\
 		-l internal port to listen for incoming direct connections\n\
+		-t enable connect-only mode for direct c2c connections\n\
 cert_filename should point to file that contains client certificate, private key and Diffie-Hellman parameters in PEM format");
 		return 0;
 	}
+
 
 
 	puts(SSLeay_version(SSLEAY_VERSION));
@@ -253,6 +260,29 @@ cert_filename should point to file that contains client certificate, private key
 	{
 		fprintf(stderr, "failed to open account, ret = %i\n", ret);
 		return 1;
+	}
+
+	if (localdirectaddr)
+	{
+		int intp = 2300, extp = 2300;
+
+		directc2c_cfg = PICA_DIRECTC2C_CFG_ALLOWINCOMING;
+
+		if (extport)
+			extp = atoi(extport);
+		if (locport)
+			intp = atoi(locport);
+
+		printf("new listener on %s port %i external announced port %i\n", localdirectaddr, intp, extp);
+
+		ret = PICA_new_listener(acc, localdirectaddr, extp, intp, &l);
+
+		if (ret != PICA_OK)
+		{
+			fprintf(stderr, "failed to create listener, error code: %i\n", ret);
+			l = NULL;
+		}
+
 	}
 
 	printf("making connection...\n");
@@ -343,6 +373,9 @@ cert_filename should point to file that contains client certificate, private key
 
 	if (c)
 		PICA_close_c2n(c);
+
+	if(l)
+		PICA_close_listener(l);
 
 	return 0;
 }
