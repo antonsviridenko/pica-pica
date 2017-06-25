@@ -7,6 +7,12 @@
 
 #define PICA_DEBUG // debug
 
+#ifdef PICA_DEBUG
+#define PICA_TRACEFUNC fprintf(stderr, "%s()\n", __PRETTY_FUNCTION__);
+#else
+#define PICA_TRACEFUNC
+#endif
+
 //static SSL_CTX* ctx;
 //unsigned char __hellomsg[4]={0xCA,0xCA,PICA_PROTO_VER_HIGH,PICA_PROTO_VER_LOW};
 
@@ -519,7 +525,15 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, vo
 
 static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *c2c)
 {
+	PICA_TRACEFUNC
 	int ret;
+
+	if (dc2c->ssl)
+		SSL_free(dc2c->ssl);
+	dc2c->ssl = NULL;
+	if (dc2c->sck >= 0)
+		CLOSE(dc2c->sck);
+	dc2c->sck = -1;
 
 	if (dc2c->addrpos == 0)
 		dc2c->addrpos += 2;
@@ -562,10 +576,9 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, unsigned int nb, void* p)
 {
+	PICA_TRACEFUNC
 	struct PICA_c2c *cc = (struct PICA_c2c *)p;
 	int ret;
-
-	fprintf(stderr, "procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST()\n");
 
 	if (cc->conn->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
 	{
@@ -614,6 +627,7 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsigned int nb, void* p)
 {
+	PICA_TRACEFUNC
 	struct PICA_c2c *cc = (struct PICA_c2c *)p;
 	int ret;
 
@@ -637,6 +651,7 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsi
 
 unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char* buf, unsigned int nb, void* p)
 {
+	PICA_TRACEFUNC
 	struct PICA_c2c *cc = (struct PICA_c2c *)p;
 	int ret;
 
@@ -794,6 +809,7 @@ static unsigned int procmsg_FOUND(unsigned char* buf, unsigned int nb, void* p)
 
 static unsigned int procmsg_CLNODELIST(unsigned char* buf, unsigned int nb, void* p)
 {
+	PICA_TRACEFUNC
 	unsigned int pos = 4;
 	char ipaddr_string[INET6_ADDRSTRLEN];
 	char temp_zeroswap;
@@ -892,6 +908,7 @@ static unsigned int procmsg_MSGOK(unsigned char* buf, unsigned int nb, void* p)
 
 unsigned int procmsg_PINGREQ(unsigned char* buf, unsigned int nb, void* p)
 {
+	PICA_TRACEFUNC
 	struct PICA_c2n *ci = (struct PICA_c2n *)p;
 	struct PICA_proto_msg *mp;
 
@@ -1481,6 +1498,7 @@ error_ret_1: //(1)
 
 static int c2n_stage2_sendreq(struct PICA_c2n *c2n)
 {
+	PICA_TRACEFUNC
 	struct PICA_proto_msg *mp;
 
 	puts("c2n_stage2_sendreq");//debug
@@ -1502,6 +1520,7 @@ static int c2n_stage2_sendreq(struct PICA_c2n *c2n)
 
 static int c2n_stage3_starttls(struct PICA_c2n *c2n)
 {
+	PICA_TRACEFUNC
 	int ret;
 
 	ret = SSL_set_fd(c2n->ssl_comm, c2n->sck_comm);
@@ -1529,6 +1548,7 @@ static int c2n_stage3_starttls(struct PICA_c2n *c2n)
 
 static int c2n_stage4_nodelistrequest(struct PICA_c2n *c2n)
 {
+	PICA_TRACEFUNC
 	struct PICA_proto_msg *mp;
 
 	mp = c2n_writebuf_push(c2n, PICA_PROTO_CLNODELISTREQ, PICA_PROTO_CLNODELISTREQ_SIZE);
@@ -1549,6 +1569,7 @@ static int c2n_stage4_nodelistrequest(struct PICA_c2n *c2n)
 
 static int directc2c_stage2_starttls(struct PICA_directc2c *d, struct PICA_c2c *c2c)
 {
+	PICA_TRACEFUNC
 	int ret;
 
 	d->ssl = SSL_new(c2c->acc->ctx);
@@ -1595,6 +1616,7 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
 				 enum PICA_directc2c_config direct_c2c_mode, struct PICA_listener *l,
 				 struct PICA_c2n **ci)
 {
+	PICA_TRACEFUNC
 	int ret, ret_err;
 	struct PICA_c2n *cid;
 	struct sockaddr_in a;
@@ -1776,6 +1798,7 @@ error_ret_1: //(1)
 // в данный момент.
 int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_listener *l, struct PICA_c2c **chn)
 {
+	PICA_TRACEFUNC
 	struct PICA_proto_msg *mp;
 	struct PICA_c2c *chnl;
 
@@ -1805,6 +1828,7 @@ int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_
 
 static int process_async_ssl_errors(SSL *ssl, int ret)
 {
+	PICA_TRACEFUNC
 	if (ret == 0)
 		return PICA_ERRDISCONNECT;
 
@@ -1823,6 +1847,7 @@ static int process_async_ssl_errors(SSL *ssl, int ret)
 
 static int process_first_async_connect_result(int connect_ret)
 {
+	PICA_TRACEFUNC
 	if (connect_ret == SOCKET_ERROR)
 	{
 #ifndef WIN32
@@ -1841,6 +1866,7 @@ static int process_first_async_connect_result(int connect_ret)
 
 static int check_async_connect_result(int sock, struct sockaddr* a, int addrlen)
 {
+	PICA_TRACEFUNC
 	int ret = PICA_ERRSOCK;
 
 #ifndef WIN32
@@ -2074,6 +2100,7 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 
 static struct PICA_c2c * find_matching_c2c(struct PICA_c2n *c2n, struct PICA_directc2c *d)
 {
+	PICA_TRACEFUNC
 	struct PICA_c2c *c2c;
 	unsigned char idbuf[PICA_ID_SIZE];
 
@@ -2098,6 +2125,7 @@ static struct PICA_c2c * find_matching_c2c(struct PICA_c2n *c2n, struct PICA_dir
 
 static int directc2c_verify_peer_cert(struct PICA_directc2c *d, struct PICA_c2c *c2c)
 {
+	PICA_TRACEFUNC
 	unsigned char idbuf[PICA_ID_SIZE];
 
 	d->peer_cert = SSL_get_peer_certificate(d->ssl);
@@ -2225,7 +2253,9 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 						ret = process_async_ssl_errors(d->ssl, ret);
 
 						if (ret != PICA_OK)
+						{
 							d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
+						}
 
 						break;
 					}
@@ -2233,12 +2263,19 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 					ret = directc2c_verify_peer_cert(d, c2c);
 
 					if (ret != PICA_OK)
+					{
+						d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
 						break;
+					}
 
 					ret = PICA_send_directc2c_switch(c2c);
 
 					if (ret != PICA_OK)
+					{
+						d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
 						break;
+					}
+
 					fprintf(stderr, "outgoing directc2c is PICA_DIRECTC2C_CONNSTATE_ACTIVE\n");
 					d->state = PICA_DIRECTC2C_CONNSTATE_ACTIVE;
 
@@ -2249,7 +2286,11 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 				ret = directc2c_connect_next(d, c2c);
 
 				if (ret == PICA_ERRNOTFOUND)
+				{
+					PICA_close_directc2c(d);
+					c2c->direct = 0;
 					c2c->directc2c_state = PICA_DIRECTC2C_STATE_FAILEDTOCONNECT;
+				}
 				break;
 
 				case PICA_DIRECTC2C_CONNSTATE_ACTIVE:
@@ -2258,14 +2299,14 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 			}
 
-			if (ret != PICA_OK)
-			{
-				PICA_close_directc2c(d);
-				c2c->direct = 0;
+//			if (ret != PICA_OK)
+//			{
+//				PICA_close_directc2c(d);
+//				c2c->direct = 0;
 
-				if (c2c->directc2c_state != PICA_DIRECTC2C_STATE_FAILEDTOCONNECT)
-					c2c->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;//fallback to c2c through node?
-			}
+//				if (c2c->directc2c_state != PICA_DIRECTC2C_STATE_FAILEDTOCONNECT)
+//					c2c->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;//fallback to c2c through node?
+//			}
 
 		}
 		c2c = c2c->next;
@@ -2274,6 +2315,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
 {
+	PICA_TRACEFUNC
 	struct PICA_directc2c *nc;
 	int ret;
 
@@ -2882,7 +2924,7 @@ struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgi
 
 int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 {
-	fprintf(stderr, "PICA_send_directc2caddrlist()\n");
+	PICA_TRACEFUNC
 	if (chn->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING && chn->conn->directc2c_listener)
 	{
 		struct PICA_proto_msg *mp;
@@ -2906,7 +2948,7 @@ int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 
 static int PICA_send_directc2cfailed(struct PICA_c2c *chn)
 {
-	fprintf(stderr, "PICA_send_directc2cfailed()\n");
+	PICA_TRACEFUNC
 	struct PICA_proto_msg *mp;
 
 	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_DIRECTC2C_FAILED, PICA_PROTO_DIRECTC2C_FAILED_SIZE)))
@@ -2921,7 +2963,7 @@ static int PICA_send_directc2cfailed(struct PICA_c2c *chn)
 
 static int PICA_send_directc2c_switch(struct PICA_c2c *chn)
 {
-	fputs("PICA_send_directc2c_switch()\n", stderr);//debug
+	PICA_TRACEFUNC
 	struct PICA_proto_msg *mp;
 
 	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_DIRECTC2C_SWITCH, PICA_PROTO_DIRECTC2C_SWITCH_SIZE)))
@@ -3164,6 +3206,7 @@ int PICA_send_file_fragment(struct PICA_c2c *chn)
 }
 void PICA_close_directc2c(struct PICA_directc2c *d)
 {
+	PICA_TRACEFUNC
 	if (d->peer_cert)
 		X509_free(d->peer_cert);
 
@@ -3183,7 +3226,7 @@ void PICA_close_c2c(struct PICA_c2c *chn)
 {
 	struct PICA_c2c *ipt;
 
-	fprintf(stderr, "PICA_close_c2c(%p)\n", chn);//debug
+	PICA_TRACEFUNC
 
 	ipt = chn->conn->chan_list_head;
 //puts("PICA_close_c2c_chkp0");//debug
@@ -3249,6 +3292,7 @@ void PICA_close_c2c(struct PICA_c2c *chn)
 
 void PICA_close_c2n(struct PICA_c2n *cid)
 {
+	PICA_TRACEFUNC
 	struct PICA_c2c *ipt;
 
 	while((ipt = cid->chan_list_head))
