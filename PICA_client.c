@@ -531,6 +531,7 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 	{
 	case PICA_PROTO_DIRECTC2C_IPV4:
 		dc2c->sck = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		IOCTLSETNONBLOCKINGSOCKET(dc2c->sck, 1);
 
 		memset(&dc2c->addr, 0, sizeof(dc2c->addr));
 		dc2c->addr.sin_family = AF_INET;
@@ -642,7 +643,7 @@ unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char* buf, unsigned in
 	if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_DISABLED)
 		return 0;
 
-	if (cc->directc2c_state != PICA_DIRECTC2C_STATE_WAITINGINCOMING && cc->directc2c_state != PICA_DIRECTC2C_STATE_CONNECTING)
+	if (cc->directc2c_state != PICA_DIRECTC2C_STATE_ACTIVE && cc->directc2c_state != PICA_DIRECTC2C_STATE_CONNECTING)
 		return 0;
 
 	cc->switched_to_directc2c_read = 1;
@@ -1804,6 +1805,9 @@ int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_
 
 static int process_async_ssl_errors(SSL *ssl, int ret)
 {
+	if (ret == 0)
+		return PICA_ERRDISCONNECT;
+
 	if (ret < 0)
 		switch(SSL_get_error(ssl, ret))
 		{
@@ -1813,9 +1817,6 @@ static int process_async_ssl_errors(SSL *ssl, int ret)
 		default:
 			return PICA_ERRSSL;
 		};
-
-	if (ret == 0)
-		return PICA_ERRDISCONNECT;
 
 	return PICA_OK;
 }
@@ -2033,7 +2034,8 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 
 	case PICA_C2C_STATE_ACTIVE:
 
-		if (FD_ISSET(c2c->sck_data, wfds))
+		if (FD_ISSET(c2c->sck_data, wfds)
+			 || c2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE && FD_ISSET(c2c->direct->sck, wfds))
 		{
 			if (c2c->write_pos > 0)
 			{
@@ -2045,7 +2047,8 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 			}
 		}
 
-		if (ret == PICA_OK && FD_ISSET(c2c->sck_data, rfds))
+		if (ret == PICA_OK && (FD_ISSET(c2c->sck_data, rfds)
+			|| c2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE && FD_ISSET(c2c->direct->sck, rfds)))
 		{
 			ret = PICA_read_c2c(c2c);
 		}
@@ -2090,7 +2093,6 @@ static struct PICA_c2c * find_matching_c2c(struct PICA_c2n *c2n, struct PICA_dir
 		}
 		c2c = c2c->next;
 	}
-
 	return NULL;
 }
 
@@ -2237,7 +2239,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 					if (ret != PICA_OK)
 						break;
-
+					fprintf(stderr, "outgoing directc2c is PICA_DIRECTC2C_CONNSTATE_ACTIVE\n");
 					d->state = PICA_DIRECTC2C_CONNSTATE_ACTIVE;
 
 				}
@@ -2463,7 +2465,7 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 					fdset_add(&wfds, ic2c->sck_data, &nfds);
 			}
 
-			if (ic2c->state == PICA_C2C_STATE_ACTIVE && ic2c->directc2c_state == PICA_DIRECTC2C_STATE_CONNECTING
+			if (ic2c->state == PICA_C2C_STATE_ACTIVE && (ic2c->directc2c_state == PICA_DIRECTC2C_STATE_CONNECTING || ic2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE)
 				&& ic2c->direct && ic2c->direct->state >= PICA_DIRECTC2C_CONNSTATE_CONNECTING)// CHECK CONDITIONS!
 			{
 				fdset_add(&rfds, ic2c->direct->sck, &nfds);
@@ -2672,6 +2674,7 @@ int PICA_write_c2c(struct PICA_c2c *chn)
 			{
 				chn->switched_to_directc2c_write = 1;
 				memmove(chn->write_buf, chn->write_buf + chn->directc2c_write_barrier_pos, chn->write_pos - chn->directc2c_write_barrier_pos);
+				chn->write_pos -= chn->directc2c_write_barrier_pos;
 				chn->directc2c_write_barrier_pos = 0;
 			}
 		}
