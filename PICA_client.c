@@ -155,6 +155,7 @@ int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id)
 {
 	X509 *x;
 	FILE *f;
+	int ret;
 
 	f = fopen(cert_file, "r");
 
@@ -172,7 +173,10 @@ int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id)
 		return 0;
 	}
 
-	return PICA_id_from_X509(x, id);
+	ret = PICA_id_from_X509(x, id);
+	X509_free(x);
+
+	return ret;
 }
 
 int PICA_get_id_from_cert_string(const char *cert_pem, unsigned char *id)
