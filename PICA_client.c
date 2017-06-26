@@ -582,16 +582,10 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 
 	if (cc->conn->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
 	{
-		//if (cc->directc2c_state != PICA_DIRECTC2C_STATE_INACTIVE)
-		//	return 1;
+		if (cc->directc2c_state != PICA_DIRECTC2C_STATE_INACTIVE && cc->directc2c_state != PICA_DIRECTC2C_STATE_WAITINGINCOMING)
+			return 0;
 
-		//if (cc->outgoing == PICA_C2C_OUTGOING)
-		//	cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
-		//else if (cc->outgoing == PICA_C2C_INCOMING)
-		//	cc->directc2c_state = PICA_DIRECTC2C_STATE_WAITINGINCOMING;
-		//else
-		//	return 0;
-		if (cc->directc2c_state != PICA_DIRECTC2C_STATE_WAITINGINCOMING)
+		if (cc->outgoing == PICA_C2C_OUTGOING || cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_CONNECTONLY)
 			cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
 
 		cc->direct = calloc(1, sizeof(struct PICA_directc2c));
@@ -611,7 +605,7 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 		cc->direct->addrlist[nb - 2] = 0;
 		cc->direct->addrpos = 0;
 
-		if (cc->directc2c_state == PICA_DIRECTC2C_STATE_WAITINGINCOMING)
+		if (cc->outgoing == PICA_C2C_INCOMING && cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
 			return 1;//connect later, if no incoming connection is accepted and DIRECTC2C_FAILED is received
 
 		ret = directc2c_connect_next(cc->direct, cc);
@@ -635,6 +629,9 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsi
 		return 0;
 
 	if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_DISABLED)
+		return 0;
+
+	if (cc->outgoing != PICA_C2C_INCOMING)
 		return 0;
 
 	ret = directc2c_connect_next(cc->direct, cc);
@@ -2938,8 +2935,7 @@ int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 			*((uint32_t*)(mp->tail + 3)) = chn->conn->directc2c_listener->public_addr_ipv4;
 			*((uint16_t*)(mp->tail + 7)) = htons(chn->conn->directc2c_listener->public_port);
 
-			if (chn->outgoing == PICA_C2C_INCOMING)
-				chn->directc2c_state = PICA_DIRECTC2C_STATE_WAITINGINCOMING;
+			chn->directc2c_state = PICA_DIRECTC2C_STATE_WAITINGINCOMING;
 		}
 	}
 
