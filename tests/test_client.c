@@ -303,7 +303,7 @@ cert_filename should point to file that contains client certificate, private key
 	c2ns[0] = c;
 
 
-	while(PICA_event_loop(c2ns, 500) == PICA_OK)
+	while(PICA_event_loop(c2ns, 500) == PICA_OK && c != NULL)
 	{
 		//puts("event loop...");
 		if (peerid && connected_to_node == 1 && c2c_active == 0 && c2c_in_progress == 0)
@@ -366,10 +366,6 @@ cert_filename should point to file that contains client certificate, private key
 	}
 
 
-
-
-	if (chn)
-		PICA_close_c2c(chn);
 
 	if (c)
 		PICA_close_c2n(c);
