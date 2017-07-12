@@ -21,6 +21,8 @@ int connected_to_node = 0;
 int c2c_active = 0;
 int c2c_in_progress = 0;
 
+int echo_mode = 0;
+
 unsigned char buf[64 * 1024];
 
 int accept_cb(const unsigned char *id)
@@ -32,6 +34,19 @@ int accept_cb(const unsigned char *id)
 //получение сообщения.
 void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type)
 {
+
+	if (echo_mode)
+	{
+		int ret;
+
+		ret = PICA_send_msg(chn, msgbuf, nb);
+
+		if (ret != PICA_OK)
+			printf("failed to send message, error = %i\n", ret);
+
+		return;
+	}
+
 	memcpy(buf, msgbuf, nb);
 	buf[nb] = 0;
 	printf(" %s: ", PICA_id_to_base64(peer_id, NULL));
@@ -193,7 +208,7 @@ int main(int argc, char** argv)
 		   *localdirectaddr = NULL, *extport = NULL,
 		   *locport = NULL;
 
-	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:t")) != -1)
+	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:tm")) != -1)
 	{
 		switch(opt)
 		{
@@ -227,6 +242,10 @@ int main(int argc, char** argv)
 
 		case 't':
 			directc2c_cfg = PICA_DIRECTC2C_CFG_CONNECTONLY;
+		break;
+
+		case 'm':
+			echo_mode = 1;
 		break;
 
 		default:
@@ -329,7 +348,7 @@ cert_filename should point to file that contains client certificate, private key
 
 		}
 
-		if (connected_to_node == 1 && c2c_active == 1)
+		if (connected_to_node == 1 && c2c_active == 1 && !echo_mode)
 		{
 			FD_ZERO(&stdinfds);
 			FD_SET(STDIN_FILENO, &stdinfds);
