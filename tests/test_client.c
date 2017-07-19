@@ -5,7 +5,7 @@
 #include <unistd.h>
 
 #include "../PICA_client.h"
-
+#include "../PICA_proto.h"
 
 struct sockaddr_in a;
 struct PICA_acc *acc;
@@ -22,6 +22,8 @@ int c2c_active = 0;
 int c2c_in_progress = 0;
 
 int echo_mode = 0;
+int random_message_mode = 0;
+int delivery_acks_count = 0;
 
 unsigned char buf[64 * 1024];
 
@@ -55,6 +57,7 @@ void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb
 //получение подтверждения о доставке сообщения
 void msgok_cb(const unsigned char *peer_id)
 {
+	delivery_acks_count++;
 	puts("[V]");
 }
 //создание канала с собеседником
@@ -208,7 +211,7 @@ int main(int argc, char** argv)
 		   *localdirectaddr = NULL, *extport = NULL,
 		   *locport = NULL;
 
-	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:tm")) != -1)
+	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:tmr")) != -1)
 	{
 		switch(opt)
 		{
@@ -248,10 +251,20 @@ int main(int argc, char** argv)
 			echo_mode = 1;
 		break;
 
+		case 'r':
+			random_message_mode = 1;
+		break;
+
 		default:
 			fprintf(stderr, "invalid arg %s\n", optarg);
 			return -1;
 		}
+	}
+
+	if (echo_mode && random_message_mode)
+	{
+		puts("echo mode and random test messages mode are mutually exclusive, please select only one of them");
+		return -1;
 	}
 
 	if (argc < 4 || !nodeaddr || !nodeport || !certfile)
@@ -261,6 +274,8 @@ int main(int argc, char** argv)
 		-e external port for incoming direct connections\n\
 		-l internal port to listen for incoming direct connections\n\
 		-t enable connect-only mode for direct c2c connections\n\
+		-m start in echo mode, received messages are sent back, input from stdin is not accepted\n\
+		-r send random test messages and exit, expects other side to be run in echo mode\n\
 cert_filename should point to file that contains client certificate, private key and Diffie-Hellman parameters in PEM format");
 		return 0;
 	}
@@ -348,7 +363,51 @@ cert_filename should point to file that contains client certificate, private key
 
 		}
 
-		if (connected_to_node == 1 && c2c_active == 1 && !echo_mode)
+		if (random_message_mode && connected_to_node == 1 && c2c_active == 1)
+		{
+			static int test_stage = 0;
+
+			switch(test_stage)
+			{
+			//send zero-length message
+			case 0:
+				ret = PICA_send_msg(chn, NULL, 0);
+				test_stage++;
+				break;
+
+			//send max length message
+			case 1:
+				memset(buf, 'X', PICA_PROTO_C2CMSG_MAXDATASIZE);
+				ret = PICA_send_msg(chn, buf, PICA_PROTO_C2CMSG_MAXDATASIZE);
+				test_stage++;
+				break;
+
+			//send random length message
+			case 2:
+				RAND_pseudo_bytes((unsigned char*)&ret, sizeof ret);
+				if (ret < 0)
+					ret = 0 - ret;
+				ret %= PICA_PROTO_C2CMSG_MAXDATASIZE;
+				memset(buf, 'x', ret);
+				ret = PICA_send_msg(chn, buf, ret);
+				test_stage++;
+				break;
+
+			default:
+				puts("waiting for test messages to be delivered");
+			}
+
+			if (ret != PICA_OK)
+			{
+				printf("failed to send message, error = %i\n", ret);
+				return 1;
+			}
+
+			if (delivery_acks_count == 3)
+				break;//exit main loop on success
+		}
+
+		if (connected_to_node == 1 && c2c_active == 1 && !echo_mode && !random_message_mode)
 		{
 			FD_ZERO(&stdinfds);
 			FD_SET(STDIN_FILENO, &stdinfds);
