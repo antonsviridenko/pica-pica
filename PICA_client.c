@@ -2430,7 +2430,9 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 
 		fprintf(stderr, "process_listener_conn() returned %i\n", ret);
 
-		pprevconn = &conn->next;
+		if (!kill_ptr)
+			pprevconn = &conn->next;
+
 		conn = conn->next;
 
 		if (kill_ptr)
@@ -2438,6 +2440,7 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 			*pprevconn = kill_ptr->next;
 			PICA_close_directc2c(kill_ptr);
 		}
+
 	}
 
 	return PICA_OK;
