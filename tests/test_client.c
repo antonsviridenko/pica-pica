@@ -49,6 +49,17 @@ void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb
 		return;
 	}
 
+	if (random_message_mode)
+	{
+		//compare received & sent messages, fail if they do not match exactly
+		if (memcmp(msgbuf, buf, nb) != 0)
+		{
+			printf("sent and returned messages are not equal!\n");
+			return 1;
+		}
+
+	}
+
 	memcpy(buf, msgbuf, nb);
 	buf[nb] = 0;
 	printf(" %s: ", PICA_id_to_base64(peer_id, NULL));
