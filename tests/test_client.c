@@ -24,6 +24,7 @@ int c2c_in_progress = 0;
 int echo_mode = 0;
 int random_message_mode = 0;
 int delivery_acks_count = 0;
+int rmm_wait_for_reply = 0;
 
 unsigned char buf[64 * 1024];
 
@@ -55,9 +56,10 @@ void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb
 		if (memcmp(msgbuf, buf, nb) != 0)
 		{
 			printf("sent and returned messages are not equal!\n");
-			return 1;
+			exit(1);
 		}
 
+		rmm_wait_for_reply = 0;
 	}
 
 	memcpy(buf, msgbuf, nb);
@@ -374,7 +376,7 @@ cert_filename should point to file that contains client certificate, private key
 
 		}
 
-		if (random_message_mode && connected_to_node == 1 && c2c_active == 1)
+		if (random_message_mode && connected_to_node == 1 && c2c_active == 1 && rmm_wait_for_reply == 0)
 		{
 			static int test_stage = 0;
 
@@ -384,6 +386,7 @@ cert_filename should point to file that contains client certificate, private key
 			case 0:
 				ret = PICA_send_msg(chn, NULL, 0);
 				test_stage++;
+				rmm_wait_for_reply = 1;
 				break;
 
 			//send max length message
@@ -391,6 +394,7 @@ cert_filename should point to file that contains client certificate, private key
 				memset(buf, 'X', PICA_PROTO_C2CMSG_MAXDATASIZE);
 				ret = PICA_send_msg(chn, buf, PICA_PROTO_C2CMSG_MAXDATASIZE);
 				test_stage++;
+				rmm_wait_for_reply = 1;
 				break;
 
 			//send random length message
@@ -402,6 +406,7 @@ cert_filename should point to file that contains client certificate, private key
 				memset(buf, 'x', ret);
 				ret = PICA_send_msg(chn, buf, ret);
 				test_stage++;
+				rmm_wait_for_reply = 1;
 				break;
 
 			default:
