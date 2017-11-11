@@ -134,8 +134,22 @@ int peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_pem, unsi
 
 int accept_file_cb(const unsigned char  *peer_id, uint64_t  file_size, const char *filename, unsigned int filename_size)
 {
-	printf("accept_file_cb: peer_id %s\n", PICA_id_to_base64(peer_id, NULL));
-	return 0;
+	int ret;
+	char namebuf[256];
+
+	printf("accept_file_cb: peer_id %s filename: %.*s\n", PICA_id_to_base64(peer_id, NULL), filename_size, filename);
+
+	sprintf(namebuf, "/tmp/received_%.*s", filename_size, filename);
+
+	ret = PICA_accept_file(chn, namebuf, strlen(namebuf));
+
+	if (ret != PICA_OK)
+	{
+		printf("faild to accept file, errror %i\n", ret);
+		return 0;
+	}
+
+	return 2;
 }
 
 void accepted_file_cb(const unsigned char *peer_id)
@@ -222,9 +236,10 @@ int main(int argc, char** argv)
 	const char *nodeaddr = NULL, *nodeport = NULL,
 		   *certfile = NULL, *peerid = NULL,
 		   *localdirectaddr = NULL, *extport = NULL,
+		   *filetosend = NULL,
 		   *locport = NULL;
 
-	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:tmr")) != -1)
+	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:f:tmr")) != -1)
 	{
 		switch(opt)
 		{
@@ -250,6 +265,10 @@ int main(int argc, char** argv)
 
 		case 'e':
 			extport = optarg;
+		break;
+
+		case 'f':
+			filetosend = optarg;
 		break;
 
 		case 'l':
@@ -454,6 +473,17 @@ cert_filename should point to file that contains client certificate, private key
 				if (ret != PICA_OK)
 					printf("failed to send message, error = %i\n", ret);
 			}
+		}
+
+		if (connected_to_node == 1 && c2c_active == 1 && filetosend)
+		{
+			printf("sending file %s to peer...\n", filetosend);
+			ret = PICA_send_file(chn, filetosend);
+
+			if (ret != PICA_OK)
+				printf("failed to send file %s, error = %i\n", filetosend, ret);
+
+			filetosend = NULL;
 		}
 
 
