@@ -1954,6 +1954,9 @@ static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 				if (sslret != SSL_ERROR_WANT_READ && sslret != SSL_ERROR_WANT_WRITE)
 					ret = PICA_ERRSSL;
+
+				if (sslret == SSL_ERROR_WANT_WRITE)
+					c2n->want_write = 1;
 			}
 		}
 
@@ -2026,6 +2029,8 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 
 				if (sslret != SSL_ERROR_WANT_READ && sslret != SSL_ERROR_WANT_WRITE)
 					ret = PICA_ERRSSL;
+				if (sslret == SSL_ERROR_WANT_WRITE)
+					c2c->want_write = 1;
 			}
 			else if(sslret == 0)
 			{
@@ -2251,6 +2256,9 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 					if (ret != 1)
 					{
+						if (SSL_get_error(d->ssl, ret)== SSL_ERROR_WANT_WRITE)
+							d->want_write = 1;
+
 						ret = process_async_ssl_errors(d->ssl, ret);
 
 						if (ret != PICA_OK)
@@ -2385,6 +2393,9 @@ static int process_listener_conn(struct PICA_directc2c *conn, fd_set *rfds, fd_s
 			{
 				ret = SSL_get_error(conn->ssl, ret);
 
+				if (ret == SSL_ERROR_WANT_WRITE)
+					conn->want_write = 1;
+
 				if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
 					return PICA_ERRSSL;
 			}
@@ -2428,7 +2439,7 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 				kill_ptr = conn;
 			}
 
-		fprintf(stderr, "process_listener_conn() returned %i\n", ret);
+		//fprintf(stderr, "process_listener_conn() returned %i\n", ret);
 
 		if (!kill_ptr)
 			pprevconn = &conn->next;
@@ -2481,8 +2492,11 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 		fdset_add(&rfds, (*ic2n)->sck_comm, &nfds);
 
 		if ((*ic2n)->write_pos || (*ic2n)->state == PICA_C2N_STATE_CONNECTING
-				|| (*ic2n)->state  == PICA_C2N_STATE_WAITINGTLS)
+				|| (*ic2n)->want_write/*(*ic2n)->state  == PICA_C2N_STATE_WAITINGTLS*/)
+		{
+			(*ic2n)->want_write = 0;
 			fdset_add(&wfds, (*ic2n)->sck_comm, &nfds);
+		}
 
 		if ((*ic2n)->directc2c_listener)
 		{
@@ -2493,7 +2507,11 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			while (ilstcon)
 			{
 				fdset_add(&rfds, ilstcon->sck, &nfds);
-				fdset_add(&wfds, ilstcon->sck, &nfds);
+
+				if (ilstcon->want_write)
+					fdset_add(&wfds, ilstcon->sck, &nfds);
+				ilstcon->want_write = 0;
+
 				ilstcon = ilstcon->next;
 			}
 		}
@@ -2506,16 +2524,24 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			{
 				fdset_add(&rfds, ic2c->sck_data, &nfds);
 
-				if (ic2c->write_pos || ic2c->state == PICA_C2C_STATE_CONNECTING || ic2c->state == PICA_C2C_STATE_WAITINGTLS
-						|| ic2c->sendfilestate == PICA_CHANSENDFILESTATE_SENDING)
+				if ((ic2c->write_pos || ic2c->state == PICA_C2C_STATE_CONNECTING || (ic2c->state == PICA_C2C_STATE_WAITINGTLS && ic2c->want_write)
+						|| ic2c->sendfilestate == PICA_CHANSENDFILESTATE_SENDING) && ic2c->directc2c_state != PICA_DIRECTC2C_STATE_ACTIVE)
+				{
+					ic2c->want_write = 0;
 					fdset_add(&wfds, ic2c->sck_data, &nfds);
+				}
 			}
 
 			if (ic2c->state == PICA_C2C_STATE_ACTIVE && (ic2c->directc2c_state == PICA_DIRECTC2C_STATE_CONNECTING || ic2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE)
-				&& ic2c->direct && ic2c->direct->state >= PICA_DIRECTC2C_CONNSTATE_CONNECTING)// CHECK CONDITIONS!
+				&& ic2c->direct && ic2c->direct->state >= PICA_DIRECTC2C_CONNSTATE_CONNECTING)
 			{
 				fdset_add(&rfds, ic2c->direct->sck, &nfds);
-				fdset_add(&wfds, ic2c->direct->sck, &nfds);
+
+				if (ic2c->write_pos || ic2c->direct->state == PICA_DIRECTC2C_CONNSTATE_CONNECTING || ic2c->direct->want_write || ic2c->sendfilestate == PICA_CHANSENDFILESTATE_SENDING)
+				{
+					ic2c->direct->want_write = 0;
+					fdset_add(&wfds, ic2c->direct->sck, &nfds);
+				}
 			}
 
 			ic2c = ic2c->next;

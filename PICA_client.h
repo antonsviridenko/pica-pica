@@ -170,6 +170,7 @@ struct PICA_c2n
 	int init_resp_ok;
 	unsigned char node_ver_major, node_ver_minor;
 	int disconnect_on_empty_write_buf;
+	int want_write;
 };
 
 enum PICA_c2c_state
@@ -207,6 +208,7 @@ struct PICA_directc2c
 	SOCKET sck;
 	SSL *ssl;
 	X509 *peer_cert;
+	int want_write;
 
 	uint8_t *addrlist;
 	int addrpos;
@@ -257,6 +259,7 @@ struct PICA_c2c
 	int disconnect_on_empty_write_buf;
 	int switched_to_directc2c_write;
 	int switched_to_directc2c_read;
+	int want_write;
 	unsigned int directc2c_write_barrier_pos;
 	unsigned int directc2c_write_before_barrier_pos;
 };
