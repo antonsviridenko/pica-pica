@@ -2479,6 +2479,7 @@ void process_c2n_write()
 				if (client_tree_search(i_ptr->id))
 				{
 					PICA_info("Disconnecting client %p because other user with same ID = %u is already connected", i_ptr, i_ptr->id);
+					memset(i_ptr->id, 0, PICA_ID_SIZE);//reset id to all zeros to prevent removing existing ID from previous connection from client_tree
 					ret = 0;//id already exists in tree
 				}
 				else
