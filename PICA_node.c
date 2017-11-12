@@ -1482,10 +1482,14 @@ int client_tree_add(struct client *ci)
 
 		do
 		{
-			if (memcmp(i->id, ci->id, PICA_ID_SIZE) == 0)
+			int cmp;
+
+			cmp = memcmp(ci->id, i->id, PICA_ID_SIZE);
+
+			if (cmp == 0)
 				return 0;
 
-			if (memcmp(ci->id, i->id, PICA_ID_SIZE) < 0) // ci->id < i->id
+			if (cmp < 0) // ci->id < i->id
 			{
 				if (i->left)
 					i = i->left;
@@ -1525,10 +1529,12 @@ struct client* client_tree_search(const unsigned char *id)
 
 	while(i_ptr)
 	{
-		if (memcmp(i_ptr->id, id, PICA_ID_SIZE) == 0)
+		int cmp = memcmp(id, i_ptr->id, PICA_ID_SIZE);
+
+		if (cmp == 0)
 			return i_ptr;
 
-		if (memcmp(id, i_ptr->id, PICA_ID_SIZE) < 0) //id < i_ptr->id
+		if (cmp < 0) //id < i_ptr->id
 			i_ptr = i_ptr->left;
 		else
 			i_ptr = i_ptr->right;
