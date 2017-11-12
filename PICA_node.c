@@ -2470,13 +2470,20 @@ void process_c2n_write()
 					PICA_error("Unable to get client id from certificate");
 					kill_ptr = i_ptr;
 				}
-				//PICA_debug2("user id=%u",i_ptr->id);
-#warning "see comments below"
-				//сделать проверку названия сети!!!!---------------------------<<<<<<<<<<<<<<<<<<<<<<
 
 				X509_free(client_cert);
-				//прицепить структуру к дереву
-				if (client_tree_search(i_ptr->id))
+
+				//reject all-zeroes ID
+				{
+					static const char zeroID[PICA_ID_SIZE] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+					if (memcmp(zeroID, i_ptr->id, PICA_ID_SIZE) == 0)
+					{
+						PICA_error("Rejecting all-zero Pica ID");
+						kill_ptr = i_ptr;
+					}
+				}
+
+				if (!kill_ptr && client_tree_search(i_ptr->id))
 				{
 					PICA_info("Disconnecting client %p because other user with same ID = %u is already connected", i_ptr, i_ptr->id);
 					memset(i_ptr->id, 0, PICA_ID_SIZE);//reset id to all zeros to prevent removing existing ID from previous connection from client_tree
