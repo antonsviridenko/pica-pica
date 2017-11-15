@@ -11,7 +11,7 @@
 #define IOCTLSETNONBLOCKINGSOCKET(s, arg) ioctl(s, FIONBIO, (int*)(arg))
 #endif
 
-#ifdef WIN32
+#if  defined(WIN32) || defined (__APPLE__)
 #define MSG_NOSIGNAL 0
 #endif
 
