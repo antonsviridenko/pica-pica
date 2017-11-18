@@ -29,9 +29,13 @@ void Sound::play(const QString sndfile)
     if (is_muted)
         return;
 
-#ifndef WIN32
+#if defined(__gnu_linux__)
     QProcess::execute("aplay -q " + sndfile);
-#else
+#endif
+#if defined(WIN32)
     sndPlaySound(sndfile.toAscii().constData(), SND_ASYNC | SND_NODEFAULT);
+#endif
+#if defined(__APPLE__)
+	QProcess::execute("/usr/bin/afplay " + sndfile);
 #endif
 }
