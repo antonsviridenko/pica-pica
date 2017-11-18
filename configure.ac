@@ -17,6 +17,7 @@ AC_SYS_LARGEFILE
 # Platform-specific environment settings
 AS_CASE([$host],
     [*-*-freebsd*],  [LDFLAGS="$LDFLAGS -L/usr/local/lib" CPPFLAGS="$CPPFLAGS -I/usr/local/include"],
+    [*-apple-darwin*], [LDFLAGS="$LDFLAGS -headerpad_max_install_names"],
     []
 )
 
