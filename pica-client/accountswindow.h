@@ -9,24 +9,24 @@
 
 class AccountsWindow : public QMainWindow
 {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    explicit AccountsWindow(QWidget *parent = 0);
+	explicit AccountsWindow(QWidget *parent = 0);
 
 private:
-    QComboBox *cb_accounts;
-    QPushButton *bt_login;
-    QPushButton *bt_registernew;
-    QPushButton *bt_addimport;
-    QPushButton *bt_delete;
+	QComboBox *cb_accounts;
+	QPushButton *bt_login;
+	QPushButton *bt_registernew;
+	QPushButton *bt_addimport;
+	QPushButton *bt_delete;
 
-    Accounts accounts;
-    QList<Accounts::AccountRecord> L;
+	Accounts accounts;
+	QList<Accounts::AccountRecord> L;
 
-    void LoadAccounts();
-    void CreateAccount(QString CertFilename, QString PkeyFilename, bool copyfiles);
+	void LoadAccounts();
+	void CreateAccount(QString CertFilename, QString PkeyFilename, bool copyfiles);
 
-    void closeEvent(QCloseEvent *);
+	void closeEvent(QCloseEvent *);
 
 
 signals:
@@ -34,10 +34,10 @@ signals:
 public slots:
 
 private slots:
-    void login_click();
-    void register_click();
-    void add_click();
-    void delete_click();
+	void login_click();
+	void register_click();
+	void add_click();
+	void delete_click();
 
 };
 

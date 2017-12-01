@@ -10,79 +10,82 @@
 
 class FileTransferDialog : public QDialog
 {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    enum TransferDirection
-    {
-    SENDING,
-    RECEIVING
-    };
+	enum TransferDirection
+	{
+		SENDING,
+		RECEIVING
+	};
 
-    enum TransferStatus
-    {
-    WAITINGFORACCEPT,
-    DENIED,
-    SENDINGFILE,
-    RECEIVINGFILE,
-    PAUSED,
-    CANCELLED,
-    PEERDISCONNECTED,
-    IOERROR,
-    FINISHED
-    };
+	enum TransferStatus
+	{
+		WAITINGFORACCEPT,
+		DENIED,
+		SENDINGFILE,
+		RECEIVINGFILE,
+		PAUSED,
+		CANCELLED,
+		PEERDISCONNECTED,
+		IOERROR,
+		FINISHED
+	};
 
-    explicit FileTransferDialog(QByteArray peer_id, QString filename, quint64 size,
-                                TransferDirection drct, QWidget *parent = 0);
+	explicit FileTransferDialog(QByteArray peer_id, QString filename, quint64 size,
+	                            TransferDirection drct, QWidget *parent = 0);
 
-    TransferDirection getTransferDirection() {return dir_;};
+	TransferDirection getTransferDirection()
+	{
+		return dir_;
+	};
 
 
 private:
-    QLabel *lbFilename;
-    QLabel *lbPeer;
-    QLabel *lbProgressStatus;
-    QLabel *lbTransferSpeed;
-    QLabel *lbRemainingTime;
-    QLabel *lbTransferStatus;
-    QProgressBar *pgbar;
-    QPushButton *leftbutton;
-    QPushButton *rightbutton;
+	QLabel *lbFilename;
+	QLabel *lbPeer;
+	QLabel *lbProgressStatus;
+	QLabel *lbTransferSpeed;
+	QLabel *lbRemainingTime;
+	QLabel *lbTransferStatus;
+	QProgressBar *pgbar;
+	QPushButton *leftbutton;
+	QPushButton *rightbutton;
 
-    QByteArray peer_id_;
-    QString peer_name_;
-    TransferDirection dir_;
-    QString filename_;
-    quint64 filesize_;
+	QByteArray peer_id_;
+	QString peer_name_;
+	TransferDirection dir_;
+	QString filename_;
+	quint64 filesize_;
 
-    double percents;
-    quint64 progress_;
-    quint64 prevprogress_;
+	double percents;
+	quint64 progress_;
+	quint64 prevprogress_;
 
-    static QString bytestoHumanBase2(quint64 bytes);
-    static QString bytestoHumanBase10(quint64 bytes);
-    static QString timeLeft(quint64 seconds);
+	static QString bytestoHumanBase2(quint64 bytes);
+	static QString bytestoHumanBase10(quint64 bytes);
+	static QString timeLeft(quint64 seconds);
 
-    QTimer *timer;
+	QTimer *timer;
 signals:
-    void pausedFile(QByteArray peer_id, FileTransferDialog *sender);
-    void resumedFile(QByteArray peer_id, FileTransferDialog *sender);
-    void cancelledFile(QByteArray peer_id, FileTransferDialog *sender);
-    void acceptedFile(QByteArray peer_id);
-    void deniedFile(QByteArray peer_id);
+	void pausedFile(QByteArray peer_id, FileTransferDialog *sender);
+	void resumedFile(QByteArray peer_id, FileTransferDialog *sender);
+	void cancelledFile(QByteArray peer_id, FileTransferDialog *sender);
+	void acceptedFile(QByteArray peer_id);
+	void deniedFile(QByteArray peer_id);
 
 public slots:
-    void update(quint64 progress);
-    void setTransferStatus(enum TransferStatus st);
-    void pausedByPeer();
-    void resumedByPeer();
-    void cancelledByPeer();
-    void ioError();
-    void peerDisconnected();
+	void update(quint64 progress);
+	void setTransferStatus(enum TransferStatus st);
+	void pausedByPeer();
+	void resumedByPeer();
+	void cancelledByPeer();
+	void ioError();
+	void peerDisconnected();
 
 private slots:
-    void timeout();
-    void leftbuttonclick();
-    void rightbuttonclick();
+	void timeout();
+	void leftbuttonclick();
+	void rightbuttonclick();
 
 };
 

@@ -334,8 +334,8 @@ int PICA_get_id_from_cert_string(const char *cert_pem, unsigned char *id);
 int PICA_client_init(struct PICA_client_callbacks *clcbs);
 
 int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int port,
-				 enum PICA_directc2c_config direct_c2c_mode, struct PICA_listener *l,
-				 struct PICA_c2n **ci);
+                 enum PICA_directc2c_config direct_c2c_mode, struct PICA_listener *l,
+                 struct PICA_c2n **ci);
 
 int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_listener *l, struct PICA_c2c **chn);
 

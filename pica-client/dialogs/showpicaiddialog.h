@@ -10,17 +10,17 @@
 
 class ShowPicaIdDialog : public QDialog
 {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    explicit ShowPicaIdDialog(QString name, QByteArray id, QString caption, QWidget *parent = 0);
+	explicit ShowPicaIdDialog(QString name, QByteArray id, QString caption, QWidget *parent = 0);
 
 private slots:
-    void Ok();
+	void Ok();
 
 private:
-    QLabel *lbname_;
-    QLineEdit *picaid_;
-    QPushButton *btok_;
+	QLabel *lbname_;
+	QLineEdit *picaid_;
+	QPushButton *btok_;
 
 };
 

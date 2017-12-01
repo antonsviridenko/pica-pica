@@ -31,12 +31,12 @@ private:
 	QPushButton *btOk;
 	QPushButton *btCancel;
 
-    void loadSettings();
-    void storeSettings();
+	void loadSettings();
+	void storeSettings();
 
 private slots:
-    void OK();
-    void Cancel();
+	void OK();
+	void Cancel();
 	void toggleIncomingConnections(bool checked);
 
 };

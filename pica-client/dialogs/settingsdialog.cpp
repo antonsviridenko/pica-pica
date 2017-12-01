@@ -73,23 +73,23 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	tabW->addTab(soundstab, tr("Sounds"));
 	settingsLayout->addWidget(tabW);
 
-    QHBoxLayout *buttonsLayout = new QHBoxLayout;
+	QHBoxLayout *buttonsLayout = new QHBoxLayout;
 
-    btOk = new QPushButton(tr("&OK"), this);
-    btCancel = new QPushButton(tr("Cancel"), this);
+	btOk = new QPushButton(tr("&OK"), this);
+	btCancel = new QPushButton(tr("Cancel"), this);
 
-    buttonsLayout->addStretch(1);
-    buttonsLayout->addWidget(btOk);
-    buttonsLayout->addWidget(btCancel);
+	buttonsLayout->addStretch(1);
+	buttonsLayout->addWidget(btOk);
+	buttonsLayout->addWidget(btCancel);
 
-    settingsLayout->addLayout(buttonsLayout);
+	settingsLayout->addLayout(buttonsLayout);
 
 	setLayout(settingsLayout);
 
-    connect(btOk, SIGNAL(clicked()), this, SLOT(OK()));
-    connect(btCancel, SIGNAL(clicked()), this, SLOT(Cancel()));
+	connect(btOk, SIGNAL(clicked()), this, SLOT(OK()));
+	connect(btCancel, SIGNAL(clicked()), this, SLOT(Cancel()));
 
-    loadSettings();
+	loadSettings();
 
 	setWindowTitle(tr("Pica Pica Messenger Settings"));
 }
@@ -103,66 +103,66 @@ void SettingsDialog::toggleIncomingConnections(bool checked)
 
 void SettingsDialog::OK()
 {
-    storeSettings();
-    done(1);
+	storeSettings();
+	done(1);
 }
 
 void SettingsDialog::Cancel()
 {
-    done(0);
+	done(0);
 }
 
 void SettingsDialog::loadSettings()
 {
-    Settings st(config_dbname);
+	Settings st(config_dbname);
 
-    //Direct c2c connections
-    int c2c_state;
+	//Direct c2c connections
+	int c2c_state;
 
-    c2c_state = st.loadValue("direct_c2c.state", 1).toInt();
+	c2c_state = st.loadValue("direct_c2c.state", 1).toInt();
 
-    switch (c2c_state)
-    {
-    case 0:
-        rbDisableDirectConns->setChecked(true);
-        break;
+	switch (c2c_state)
+	{
+	case 0:
+		rbDisableDirectConns->setChecked(true);
+		break;
 
-    case 1:
-        rbEnableOutgoingConns->setChecked(true);
-        break;
+	case 1:
+		rbEnableOutgoingConns->setChecked(true);
+		break;
 
-    case 2:
-        rbEnableIncomingConns->setChecked(true);
-        break;
+	case 2:
+		rbEnableIncomingConns->setChecked(true);
+		break;
 
-    default:
-        break;
-    }
+	default:
+		break;
+	}
 
 	addr->lineEdit()->setText(st.loadValue("direct_c2c.public_addr", "0.0.0.0").toString());
 
-    publicPort->setValue(st.loadValue("direct_c2c.public_port", 2298).toInt());
-    localPort->setValue(st.loadValue("direct_c2c.local_port", 2298).toInt());
+	publicPort->setValue(st.loadValue("direct_c2c.public_port", 2298).toInt());
+	localPort->setValue(st.loadValue("direct_c2c.local_port", 2298).toInt());
 
 }
 
 void SettingsDialog::storeSettings()
 {
-    Settings st(config_dbname);
+	Settings st(config_dbname);
 
-    //Direct c2c connections
-    int c2c_state;
+	//Direct c2c connections
+	int c2c_state;
 
-    if (rbDisableDirectConns->isChecked())
-        c2c_state = 0;
-    else if (rbEnableOutgoingConns->isChecked())
-        c2c_state = 1;
-    else if (rbEnableIncomingConns->isChecked())
-        c2c_state = 2;
+	if (rbDisableDirectConns->isChecked())
+		c2c_state = 0;
+	else if (rbEnableOutgoingConns->isChecked())
+		c2c_state = 1;
+	else if (rbEnableIncomingConns->isChecked())
+		c2c_state = 2;
 
-    st.storeValue("direct_c2c.state", QString::number(c2c_state));
+	st.storeValue("direct_c2c.state", QString::number(c2c_state));
 
 	st.storeValue("direct_c2c.public_addr", addr->lineEdit()->text());
-    st.storeValue("direct_c2c.public_port", QString::number(publicPort->value()));
-    st.storeValue("direct_c2c.local_port", QString::number(localPort->value()));
+	st.storeValue("direct_c2c.public_port", QString::number(publicPort->value()));
+	st.storeValue("direct_c2c.local_port", QString::number(localPort->value()));
 }

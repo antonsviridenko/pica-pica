@@ -5,13 +5,13 @@
 class Sound
 {
 public:
-    Sound();
+	Sound();
 
-    static void play(const QString sndfile);
-    static void mute(bool yes);
+	static void play(const QString sndfile);
+	static void mute(bool yes);
 
 private:
-    static bool is_muted;
+	static bool is_muted;
 };
 
 #endif // SOUND_H

@@ -21,19 +21,19 @@ Sound::Sound()
 
 void Sound::mute(bool yes)
 {
-    is_muted = yes;
+	is_muted = yes;
 }
 
 void Sound::play(const QString sndfile)
 {
-    if (is_muted)
-        return;
+	if (is_muted)
+		return;
 
 #if defined(__gnu_linux__)
-    QProcess::execute("aplay -q " + sndfile);
+	QProcess::execute("aplay -q " + sndfile);
 #endif
 #if defined(WIN32)
-    sndPlaySound(sndfile.toAscii().constData(), SND_ASYNC | SND_NODEFAULT);
+	sndPlaySound(sndfile.toAscii().constData(), SND_ASYNC | SND_NODEFAULT);
 #endif
 #if defined(__APPLE__)
 	QProcess::execute("/usr/bin/afplay " + sndfile);

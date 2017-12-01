@@ -7,28 +7,28 @@
 
 class ForgedCertDialog : public QDialog
 {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    explicit ForgedCertDialog(QByteArray peer_id, QString received_cert, QString stored_cert, QWidget *parent = 0);
+	explicit ForgedCertDialog(QByteArray peer_id, QString received_cert, QString stored_cert, QWidget *parent = 0);
 
 private:
-    QString received_cert_;
-    QString stored_cert_;
+	QString received_cert_;
+	QString stored_cert_;
 
-    QPushButton *btOK;
-    QPushButton *btShow_stored_cert;
-    QPushButton *btShow_received_cert;
+	QPushButton *btOK;
+	QPushButton *btShow_stored_cert;
+	QPushButton *btShow_received_cert;
 
-    
+
 signals:
-    
+
 public slots:
 
 private slots:
-    void OK();
-    void StoredCert();
-    void ReceivedCert();
-    
+	void OK();
+	void StoredCert();
+	void ReceivedCert();
+
 };
 
 #endif // FORGEDCERTDIALOG_H

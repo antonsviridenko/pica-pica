@@ -6,102 +6,102 @@
 
 
 RegisterAccountDialog::RegisterAccountDialog(QWidget *parent) :
-    QDialog(parent)
+	QDialog(parent)
 {
-    QVBoxLayout *layout = new QVBoxLayout(this);
+	QVBoxLayout *layout = new QVBoxLayout(this);
 
-    QLabel *lbNickname = new QLabel(tr("Name:"));
-    lbPassword = new QLabel(tr("Password:"));
-    lbRepeatPassword = new QLabel(tr("Repeat password:"));
+	QLabel *lbNickname = new QLabel(tr("Name:"));
+	lbPassword = new QLabel(tr("Password:"));
+	lbRepeatPassword = new QLabel(tr("Repeat password:"));
 
-    nickname = new QLineEdit();
-    btRegister = new QPushButton(tr("Create"));
+	nickname = new QLineEdit();
+	btRegister = new QPushButton(tr("Create"));
 
-    #ifndef WIN32
-    cbUseDevRandom = new QCheckBox(tr("Use /dev/random as a random data source"));
-    #endif
+#ifndef WIN32
+	cbUseDevRandom = new QCheckBox(tr("Use /dev/random as a random data source"));
+#endif
 
-    cbSetPassword = new QCheckBox(tr("Set passphrase for the secret key"));
-    password = new QLineEdit();
-    repeatPassword = new QLineEdit();
-    lbStatus = new QLabel(tr("Enter your name and press\n \"Create\" to create new Pica Pica certificate"));
-    //btOK = new QPushButton(tr("OK"));
+	cbSetPassword = new QCheckBox(tr("Set passphrase for the secret key"));
+	password = new QLineEdit();
+	repeatPassword = new QLineEdit();
+	lbStatus = new QLabel(tr("Enter your name and press\n \"Create\" to create new Pica Pica certificate"));
+	//btOK = new QPushButton(tr("OK"));
 
-    password->setEchoMode(QLineEdit::Password);
-    repeatPassword->setEchoMode(QLineEdit::Password);
+	password->setEchoMode(QLineEdit::Password);
+	repeatPassword->setEchoMode(QLineEdit::Password);
 
-    {
-        QFont f;
-        f= lbStatus->font();
-        f.setBold(true);
-        lbStatus->setFont(f);
-    }
+	{
+		QFont f;
+		f = lbStatus->font();
+		f.setBold(true);
+		lbStatus->setFont(f);
+	}
 
-    layout->addWidget(lbNickname);
-    layout->addWidget(nickname);
-    #ifndef WIN32
-    layout->addWidget(cbUseDevRandom);
-    #endif
-    layout->addWidget(cbSetPassword);
-    layout->addWidget(lbPassword);
-    layout->addWidget(password);
-    layout->addWidget(lbRepeatPassword);
-    layout->addWidget(repeatPassword);
-    layout->addWidget(btRegister);
-    layout->addWidget(lbStatus);
-    //layout->addWidget(btOK);
+	layout->addWidget(lbNickname);
+	layout->addWidget(nickname);
+#ifndef WIN32
+	layout->addWidget(cbUseDevRandom);
+#endif
+	layout->addWidget(cbSetPassword);
+	layout->addWidget(lbPassword);
+	layout->addWidget(password);
+	layout->addWidget(lbRepeatPassword);
+	layout->addWidget(repeatPassword);
+	layout->addWidget(btRegister);
+	layout->addWidget(lbStatus);
+	//layout->addWidget(btOK);
 
-    setLayout(layout);
+	setLayout(layout);
 
-    vld = new QRegExpValidator(QRegExp("[^\\#\\$&\"\'=\\(\\)\\\\/\\|`!<>\\{\\}\\[\\]\\+]+"), this);
-    nickname->setValidator(vld);
+	vld = new QRegExpValidator(QRegExp("[^\\#\\$&\"\'=\\(\\)\\\\/\\|`!<>\\{\\}\\[\\]\\+]+"), this);
+	nickname->setValidator(vld);
 
-    //connect(btOK, SIGNAL(clicked()), this, SLOT(OK()));
-    connect(btRegister, SIGNAL(clicked()), this, SLOT(Register()));
-    connect(cbSetPassword, SIGNAL(clicked()), this, SLOT(setPasswordClick()));
-    #ifndef WIN32
-    connect(cbUseDevRandom, SIGNAL(clicked()), this, SLOT(useDevRandomClick()));
-    #endif
+	//connect(btOK, SIGNAL(clicked()), this, SLOT(OK()));
+	connect(btRegister, SIGNAL(clicked()), this, SLOT(Register()));
+	connect(cbSetPassword, SIGNAL(clicked()), this, SLOT(setPasswordClick()));
+#ifndef WIN32
+	connect(cbUseDevRandom, SIGNAL(clicked()), this, SLOT(useDevRandomClick()));
+#endif
 
-    setPasswordClick();
+	setPasswordClick();
 }
 
 void RegisterAccountDialog::useDevRandomClick()
 {
 #ifndef WIN32
-    if (cbUseDevRandom->isChecked())
-    {
-        QMessageBox mbx;
-        mbx.setText(tr("Using /dev/random is more preferable for generating long-term high-value cryptographic keys, but it can take 5 - 10 minutes to collect required amount of entropy. You'll have to press random keys on keyboard and move mouse randomly to provide random data. "));
-        mbx.exec();
-    }
+	if (cbUseDevRandom->isChecked())
+	{
+		QMessageBox mbx;
+		mbx.setText(tr("Using /dev/random is more preferable for generating long-term high-value cryptographic keys, but it can take 5 - 10 minutes to collect required amount of entropy. You'll have to press random keys on keyboard and move mouse randomly to provide random data. "));
+		mbx.exec();
+	}
 #endif
 }
 
 void RegisterAccountDialog::setPasswordClick()
 {
-    if (cbSetPassword->isChecked())
-    {
-        password -> setDisabled(false);
-        repeatPassword -> setDisabled(false);
+	if (cbSetPassword->isChecked())
+	{
+		password -> setDisabled(false);
+		repeatPassword -> setDisabled(false);
 
-        password->show();
-        repeatPassword->show();
-        lbPassword->show();
-        lbRepeatPassword->show();
-    }
-    else
-    {
-        password -> setDisabled(true);
-        repeatPassword -> setDisabled(true);
+		password->show();
+		repeatPassword->show();
+		lbPassword->show();
+		lbRepeatPassword->show();
+	}
+	else
+	{
+		password -> setDisabled(true);
+		repeatPassword -> setDisabled(true);
 
-        password->setHidden(true);
-        repeatPassword->setHidden(true);
-        lbPassword->hide();
-        lbRepeatPassword->hide();
-    }
+		password->setHidden(true);
+		repeatPassword->setHidden(true);
+		lbPassword->hide();
+		lbRepeatPassword->hide();
+	}
 
-    adjustSize();
+	adjustSize();
 }
 
 //void RegisterAccountDialog::OK()
@@ -112,95 +112,95 @@ void RegisterAccountDialog::setPasswordClick()
 
 void RegisterAccountDialog::Register()
 {
-    //check name
-    QString name = nickname->text();
-    QString rand = QString::null;
+	//check name
+	QString name = nickname->text();
+	QString rand = QString::null;
 
-    if (name.toUtf8().size() > 63) //64 bytes - CN length in X509 certificate
-    {
-        QMessageBox mbx;
-        mbx.setText(tr("Name is too long"));
-        mbx.exec();
-        return;
-    }
+	if (name.toUtf8().size() > 63) //64 bytes - CN length in X509 certificate
+	{
+		QMessageBox mbx;
+		mbx.setText(tr("Name is too long"));
+		mbx.exec();
+		return;
+	}
 
-    if (name.isEmpty())
-    {
-        QMessageBox mbx;
-        mbx.setText(tr("You must enter account name"));
-        mbx.exec();
-        return;
-    }
+	if (name.isEmpty())
+	{
+		QMessageBox mbx;
+		mbx.setText(tr("You must enter account name"));
+		mbx.exec();
+		return;
+	}
 
-    if (cbSetPassword->isChecked())
-    {
-        if (password->text() != repeatPassword->text())
-        {
-            QMessageBox mbx;
-            mbx.setText(tr("Passphrases do not match"));
-            mbx.exec();
-            return;
-        }
-    }
+	if (cbSetPassword->isChecked())
+	{
+		if (password->text() != repeatPassword->text())
+		{
+			QMessageBox mbx;
+			mbx.setText(tr("Passphrases do not match"));
+			mbx.exec();
+			return;
+		}
+	}
 
-    #ifndef WIN32
-    if (cbUseDevRandom->isChecked())
-    {
-        rand = "/dev/random";
-    }
+#ifndef WIN32
+	if (cbUseDevRandom->isChecked())
+	{
+		rand = "/dev/random";
+	}
 
-    cbUseDevRandom -> setDisabled(true);
-    #endif
+	cbUseDevRandom -> setDisabled(true);
+#endif
 
-    cbSetPassword -> setDisabled(true);
+	cbSetPassword -> setDisabled(true);
 
-    //1
-    lbStatus->setText(tr("1) generating RSA keypair..."));
+	//1
+	lbStatus->setText(tr("1) generating RSA keypair..."));
 
-    nickname->setEnabled(false);
-    btRegister->setEnabled(false);
+	nickname->setEnabled(false);
+	btRegister->setEnabled(false);
 
-    ost.GenRSAKeySignal(4096, config_dir + QDir::separator() + "privkey.pem", cbSetPassword->isChecked(),
-        password->text(),rand, this, SLOT(stageSignCert(int,QProcess::ExitStatus)));
+	ost.GenRSAKeySignal(4096, config_dir + QDir::separator() + "privkey.pem", cbSetPassword->isChecked(),
+	                    password->text(), rand, this, SLOT(stageSignCert(int, QProcess::ExitStatus)));
 }
 
-void RegisterAccountDialog::stageSignCert(int retval,QProcess::ExitStatus)
+void RegisterAccountDialog::stageSignCert(int retval, QProcess::ExitStatus)
 {
-    if (retval != 0)
-    {
-        lbStatus->setText(tr("Error:\n") + ost.ReadStdErr());
-        return;
-    }
+	if (retval != 0)
+	{
+		lbStatus->setText(tr("Error:\n") + ost.ReadStdErr());
+		return;
+	}
 
-    lbStatus->setText(tr("2) Signing certificate..."));
+	lbStatus->setText(tr("2) Signing certificate..."));
 
-    ost.GenCertSignal(config_dir + QDir::separator() + "cert.pem",
-                      config_dir + QDir::separator() + "privkey.pem",
-                      password->text(),nickname->text(),
-                      this,SLOT(stageFinished(int,QProcess::ExitStatus)));
+	ost.GenCertSignal(config_dir + QDir::separator() + "cert.pem",
+	                  config_dir + QDir::separator() + "privkey.pem",
+	                  password->text(), nickname->text(),
+	                  this, SLOT(stageFinished(int, QProcess::ExitStatus)));
 }
 
 void RegisterAccountDialog::stageFinished(int retval, QProcess::ExitStatus)
 {
-    if (retval != 0)
-    {
-        lbStatus->setText(tr("Error:\n") + ost.ReadStdErr());
-        return;
-    }
+	if (retval != 0)
+	{
+		lbStatus->setText(tr("Error:\n") + ost.ReadStdErr());
+		return;
+	}
 
-    CertFilename_ = config_dir + QDir::separator() + "cert.pem";
-    PkeyFilename_ = config_dir + QDir::separator() + "privkey.pem";
+	CertFilename_ = config_dir + QDir::separator() + "cert.pem";
+	PkeyFilename_ = config_dir + QDir::separator() + "privkey.pem";
 
-    done(1);
+	done(1);
 }
 
 QString RegisterAccountDialog::GetCertFilename()
 {
-    return CertFilename_;
+	return CertFilename_;
 }
 
 QString RegisterAccountDialog::GetPkeyFilename()
 {
-    return PkeyFilename_;
+	return PkeyFilename_;
 }
 

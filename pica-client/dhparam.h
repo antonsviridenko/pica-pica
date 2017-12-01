@@ -8,28 +8,28 @@
 
 class DHParam : public QObject
 {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    explicit DHParam(QObject *parent = 0);
-    static bool VerifyDefault(QString *errormsg);
-    static bool VerifyGenerated(QString *errormsg);
-    static bool UseDefault();
-    static bool StartNewDHParamGeneration(QString *errormsg);
+	explicit DHParam(QObject *parent = 0);
+	static bool VerifyDefault(QString *errormsg);
+	static bool VerifyGenerated(QString *errormsg);
+	static bool UseDefault();
+	static bool StartNewDHParamGeneration(QString *errormsg);
 
-    static QString GetDHParamFilename();
+	static QString GetDHParamFilename();
 
 signals:
-    
+
 public slots:
 
 private:
-    static DHParam *dhparamgenerator;
-    static QString current_dhparam_file;
+	static DHParam *dhparamgenerator;
+	static QString current_dhparam_file;
 
-    OpenSSLTool osslt;
+	OpenSSLTool osslt;
 
 private slots:
-    void DHParamGenFinished(int retval, QProcess::ExitStatus);
+	void DHParamGenFinished(int retval, QProcess::ExitStatus);
 };
 
 #endif // DHPARAM_H

@@ -10,29 +10,29 @@
 
 class NodeThread : public QThread
 {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    explicit NodeThread( Nodes::NodeRecord &addr, bool *completed, PICA_acc *acc,struct PICA_c2n **pica_conn, QMutex *wm);
-    void CloseThread();
+	explicit NodeThread( Nodes::NodeRecord &addr, bool *completed, PICA_acc *acc, struct PICA_c2n **pica_conn, QMutex *wm);
+	void CloseThread();
 private:
-    void run();
-    static QMutex finished_mutex;
+	void run();
+	static QMutex finished_mutex;
 
-    QMutex *write_mutex;
+	QMutex *write_mutex;
 
-    bool *finished_flag;
-    Nodes::NodeRecord  node_addr;
-    struct PICA_c2n *ci;
-    struct PICA_acc *user_account;
-    struct PICA_c2n **connection;
+	bool *finished_flag;
+	Nodes::NodeRecord  node_addr;
+	struct PICA_c2n *ci;
+	struct PICA_acc *user_account;
+	struct PICA_c2n **connection;
 
-    int exit;
+	int exit;
 
 
 signals:
-    void NodeStatusChanged(QString addr, quint16 port, bool alive);
-    void ConnectedToNode(QString addr, quint16 port, NodeThread *thread);
-    void ErrorMsg(QString msg);
+	void NodeStatusChanged(QString addr, quint16 port, bool alive);
+	void ConnectedToNode(QString addr, quint16 port, NodeThread *thread);
+	void ErrorMsg(QString msg);
 public slots:
 
 };

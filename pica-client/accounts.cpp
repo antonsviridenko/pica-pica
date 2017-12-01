@@ -5,133 +5,133 @@ Accounts::AccountRecord Accounts::current_account;
 
 Accounts::AccountRecord & Accounts::GetCurrentAccount()
 {
-    return Accounts::current_account;
+	return Accounts::current_account;
 }
 
 void Accounts::SetCurrentAccount(Accounts::AccountRecord &rec)
 {
-    Accounts::current_account = rec;
+	Accounts::current_account = rec;
 }
 
 Accounts::Accounts(QString storage)
 {
-    dbconn=QSqlDatabase::addDatabase("QSQLITE");
-    dbconn.setDatabaseName(storage);
+	dbconn = QSqlDatabase::addDatabase("QSQLITE");
+	dbconn.setDatabaseName(storage);
 
-    if (!dbconn.open())
-    {
-    lasterr=dbconn.lastError();
-    return;
-    }
+	if (!dbconn.open())
+	{
+		lasterr = dbconn.lastError();
+		return;
+	}
 
-    QSqlQuery query;
+	QSqlQuery query;
 
-    query.exec("PRAGMA foreign_keys=ON;");
+	query.exec("PRAGMA foreign_keys=ON;");
 
-    //check result, if foreign keys support is on
+	//check result, if foreign keys support is on
 }
 
 void Accounts::Add(AccountRecord &acc)
 {
-    QSqlQuery query;
+	QSqlQuery query;
 
-    query.prepare("insert into accounts (id, name, cert_file, pkey_file, ca_file) values (:id, :name, :cert_file, :pkey_file, :ca_file);");
-    query.bindValue(":id",acc.id);
-    query.bindValue(":name",acc.name);
-    query.bindValue(":cert_file",acc.cert_file);
-    query.bindValue(":pkey_file",acc.pkey_file);
-    query.bindValue(":ca_file",acc.CA_file);
-    query.exec();
+	query.prepare("insert into accounts (id, name, cert_file, pkey_file, ca_file) values (:id, :name, :cert_file, :pkey_file, :ca_file);");
+	query.bindValue(":id", acc.id);
+	query.bindValue(":name", acc.name);
+	query.bindValue(":cert_file", acc.cert_file);
+	query.bindValue(":pkey_file", acc.pkey_file);
+	query.bindValue(":ca_file", acc.CA_file);
+	query.exec();
 
-    lasterr=query.lastError();
+	lasterr = query.lastError();
 }
 
 void Accounts::Delete(QByteArray id)
 {
-    QSqlQuery query;
+	QSqlQuery query;
 
-    query.prepare("delete from accounts where id=:id");
-    query.bindValue(":id",id);
-    query.exec();
+	query.prepare("delete from accounts where id=:id");
+	query.bindValue(":id", id);
+	query.exec();
 
-    lasterr=query.lastError();
+	lasterr = query.lastError();
 }
 
 QList<Accounts::AccountRecord> Accounts::GetAccounts()
 {
-    AccountRecord r;
-    QList<Accounts::AccountRecord> L;
-    QSqlQuery query;
+	AccountRecord r;
+	QList<Accounts::AccountRecord> L;
+	QSqlQuery query;
 
-    //
-    query.setForwardOnly(true);
-    query.exec("select id, name, cert_file, pkey_file, ca_file from accounts");
-    lasterr=query.lastError();
+	//
+	query.setForwardOnly(true);
+	query.exec("select id, name, cert_file, pkey_file, ca_file from accounts");
+	lasterr = query.lastError();
 
-    if (lasterr.isValid())
-        return L;
+	if (lasterr.isValid())
+		return L;
 
-    while(query.next())
-    {
-        r.id = query.value(0).toByteArray();
-        r.name = query.value(1).toString();
-        r.cert_file = query.value(2).toString();
-        r.pkey_file = query.value(3).toString();
-        r.CA_file = query.value(4).toString();
+	while(query.next())
+	{
+		r.id = query.value(0).toByteArray();
+		r.name = query.value(1).toString();
+		r.cert_file = query.value(2).toString();
+		r.pkey_file = query.value(3).toString();
+		r.CA_file = query.value(4).toString();
 
-        L<<r;
-    }
+		L << r;
+	}
 
-    return L;
+	return L;
 }
 
 QString Accounts::GetName(QByteArray id)
 {
-    QSqlQuery query;
+	QSqlQuery query;
 
-    query.prepare("select name from accounts where id=:id");
-    query.bindValue(":id", id);
-    query.exec();
+	query.prepare("select name from accounts where id=:id");
+	query.bindValue(":id", id);
+	query.exec();
 
-    lasterr=query.lastError();
+	lasterr = query.lastError();
 
-    if (lasterr.isValid())
-        return QString::null;
+	if (lasterr.isValid())
+		return QString::null;
 
-    query.next();
+	query.next();
 
-    return query.value(0).toString();
+	return query.value(0).toString();
 }
 
 bool Accounts::isOK()
 {
-  return  !lasterr.isValid();
+	return  !lasterr.isValid();
 }
 
 QString Accounts::GetLastError()
 {
-    return lasterr.text();
+	return lasterr.text();
 }
 
 bool Accounts::CheckFiles(AccountRecord &acc, QString &error_string)
 {
-  if (!QFile::exists(acc.cert_file))
-  {
-    error_string = QObject::tr("Certificate file %1 does not exist").arg(acc.cert_file);
-    return false;
-  }
+	if (!QFile::exists(acc.cert_file))
+	{
+		error_string = QObject::tr("Certificate file %1 does not exist").arg(acc.cert_file);
+		return false;
+	}
 
-  if (!QFile::exists(acc.pkey_file))
-  {
-    error_string = QObject::tr("Private key file %1 does not exist").arg(acc.pkey_file);
-    return false;
-  }
+	if (!QFile::exists(acc.pkey_file))
+	{
+		error_string = QObject::tr("Private key file %1 does not exist").arg(acc.pkey_file);
+		return false;
+	}
 
-  if (!QFile::exists(acc.CA_file))
-  {
-    error_string = QObject::tr("Certificate Authority file %1 does not exist").arg(acc.CA_file);
-    return false;
-  }
+	if (!QFile::exists(acc.CA_file))
+	{
+		error_string = QObject::tr("Certificate Authority file %1 does not exist").arg(acc.CA_file);
+		return false;
+	}
 
-  return true;
+	return true;
 }

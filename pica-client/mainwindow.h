@@ -11,47 +11,48 @@
 #include "contactlistwidget.h"
 #include "askpassword.h"
 
-namespace Ui {
-    class MainWindow;
+namespace Ui
+{
+class MainWindow;
 }
 
 class MainWindow : public QMainWindow
 {
-    Q_OBJECT
+	Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = 0);
-    ~MainWindow();
+	explicit MainWindow(QWidget *parent = 0);
+	~MainWindow();
 
 	void AddNotification(QString &text, bool is_critical);
 protected:
 
 private:
-    void createMenus();
+	void createMenus();
 
-    Ui::MainWindow *ui;
-    ContactListWidget *contact_list;
-    QComboBox *status;
-    QListWidget *notifications;
-    QPushButton *bt_showhide_notifications;
+	Ui::MainWindow *ui;
+	ContactListWidget *contact_list;
+	QComboBox *status;
+	QListWidget *notifications;
+	QPushButton *bt_showhide_notifications;
 
-    QMenu *contactsMenu;
-    QMenu *helpMenu;
-    QMenu *nodesMenu;
-    QMenu *accountMenu;
+	QMenu *contactsMenu;
+	QMenu *helpMenu;
+	QMenu *nodesMenu;
+	QMenu *accountMenu;
 	QMenu *settingsMenu;
 
-    bool status_change_disable_flag;
-    void SetStatus(bool connected);
-    bool status_notifications_hidden;
+	bool status_change_disable_flag;
+	void SetStatus(bool connected);
+	bool status_notifications_hidden;
 
 private slots:
-    void set_online();
-    void set_offline();
-    void status_changed(int index);
-    void show_notifications();
-    void hide_notifications();
-    void showhide_click();
+	void set_online();
+	void set_offline();
+	void status_changed(int index);
+	void show_notifications();
+	void hide_notifications();
+	void showhide_click();
 
 };
 

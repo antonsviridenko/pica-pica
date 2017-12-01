@@ -17,125 +17,125 @@
   активировать имеющиеся.
  */
 MsgUIRouter::MsgUIRouter(QObject *parent) :
-    QObject(parent)
+	QObject(parent)
 {
-    connect(skynet, SIGNAL(MessageReceived(QByteArray,QString)), this, SLOT(msg_from_peer(QByteArray,QString)));
-    connect(skynet, SIGNAL(UnableToDeliver(QByteArray,QString)), this, SLOT(delivery_failed(QByteArray,QString)));
-    connect(skynet, SIGNAL(Delivered(QByteArray)), this, SLOT(delivered(QByteArray)));
-    connect(skynet, SIGNAL(CertificateForged(QByteArray,QString,QString)), this, SLOT(scary_cert_message(QByteArray,QString,QString)));
+	connect(skynet, SIGNAL(MessageReceived(QByteArray, QString)), this, SLOT(msg_from_peer(QByteArray, QString)));
+	connect(skynet, SIGNAL(UnableToDeliver(QByteArray, QString)), this, SLOT(delivery_failed(QByteArray, QString)));
+	connect(skynet, SIGNAL(Delivered(QByteArray)), this, SLOT(delivered(QByteArray)));
+	connect(skynet, SIGNAL(CertificateForged(QByteArray, QString, QString)), this, SLOT(scary_cert_message(QByteArray, QString, QString)));
 	connect(skynet, SIGNAL(StatusMsg(QString, bool)), this, SLOT(notification(QString, bool)));
-    connect(systray, SIGNAL(doubleclicked()), this, SLOT(trayicon_dclick()));
+	connect(systray, SIGNAL(doubleclicked()), this, SLOT(trayicon_dclick()));
 
 }
 
 void MsgUIRouter::trayicon_dclick()
 {
-    if (mainwindow == NULL)
-    {
-        accwindow->showNormal();
-        accwindow->activateWindow();
-        accwindow->raise();
-        return;
-    }
+	if (mainwindow == NULL)
+	{
+		accwindow->showNormal();
+		accwindow->activateWindow();
+		accwindow->raise();
+		return;
+	}
 
 
-    if (blinkqueue.isEmpty())
-    {
-        mainwindow->showNormal();
-        mainwindow->activateWindow();
-        mainwindow->raise();
-    }
-    else
-    {
-        QByteArray blinker_id = blinkqueue.takeFirst();
+	if (blinkqueue.isEmpty())
+	{
+		mainwindow->showNormal();
+		mainwindow->activateWindow();
+		mainwindow->raise();
+	}
+	else
+	{
+		QByteArray blinker_id = blinkqueue.takeFirst();
 
-        if (chatwindows.contains(blinker_id))
-        {
-            chatwindows[blinker_id]->showNormal();
-            chatwindows[blinker_id]->activateWindow();
-            chatwindows[blinker_id]->raise();
-        }
+		if (chatwindows.contains(blinker_id))
+		{
+			chatwindows[blinker_id]->showNormal();
+			chatwindows[blinker_id]->activateWindow();
+			chatwindows[blinker_id]->raise();
+		}
 
-        if (blinkqueue.isEmpty())
-        {
-            systray->StopBlinking();
-        }
-    }
+		if (blinkqueue.isEmpty())
+		{
+			systray->StopBlinking();
+		}
+	}
 }
 
 void MsgUIRouter::create_chatwindow(QByteArray peer_id)
 {
-    ChatWindow *cw;
+	ChatWindow *cw;
 
-    cw = new ChatWindow(peer_id);
+	cw = new ChatWindow(peer_id);
 
-    chatwindows[peer_id] = cw;
+	chatwindows[peer_id] = cw;
 
-    connect(cw, SIGNAL(msg_input(QString,ChatWindow*)), this, SLOT(msg_to_peer(QString,ChatWindow*)));
-    connect(cw, SIGNAL(chatwindow_close(ChatWindow*)), this, SLOT(chatwindow_closed(ChatWindow*)));
-    connect(cw, SIGNAL(contacts_update()), skynet, SIGNAL(ContactsUpdated()));
-    connect(skynet, SIGNAL(ContactsUpdated()), cw, SLOT(set_peer_name()));
+	connect(cw, SIGNAL(msg_input(QString, ChatWindow*)), this, SLOT(msg_to_peer(QString, ChatWindow*)));
+	connect(cw, SIGNAL(chatwindow_close(ChatWindow*)), this, SLOT(chatwindow_closed(ChatWindow*)));
+	connect(cw, SIGNAL(contacts_update()), skynet, SIGNAL(ContactsUpdated()));
+	connect(skynet, SIGNAL(ContactsUpdated()), cw, SLOT(set_peer_name()));
 
-    cw->show();
+	cw->show();
 }
 
 void MsgUIRouter::msg_from_peer(QByteArray from, QString msg)
 {
-    Sound::play(snd_newmessage);
+	Sound::play(snd_newmessage);
 
-    if ( ! chatwindows.contains(from))
-    {
-        create_chatwindow(from);
-    }
+	if ( ! chatwindows.contains(from))
+	{
+		create_chatwindow(from);
+	}
 
-    chatwindows[from]->msg_from_peer(msg);
+	chatwindows[from]->msg_from_peer(msg);
 
-    if (!chatwindows[from]->isActiveWindow())
-        {
-            if (blinkqueue.isEmpty())
-            {
-                systray->StartBlinking();
-                blinkqueue.append(from);
-            }
-            else if (!blinkqueue.contains(from))
-            {
-                blinkqueue.append(from);
-            }
+	if (!chatwindows[from]->isActiveWindow())
+	{
+		if (blinkqueue.isEmpty())
+		{
+			systray->StartBlinking();
+			blinkqueue.append(from);
+		}
+		else if (!blinkqueue.contains(from))
+		{
+			blinkqueue.append(from);
+		}
 
-        }
+	}
 }
 
 void MsgUIRouter::msg_to_peer(QString msg, ChatWindow *sender_window)
 {
-    skynet->SendMessage(sender_window->getPeerId(), msg);
+	skynet->SendMessage(sender_window->getPeerId(), msg);
 
-    if (!blinkqueue.isEmpty())
-        {
-            blinkqueue.removeAll(sender_window->getPeerId());
-            if (blinkqueue.isEmpty())
-                {
-                    systray->StopBlinking();
-                }
-        }
+	if (!blinkqueue.isEmpty())
+	{
+		blinkqueue.removeAll(sender_window->getPeerId());
+		if (blinkqueue.isEmpty())
+		{
+			systray->StopBlinking();
+		}
+	}
 }
 
 void MsgUIRouter::start_chat(QByteArray peer_id)
 {
-    if ( ! chatwindows.contains(peer_id))
-    {
-        create_chatwindow(peer_id);
-    }
-    else
-    {
-        chatwindows[peer_id]->showNormal();
-        chatwindows[peer_id]->activateWindow();
-        chatwindows[peer_id]->raise();
-    }
+	if ( ! chatwindows.contains(peer_id))
+	{
+		create_chatwindow(peer_id);
+	}
+	else
+	{
+		chatwindows[peer_id]->showNormal();
+		chatwindows[peer_id]->activateWindow();
+		chatwindows[peer_id]->raise();
+	}
 }
 
 void MsgUIRouter::chatwindow_closed(ChatWindow *sender_window)
 {
-    chatwindows.remove(sender_window->getPeerId());
+	chatwindows.remove(sender_window->getPeerId());
 }
 
 void MsgUIRouter::delivery_failed(QByteArray to, QString msg)
@@ -148,26 +148,26 @@ void MsgUIRouter::delivery_failed(QByteArray to, QString msg)
 
 void MsgUIRouter::delivered(QByteArray to)
 {
-  if (chatwindows.contains(to))
-  {
-    chatwindows[to]->msg_delivered();
-  }
-  else
-  {
-      History h(config_dbname, Accounts::GetCurrentAccount().id);
+	if (chatwindows.contains(to))
+	{
+		chatwindows[to]->msg_delivered();
+	}
+	else
+	{
+		History h(config_dbname, Accounts::GetCurrentAccount().id);
 
-      h.SetDelivered(to);
-  }
+		h.SetDelivered(to);
+	}
 }
 
 void MsgUIRouter::scary_cert_message(QByteArray peer_id, QString received_cert, QString stored_cert)
 {
-    ForgedCertDialog fcd(peer_id, received_cert, stored_cert);
-    fcd.exec();
+	ForgedCertDialog fcd(peer_id, received_cert, stored_cert);
+	fcd.exec();
 }
 
 void MsgUIRouter::notification(QString text, bool is_critical)
 {
-    if (mainwindow)
+	if (mainwindow)
 		mainwindow->AddNotification(text, is_critical);
 }

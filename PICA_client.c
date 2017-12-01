@@ -216,7 +216,7 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 	if (!preverify_ok)
 	{
 		printf("verify error:num=%d:%s:depth=%d:%s\n", err,
-			   X509_verify_cert_error_string(err), depth, buf);
+		       X509_verify_cert_error_string(err), depth, buf);
 	}
 
 
@@ -826,10 +826,10 @@ static unsigned int procmsg_CLNODELIST(unsigned char* buf, unsigned int nb, void
 		case PICA_PROTO_NEWNODE_IPV4:
 
 			callbacks.nodelist_cb(
-				PICA_PROTO_NEWNODE_IPV4,
-				buf + pos + 1,
-				inet_ntop(AF_INET, buf + pos + 1, ipaddr_string, INET6_ADDRSTRLEN),
-				ntohs(*(uint16_t*)(buf + pos + 5))
+			    PICA_PROTO_NEWNODE_IPV4,
+			    buf + pos + 1,
+			    inet_ntop(AF_INET, buf + pos + 1, ipaddr_string, INET6_ADDRSTRLEN),
+			    ntohs(*(uint16_t*)(buf + pos + 5))
 			);
 
 			pos += PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
@@ -838,10 +838,10 @@ static unsigned int procmsg_CLNODELIST(unsigned char* buf, unsigned int nb, void
 		case PICA_PROTO_NEWNODE_IPV6:
 
 			callbacks.nodelist_cb(
-				PICA_PROTO_NEWNODE_IPV6,
-				buf + pos + 1,
-				inet_ntop(AF_INET6, buf + pos + 1, ipaddr_string, INET6_ADDRSTRLEN),
-				ntohs(*(uint16_t*)(buf + pos + 17))
+			    PICA_PROTO_NEWNODE_IPV6,
+			    buf + pos + 1,
+			    inet_ntop(AF_INET6, buf + pos + 1, ipaddr_string, INET6_ADDRSTRLEN),
+			    ntohs(*(uint16_t*)(buf + pos + 17))
 			);
 
 			pos += PICA_PROTO_NODELIST_ITEM_IPV6_SIZE;
@@ -855,10 +855,10 @@ static unsigned int procmsg_CLNODELIST(unsigned char* buf, unsigned int nb, void
 			buf[pos + 2 + buf[pos + 1]] = '\0'; // and replace it with string terminating zero
 
 			callbacks.nodelist_cb(
-				PICA_PROTO_NEWNODE_DNS,
-				buf + pos + 2,
-				buf + pos + 2,
-				port
+			    PICA_PROTO_NEWNODE_DNS,
+			    buf + pos + 2,
+			    buf + pos + 2,
+			    port
 			);
 
 			buf[pos + 2 + buf[pos + 1]] = temp_zeroswap;
@@ -1050,7 +1050,7 @@ static unsigned int procmsg_FILEFRAGMENT(unsigned char* buf, unsigned int nb, vo
 	 *Allow incoming FILEFRAGMENTs while paused
 	 */
 	if (chan->recvfilestate != PICA_CHANRECVFILESTATE_RECEIVING
-			&& chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
+	        && chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
 		return 0;
 
 	if (nb - 4 !=  *(uint16_t*)(buf + 2))
@@ -1100,7 +1100,7 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 	fprintf(stderr, "procmsg_FILECONTROL sender_cmd = %i receiver_cmd = %i\n", sender_cmd, receiver_cmd);//debug
 
 	if ((chan->sendfilestate == PICA_CHANSENDFILESTATE_IDLE || chan->sendfilestate == PICA_CHANSENDFILESTATE_SENTREQ)
-			&& receiver_cmd != PICA_PROTO_FILECONTROL_VOID)
+	        && receiver_cmd != PICA_PROTO_FILECONTROL_VOID)
 		return 0;
 
 	if (chan->recvfilestate == PICA_CHANRECVFILESTATE_IDLE && sender_cmd != PICA_PROTO_FILECONTROL_VOID)
@@ -1261,8 +1261,8 @@ int PICA_client_init(struct PICA_client_callbacks *clcbs)
 }
 
 static int check_pkey_passphrase(const char *pkey_file,
-								 int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
-								 void *userdata)
+                                 int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
+                                 void *userdata)
 {
 	RSA *rsa;
 	FILE *f;
@@ -1391,10 +1391,10 @@ error_ret_0: //(0)
 }
 
 int PICA_open_acc(const char *cert_file,
-				  const char *pkey_file,
-				  const char *dh_param_file,
-				  int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
-				  struct PICA_acc **acc)
+                  const char *pkey_file,
+                  const char *dh_param_file,
+                  int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
+                  struct PICA_acc **acc)
 {
 	int ret, ret_err;
 	DH *dh = NULL;
@@ -1614,8 +1614,8 @@ static int directc2c_stage2_starttls(struct PICA_directc2c *d, struct PICA_c2c *
 //....
 
 int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int port,
-				 enum PICA_directc2c_config direct_c2c_mode, struct PICA_listener *l,
-				 struct PICA_c2n **ci)
+                 enum PICA_directc2c_config direct_c2c_mode, struct PICA_listener *l,
+                 struct PICA_c2n **ci)
 {
 	PICA_TRACEFUNC
 	int ret, ret_err;
@@ -1753,12 +1753,12 @@ ret=SSL_accept(cid->ssl_comm);
 /////////////////state_
 cid->state = PICA_C2N_STATE_WAITINGTLS;
 if (ret!=1)
-	{
-	//printf("SSL_accept  ret=%i\n  SSL_get_error=%i\n",ret,SSL_get_error(cid->ssl_comm,ret));//debug
-		//ERR_CHECK
-	ret_err=PICA_ERRSSL;
-	goto error_ret_4;
-	}*/ /*
+{
+//printf("SSL_accept  ret=%i\n  SSL_get_error=%i\n",ret,SSL_get_error(cid->ssl_comm,ret));//debug
+	//ERR_CHECK
+ret_err=PICA_ERRSSL;
+goto error_ret_4;
+}*/ /*
 cid->state = PICA_C2N_STATE_CONNECTED;//<<<!!!
 
 {
@@ -1767,9 +1767,9 @@ struct PICA_proto_msg *mp;
 mp = c2n_writebuf_push( cid, PICA_PROTO_CLNODELISTREQ, PICA_PROTO_CLNODELISTREQ_SIZE);
 
 if (mp)
-	{
-	RAND_pseudo_bytes(mp->tail, 2);
-	}
+{
+RAND_pseudo_bytes(mp->tail, 2);
+}
 }
 */
 
@@ -1877,7 +1877,7 @@ static int check_async_connect_result(int sock, struct sockaddr* a, int addrlen)
 	if (0 == getsockopt(sock, SOL_SOCKET, SO_ERROR, &optval, &optlen) && optval == 0)
 #else
 	if (SOCKET_ERROR == connect(sock, a, addrlen) &&
-			WSAEISCONN == WSAGetLastError())
+	        WSAEISCONN == WSAGetLastError())
 #endif
 		ret = PICA_OK;
 
@@ -1927,7 +1927,7 @@ static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 			else
 			{
 				if (c2n->node_ver_major > PICA_PROTO_VER_HIGH ||
-						(c2n->node_ver_major == PICA_PROTO_VER_HIGH && c2n->node_ver_minor > PICA_PROTO_VER_LOW))
+				        (c2n->node_ver_major == PICA_PROTO_VER_HIGH && c2n->node_ver_minor > PICA_PROTO_VER_LOW))
 					ret = PICA_ERRPROTONEW;
 				else
 					ret = PICA_ERRPROTOOLD;
@@ -2037,15 +2037,15 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 				ret = PICA_ERRSSL;
 			}
 			else if (sslret == 1)
-				{
-					ret = c2c_verify_peer_cert(c2c);
+			{
+				ret = c2c_verify_peer_cert(c2c);
 
-					if (ret == PICA_OK && c2c->outgoing)
-						ret = c2c_stage4_sendc2cconnreq(c2c);
+				if (ret == PICA_OK && c2c->outgoing)
+					ret = c2c_stage4_sendc2cconnreq(c2c);
 
-					if (ret == PICA_OK && c2c->outgoing == 0)
-						c2c->state = PICA_C2C_STATE_WAITINGC2CPROTOVER;
-				}
+				if (ret == PICA_OK && c2c->outgoing == 0)
+					c2c->state = PICA_C2C_STATE_WAITINGC2CPROTOVER;
+			}
 		}
 		break;
 
@@ -2067,7 +2067,7 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 	case PICA_C2C_STATE_ACTIVE:
 
 		if (FD_ISSET(c2c->sck_data, wfds)
-			 || c2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE && FD_ISSET(c2c->direct->sck, wfds))
+		        || c2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE && FD_ISSET(c2c->direct->sck, wfds))
 		{
 			if (c2c->write_pos > 0)
 			{
@@ -2080,7 +2080,7 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 		}
 
 		if (ret == PICA_OK && (FD_ISSET(c2c->sck_data, rfds)
-			|| c2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE && FD_ISSET(c2c->direct->sck, rfds)))
+		                       || c2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE && FD_ISSET(c2c->direct->sck, rfds)))
 		{
 			ret = PICA_read_c2c(c2c);
 		}
@@ -2094,12 +2094,12 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 	}
 
 	if (ret != PICA_OK)
-		{
-			if (c2c->state > PICA_C2C_STATE_NEW && c2c->state < PICA_C2C_STATE_ACTIVE)
-				callbacks.c2c_failed_cb(c2c->peer_id);
-			else
-				callbacks.c2c_closed_cb(c2c->peer_id, ret);
-		}
+	{
+		if (c2c->state > PICA_C2C_STATE_NEW && c2c->state < PICA_C2C_STATE_ACTIVE)
+			callbacks.c2c_failed_cb(c2c->peer_id);
+		else
+			callbacks.c2c_closed_cb(c2c->peer_id, ret);
+	}
 
 	return ret;
 }
@@ -2232,7 +2232,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 			switch(d->state)
 			{
-				case PICA_DIRECTC2C_CONNSTATE_CONNECTING:
+			case PICA_DIRECTC2C_CONNSTATE_CONNECTING:
 
 				if (FD_ISSET(d->sck, wfds))
 				{
@@ -2249,14 +2249,14 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 				}
 				break;
 
-				case PICA_DIRECTC2C_CONNSTATE_WAITINGTLS:
+			case PICA_DIRECTC2C_CONNSTATE_WAITINGTLS:
 				if (FD_ISSET(d->sck, wfds) || FD_ISSET(d->sck, rfds))
 				{
 					ret = SSL_connect(d->ssl);
 
 					if (ret != 1)
 					{
-						if (SSL_get_error(d->ssl, ret)== SSL_ERROR_WANT_WRITE)
+						if (SSL_get_error(d->ssl, ret) == SSL_ERROR_WANT_WRITE)
 							d->want_write = 1;
 
 						ret = process_async_ssl_errors(d->ssl, ret);
@@ -2291,7 +2291,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 				}
 				break;
 
-				case PICA_DIRECTC2C_CONNSTATE_FAILED:
+			case PICA_DIRECTC2C_CONNSTATE_FAILED:
 				ret = directc2c_connect_next(d, c2c);
 
 				if (ret == PICA_ERRNOTFOUND)
@@ -2302,7 +2302,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 				}
 				break;
 
-				case PICA_DIRECTC2C_CONNSTATE_ACTIVE:
+			case PICA_DIRECTC2C_CONNSTATE_ACTIVE:
 				c2c->directc2c_state = PICA_DIRECTC2C_STATE_ACTIVE;
 				break;
 
@@ -2435,9 +2435,9 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 		struct PICA_directc2c *kill_ptr = NULL;
 
 		if ((ret = process_listener_conn(conn, rfds, wfds)) != PICA_OK)
-			{
-				kill_ptr = conn;
-			}
+		{
+			kill_ptr = conn;
+		}
 
 		//fprintf(stderr, "process_listener_conn() returned %i\n", ret);
 
@@ -2492,7 +2492,7 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 		fdset_add(&rfds, (*ic2n)->sck_comm, &nfds);
 
 		if ((*ic2n)->write_pos || (*ic2n)->state == PICA_C2N_STATE_CONNECTING
-				|| (*ic2n)->want_write/*(*ic2n)->state  == PICA_C2N_STATE_WAITINGTLS*/)
+		        || (*ic2n)->want_write/*(*ic2n)->state  == PICA_C2N_STATE_WAITINGTLS*/)
 		{
 			(*ic2n)->want_write = 0;
 			fdset_add(&wfds, (*ic2n)->sck_comm, &nfds);
@@ -2525,7 +2525,7 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 				fdset_add(&rfds, ic2c->sck_data, &nfds);
 
 				if ((ic2c->write_pos || ic2c->state == PICA_C2C_STATE_CONNECTING || (ic2c->state == PICA_C2C_STATE_WAITINGTLS && ic2c->want_write)
-						|| ic2c->sendfilestate == PICA_CHANSENDFILESTATE_SENDING) && ic2c->directc2c_state != PICA_DIRECTC2C_STATE_ACTIVE)
+				        || ic2c->sendfilestate == PICA_CHANSENDFILESTATE_SENDING) && ic2c->directc2c_state != PICA_DIRECTC2C_STATE_ACTIVE)
 				{
 					ic2c->want_write = 0;
 					fdset_add(&wfds, ic2c->sck_data, &nfds);
@@ -2533,7 +2533,7 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			}
 
 			if (ic2c->state == PICA_C2C_STATE_ACTIVE && (ic2c->directc2c_state == PICA_DIRECTC2C_STATE_CONNECTING || ic2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE)
-				&& ic2c->direct && ic2c->direct->state >= PICA_DIRECTC2C_CONNSTATE_CONNECTING)
+			        && ic2c->direct && ic2c->direct->state >= PICA_DIRECTC2C_CONNSTATE_CONNECTING)
 			{
 				fdset_add(&rfds, ic2c->direct->sck, &nfds);
 
@@ -2838,10 +2838,10 @@ int PICA_read_c2c(struct PICA_c2c *chn)
 	SSL *ssl_to_read = chn->ssl;
 
 	if (chn->state != PICA_C2C_STATE_WAITINGREP && chn->state != PICA_C2C_STATE_WAITINGC2CPROTOVER && chn->state != PICA_C2C_STATE_ACTIVE)
-		{
-			fputs("PICA_read_c2c() was called for incorrect state!\n", stderr);
-			exit(-1);
-		}
+	{
+		fputs("PICA_read_c2c() was called for incorrect state!\n", stderr);
+		exit(-1);
+	}
 
 	if (chn->switched_to_directc2c_read)
 		ssl_to_read = chn->direct->ssl;
@@ -3140,7 +3140,7 @@ int PICA_cancel_file(struct PICA_c2c *chan, int sending)
 	if (sending)
 	{
 		if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENDING
-				&& chan->sendfilestate != PICA_CHANSENDFILESTATE_PAUSED)
+		        && chan->sendfilestate != PICA_CHANSENDFILESTATE_PAUSED)
 			return PICA_ERRINVARG;
 
 		fclose(chan->sendfile_stream);
@@ -3152,7 +3152,7 @@ int PICA_cancel_file(struct PICA_c2c *chan, int sending)
 	else
 	{
 		if (chan->recvfilestate != PICA_CHANRECVFILESTATE_RECEIVING
-				&& chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
+		        && chan->recvfilestate != PICA_CHANRECVFILESTATE_PAUSED)
 			return PICA_ERRINVARG;
 
 		fclose(chan->recvfile_stream);
@@ -3375,9 +3375,9 @@ const char *PICA_inet_ntop(int af, const void *src, char *dst, size_t size)
 
 	case AF_INET6:
 		sprintf(dst, "%x%02x:%x%02x:%x%02x:%x%02x:%x%02x:%x%02x:%x%02x:%x%02x", chsrc[0], chsrc[1], chsrc[2], chsrc[3],
-				chsrc[4], chsrc[5], chsrc[6], chsrc[7],
-				chsrc[8], chsrc[9], chsrc[10], chsrc[11],
-				chsrc[12], chsrc[13], chsrc[14], chsrc[15]);
+		        chsrc[4], chsrc[5], chsrc[6], chsrc[7],
+		        chsrc[8], chsrc[9], chsrc[10], chsrc[11],
+		        chsrc[12], chsrc[13], chsrc[14], chsrc[15]);
 		break;
 
 	default:

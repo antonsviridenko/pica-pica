@@ -7,23 +7,23 @@
 class OpenSSLTool
 {
 public:
-    OpenSSLTool();
+	OpenSSLTool();
 
-    static QString NameFromCertFile(QString cert_file);
-    static QString NameFromCertString(QString cert_pem);
-    static QString CertTextFromString(QString cert_pem);
+	static QString NameFromCertFile(QString cert_file);
+	static QString NameFromCertString(QString cert_pem);
+	static QString CertTextFromString(QString cert_pem);
 
-    bool GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpassword,
-        QString password, QString rand,QObject *receiver, const char *finished_slot);
-    bool GenCertSignal(QString cert_file, QString keyfile, QString keypassword, QString subject, QObject *receiver, const char *finished_slot);
+	bool GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpassword,
+	                     QString password, QString rand, QObject *receiver, const char *finished_slot);
+	bool GenCertSignal(QString cert_file, QString keyfile, QString keypassword, QString subject, QObject *receiver, const char *finished_slot);
 
-    bool GenDHParamSignal(quint32 numbits, QString output_file, QObject *receiver, const char *finished_slot);
+	bool GenDHParamSignal(quint32 numbits, QString output_file, QObject *receiver, const char *finished_slot);
 
-    QString ReadStdErr();
-    QString ReadStdOut();
+	QString ReadStdErr();
+	QString ReadStdOut();
 
 private:
-    QProcess openssl_;
+	QProcess openssl_;
 };
 
 #endif // OPENSSLTOOL_H

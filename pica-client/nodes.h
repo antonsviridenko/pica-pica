@@ -9,21 +9,21 @@
 class Nodes
 {
 public:
-    struct NodeRecord
-    {
-        QString address;
-        quint16 port;
-    };
+	struct NodeRecord
+	{
+		QString address;
+		quint16 port;
+	};
 
-    Nodes(QString storage);
-    void Add(NodeRecord &n);
-    QList<NodeRecord> GetNodes();
-    void MakeClean();//remove old inactive node records
-    void UpdateStatus(NodeRecord &n, bool alive);
+	Nodes(QString storage);
+	void Add(NodeRecord &n);
+	QList<NodeRecord> GetNodes();
+	void MakeClean();//remove old inactive node records
+	void UpdateStatus(NodeRecord &n, bool alive);
 
 private:
-    QSqlDatabase dbconn;
-    QSqlError lasterr;
+	QSqlDatabase dbconn;
+	QSqlError lasterr;
 
 };
 
