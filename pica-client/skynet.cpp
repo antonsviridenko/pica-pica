@@ -10,6 +10,7 @@
 #include "history.h"
 #include "dhparam.h"
 #include "askpassword.h"
+#include "settings.h"
 
 SkyNet::SkyNet()
     : nodes(config_dbname), QObject(0)
@@ -42,6 +43,7 @@ PICA_client_init(&cbs);
 
 this->active_nodelink = NULL;
 this->acc = NULL;
+this->listener = NULL;
 
 connect(this, SIGNAL(PeerCertificateReceived(QByteArray,QString,bool*)), this, SLOT(verify_peer_cert(QByteArray,QString,bool*)),Qt::DirectConnection);
 
@@ -313,6 +315,9 @@ bool SkyNet::open_account()
 
 void SkyNet::Join(Accounts::AccountRecord &accrec)
 {
+	PICA_directc2c_config directc2c_cfg = PICA_DIRECTC2C_CFG_DISABLED;
+	Settings st(config_dbname);
+
     skynet_account = accrec;
 
 	QList<Nodes::NodeRecord> noderecords = nodes.GetNodes();
@@ -329,6 +334,24 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
         return;
     }
 
+	directc2c_cfg = (PICA_directc2c_config)st.loadValue("direct_c2c.state", 1).toInt();
+
+	if (!listener && directc2c_cfg == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+	{
+		int pub_port = st.loadValue("direct_c2c.public_port", 2298).toInt();
+		int loc_port = st.loadValue("direct_c2c.local_port", 2298).toInt();
+
+		int ret = PICA_new_listener(acc,
+									st.loadValue("direct_c2c.public_addr", "0.0.0.0").toString().toAscii().constData(),
+									pub_port,
+									loc_port, &listener);
+		if (ret != PICA_OK)
+		{
+			emit StatusMsg(QString(tr("Failed to open port %1 for incoming direct connections")).arg(loc_port), true);
+			directc2c_cfg = PICA_DIRECTC2C_CFG_CONNECTONLY;
+		}
+	}
+
 	if (!connecting_nodes.empty())
 	{
 		for (int i = 0; i < connecting_nodes.size(); i++)
@@ -343,7 +366,7 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 		struct PICA_c2n *c2n = NULL;
 
 		ret = PICA_new_c2n(acc, noderecords[i].address.toUtf8().constData(), noderecords[i].port,
-						   PICA_DIRECTC2C_CFG_DISABLED, NULL, &c2n);
+						   directc2c_cfg, listener, &c2n);
 
 		if (ret == PICA_OK)
 		{

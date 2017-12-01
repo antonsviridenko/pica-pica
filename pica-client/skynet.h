@@ -64,6 +64,7 @@ private:
     QString status;
 	struct PICA_c2n *active_nodelink;
     struct PICA_acc *acc;
+	struct PICA_listener *listener;
     Accounts::AccountRecord skynet_account;
 
     QMap<QByteArray, QList<QString> > msgqueues;
