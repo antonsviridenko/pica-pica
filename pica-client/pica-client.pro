@@ -22,7 +22,6 @@ SOURCES += main.cpp\
     accountswindow.cpp \
     accounts.cpp \
     dialogs/addaccountdialog.cpp \
-    nodethread.cpp \
     askpassword.cpp \
     msguirouter.cpp \
     picasystray.cpp \
@@ -37,7 +36,9 @@ SOURCES += main.cpp\
     dialogs/showpicaiddialog.cpp \
     dialogs/filetransferdialog.cpp \
     filetransfercontroller.cpp \
-    sound.cpp
+    sound.cpp \
+    dialogs/settingsdialog.cpp \
+    settings.cpp
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -51,7 +52,6 @@ HEADERS  += mainwindow.h \
     accountswindow.h \
     accounts.h \
     dialogs/addaccountdialog.h \
-    nodethread.h \
     askpassword.h \
     msguirouter.h \
     picasystray.h \
@@ -68,7 +68,9 @@ HEADERS  += mainwindow.h \
     dialogs/showpicaiddialog.h \
     dialogs/filetransferdialog.h \
     filetransfercontroller.h \
-    sound.h
+    sound.h \
+    dialogs/settingsdialog.h \
+    settings.h
 
 
 DEFINES = PICA_MULTITHREADED

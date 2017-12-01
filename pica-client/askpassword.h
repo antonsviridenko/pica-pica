@@ -10,12 +10,18 @@ class AskPassword : public QObject
     Q_OBJECT
 public:
     explicit AskPassword(QObject *parent = 0);
+    ~AskPassword();
     static int ask_password_cb(char *buf, int size, int rwflag, void *userdata);
+    static void setInvalidPassword();
+    static void clear();
 
 private:
     void emit_sig();
-    static QMap<QByteArray,QString> idpasswd;
     static QMutex passwd_mutex;
+    static char current_password[256];
+    static int is_cancelled;
+    static int is_invalid;
+    static int is_set;
 
 signals:
     void password_requested();

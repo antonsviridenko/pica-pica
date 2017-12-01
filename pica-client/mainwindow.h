@@ -23,7 +23,7 @@ public:
     explicit MainWindow(QWidget *parent = 0);
     ~MainWindow();
 
-    void AddNotification(QString &text);
+	void AddNotification(QString &text, bool is_critical);
 protected:
 
 private:
@@ -39,6 +39,7 @@ private:
     QMenu *helpMenu;
     QMenu *nodesMenu;
     QMenu *accountMenu;
+	QMenu *settingsMenu;
 
     bool status_change_disable_flag;
     void SetStatus(bool connected);

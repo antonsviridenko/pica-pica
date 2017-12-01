@@ -14,6 +14,8 @@
 #include <QIcon>
 #include "../PICA_client.h"
 #include "dhparam.h"
+#include "settings.h"
+#include "dialogs/settingsdialog.h"
 
 //globals
 QString config_dir;
@@ -135,7 +137,18 @@ static bool create_database()
      if (query.lastError().isValid())
              goto showerror;
 
-     query.exec("insert into schema_version values (2, strftime('%s','now'));"); //current schema version. update when needed
+	 query.exec("create table settings \
+					( \
+						name varchar(255) not null, \
+                        value varchar(255) not null, \
+                        constraint pk primary key (name) on conflict replace \
+					);"
+			);
+
+	 if (query.lastError().isValid())
+			 goto showerror;
+
+	 query.exec("insert into schema_version values (3, strftime('%s','now'));"); //current schema version. update when needed
 
     if (query.lastError().isValid())
     showerror:
@@ -363,6 +376,23 @@ static bool update_database()
         schema_ver = 2;
     }
 
+	if (schema_ver == 2)
+	{
+		 query.exec("create table settings \
+					( \
+						name varchar(255) not null, \
+                        value varchar(255) not null, \
+                        constraint pk primary key (name) on conflict replace \
+					);"
+			);
+
+		if (query.lastError().isValid())
+			goto showerror;
+
+		query.exec("insert into schema_version values (3, strftime('%s','now'));");
+		schema_ver = 3;
+	}
+
 if (query.lastError().isValid())
 showerror:
     {
@@ -464,6 +494,15 @@ int main(int argc, char *argv[])
 	picapica_ico_sit = QIcon("share\\picapica-icon-sit.png");
     picapica_ico_fly = QIcon("share\\picapica-icon-fly.png");
 #endif
+
+	Settings st(config_dbname);
+
+	if (st.isEmpty()) //show settings dialog on first start
+	{
+		SettingsDialog sd;
+
+		sd.exec();
+	}
 
     PicaActionCenter ac;
     action_center = &ac;

@@ -12,7 +12,7 @@ class NodeThread : public QThread
 {
     Q_OBJECT
 public:
-    explicit NodeThread( Nodes::NodeRecord &addr, bool *completed,Accounts::AccountRecord &acc,struct PICA_conninfo **pica_conn, QMutex *wm);
+    explicit NodeThread( Nodes::NodeRecord &addr, bool *completed, PICA_acc *acc,struct PICA_c2n **pica_conn, QMutex *wm);
     void CloseThread();
 private:
     void run();
@@ -22,9 +22,9 @@ private:
 
     bool *finished_flag;
     Nodes::NodeRecord  node_addr;
-    struct PICA_conninfo *ci;
-    Accounts::AccountRecord user_account;
-    struct PICA_conninfo **connection;
+    struct PICA_c2n *ci;
+    struct PICA_acc *user_account;
+    struct PICA_c2n **connection;
 
     int exit;
 

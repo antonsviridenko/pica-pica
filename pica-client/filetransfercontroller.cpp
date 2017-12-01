@@ -19,7 +19,7 @@ FileTransferController::FileTransferController(QObject *parent) :
 
     connect(skynet, SIGNAL(OutgoingFileRequestDenied(QByteArray)), this, SLOT(file_denied_by_peer(QByteArray)));
 
-    connect(skynet, SIGNAL(ChannelClosed(QByteArray)), this, SLOT(file_peer_disconnected(QByteArray)));
+	connect(skynet, SIGNAL(c2cClosed(QByteArray)), this, SLOT(file_peer_disconnected(QByteArray)));
 }
 
 void FileTransferController::file_peer_disconnected(QByteArray peer_id)
@@ -217,7 +217,7 @@ void FileTransferController::send_file(QByteArray peer_id)
 
     if (ftdialogs_out.contains(peer_id))
     {
-        msguirouter->notification(tr("There is already file transfer in progress. Wait until it is finished."));
+		msguirouter->notification(tr("There is already file transfer in progress. Wait until it is finished."), true);
         return;
     }
 
@@ -230,13 +230,13 @@ void FileTransferController::send_file(QByteArray peer_id)
 
     if (!fi.exists())
         {
-            msguirouter->notification(tr("File \"%1\" does not exist.").arg(filepath));
+			msguirouter->notification(tr("File \"%1\" does not exist.").arg(filepath), true);
             return;
         }
 
     if (fi.size() == 0)
         {
-            msguirouter->notification(tr("Cannot send empty file."));
+			msguirouter->notification(tr("Cannot send empty file."), true);
         }
 
     skynet->SendFile(peer_id, filepath);

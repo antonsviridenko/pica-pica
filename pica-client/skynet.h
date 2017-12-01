@@ -2,12 +2,13 @@
 #define SKYNET_H
 
 #include "nodes.h"
-#include "nodethread.h"
 #include "../PICA_client.h"
 #include "../PICA_proto.h"
 #include "accounts.h"
 #include <QObject>
 #include <QMap>
+#include <QVector>
+#include <QPair>
 
 
 class SkyNet : public QObject
@@ -17,7 +18,6 @@ public:
     SkyNet();
     void Join(Accounts::AccountRecord &accrec);
     bool isSelfAware();
-    QString& Status();
     void Exit();
 
     void SendMessage(QByteArray to, QString msg);
@@ -38,7 +38,7 @@ signals:
     void LostSelfAwareness();
     void PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified);
     void CertificateForged(QByteArray peer_id, QString received_cert, QString stored_cert);
-    void ErrMsgFromNode(QString msg);
+	void StatusMsg(QString msg, bool is_critical);
     void ContactsUpdated();
     void IncomingFileRequestReceived(QByteArray peer_id, quint64 file_size, QString filename);
     void OutgoingFileRequestAccepted(QByteArray peer_id);
@@ -55,26 +55,29 @@ signals:
     void OutgoingFileFinished(QByteArray peer_id);
     void IncomingFileFinished(QByteArray peer_id);
 
-    void ChannelClosed(QByteArray peer_id);
+    void c2cClosed(QByteArray peer_id);
 
 private:
     Nodes nodes;
-    QList<NodeThread*> threads;
+	QList<QPair<struct PICA_c2n *, Nodes::NodeRecord> > connecting_nodes;
     bool self_aware;
     QString status;
-    struct PICA_conninfo *nodelink;
+	struct PICA_c2n *active_nodelink;
+    struct PICA_acc *acc;
+	struct PICA_listener *listener;
     Accounts::AccountRecord skynet_account;
-    QMutex write_mutex;
+
     QMap<QByteArray, QList<QString> > msgqueues;
     QMap<QByteArray, QList<QString> > sndfilequeues;
-    int timer_id;
-    bool reconnect_enabled;
+	int retry_timer_id;
+	int event_loop_timer_id;
 
     void timerEvent(QTimerEvent * e);
 
     void flush_queues(QByteArray to);
-    struct PICA_chaninfo *find_active_chan(QByteArray peer_id);
+    struct PICA_c2c *find_active_chan(QByteArray peer_id);
     QList<QByteArray> filter_existing_chans(QList<QByteArray> peer_ids);
+    bool open_account();
 
     void emit_MessageReceived(QByteArray from, QString msg);
     void emit_UnableToDeliver(QByteArray to, QString msg);
@@ -97,22 +100,22 @@ private:
     void emit_OutgoingFileFinished(QByteArray peer_id);
     void emit_IncomingFileFinished(QByteArray peer_id);
 
-    void emit_ChannelClosed(QByteArray peer_id);
+    void emit_c2cClosed(QByteArray peer_id);
 
     //получение сообщения.
     static void newmsg_cb(const unsigned char *peer_id,const char* msgbuf,unsigned int nb,int type);
     //получение подтверждения о доставке сообщения
     static void msgok_cb(const unsigned char *peer_id);
     //создание канала с собеседником
-    static void channel_established_cb(const unsigned char *peer_id);
+    static void c2c_established_cb(const unsigned char *peer_id);
     //создать канал не удалось
-    static void channel_failed(const unsigned char *peer_id);
+    static void c2c_failed(const unsigned char *peer_id);
     //входящий запрос на создание канала от пользователя с номером caller_id
     static int accept_cb(const unsigned char *caller_id);
     //запрошенный пользователь не найден, в оффлайне или отказался от общения
     static void notfound_cb(const unsigned char *callee_id);
 
-    static void channel_closed_cb(const unsigned char *peer_id, int reason);
+    static void c2c_closed_cb(const unsigned char *peer_id, int reason);
 
     static void nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port);
 
@@ -130,10 +133,20 @@ private:
 
     static void file_finished(const unsigned char *peer_id, int sending);
 
+	static void c2n_established_cb(struct PICA_c2n *c2n);
+
+	static void c2n_failed_cb(struct PICA_c2n *c2n, int error);
+
+	static void c2n_closed_cb(struct PICA_c2n *c2n, int error);
+
+	static void listener_error_cb(struct PICA_listener *lst, int errorcode);
+
 private slots:
-    void nodethread_finished();
-    void nodethread_connected(QString addr, quint16 port, NodeThread *thread);
-    void node_status_changed(QString addr,quint16 port,bool alive);
+	void nodelink_activated(PICA_c2n *c2n);
+	void nodelink_closed(PICA_c2n *c2n, int error);
+	void nodelink_failed(PICA_c2n *c2n, int error);
+
+	void node_status_changed(Nodes::NodeRecord nr,bool alive);
     void verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified);
 
 };

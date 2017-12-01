@@ -14,9 +14,9 @@
 
 struct nodewait
 {
-struct newconn nc;
-int state;
-time_t tmst;
+	struct newconn nc;
+	int state;
+	time_t tmst;
 
 //unsigned int addr_type;
 // union address_ptr
@@ -26,12 +26,12 @@ time_t tmst;
 // 	struct PICA_nodeaddr_dns *dns;
 // 	} addrptr;
 
-struct PICA_nodeaddr addr;
+	struct PICA_nodeaddr addr;
 
-struct addrinfo *ai;
-int ai_errorcode;
+	struct addrinfo *ai;
+	int ai_errorcode;
 
-struct nodewait *next;
+	struct nodewait *next;
 };
 
 extern struct nodewait *nodewait_list;

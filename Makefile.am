@@ -71,8 +71,6 @@ pica-client/msguirouter.cpp \
 pica-client/msguirouter.h \
 pica-client/nodes.cpp \
 pica-client/nodes.h \
-pica-client/nodethread.cpp \
-pica-client/nodethread.h \
 pica-client/openssltool.cpp \
 pica-client/openssltool.h \
 pica-client/picaactioncenter.cpp \
@@ -90,6 +88,8 @@ pica-client/filetransfercontroller.cpp \
 pica-client/filetransfercontroller.h \
 pica-client/sound.cpp \
 pica-client/sound.h \
+pica-client/settings.cpp \
+pica-client/settings.h \
  \
 pica-client/dialogs/addaccountdialog.cpp \
 pica-client/dialogs/addaccountdialog.h \
@@ -103,6 +103,8 @@ pica-client/dialogs/showpicaiddialog.cpp \
 pica-client/dialogs/showpicaiddialog.h \
 pica-client/dialogs/filetransferdialog.cpp \
 pica-client/dialogs/filetransferdialog.h \
+pica-client/dialogs/settingsdialog.cpp \
+pica-client/dialogs/settingsdialog.h \
 PICA_client.c \
 PICA_client.h \
 PICA_msgproc.c \
@@ -119,12 +121,12 @@ moc_contactlistwidget.cpp \
 moc_forgedcertdialog.cpp \
 moc_mainwindow.cpp \
 moc_msguirouter.cpp \
-moc_nodethread.cpp \
 moc_picaactioncenter.cpp \
 moc_picasystray.cpp \
 moc_registeraccountdialog.cpp \
 moc_filetransferdialog.cpp \
 moc_skynet.cpp \
+moc_settingsdialog.cpp \
 moc_viewcertdialog.cpp \
 moc_showpicaiddialog.cpp \
 moc_dhparam.cpp \

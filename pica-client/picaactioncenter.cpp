@@ -7,6 +7,7 @@
 #include "accounts.h"
 #include "dialogs/showpicaiddialog.h"
 #include "sound.h"
+#include "dialogs/settingsdialog.h"
 
 #include <QMessageBox>
 
@@ -27,6 +28,9 @@ PicaActionCenter::PicaActionCenter(QObject *parent) :
     muteSoundsAct = new QAction(tr("&Mute Sounds"), this);
     muteSoundsAct->setCheckable(true);
     connect(muteSoundsAct, SIGNAL(triggered(bool)), this, SLOT(muteSounds(bool)));
+
+	settingsAct = new QAction(tr("&Configure Messenger..."), this);
+	connect(settingsAct, SIGNAL(triggered(bool)), this, SLOT(showsettings()));
 }
 
 void PicaActionCenter::about()
@@ -40,9 +44,10 @@ void PicaActionCenter::about()
     mbx.setWindowIcon(picapica_ico_sit);
     mbx.setIconPixmap(picapica_ico_sit.pixmap(32));
     mbx.setTextFormat(Qt::RichText);
-    mbx.setText(tr("<b>Pica Pica Messenger "VERSION_STRING"<br>(c) 2012 - 2016 Anton Sviridenko</b><br>\
-<a href=https://picapica.im>https://picapica.im</a><br><br>Contributors:<br>Daniil Ustinov - bugfixes<br>EXL - bugfixes<br><br>\
-protocol version " PICA_PROTO_VER_STRING));
+    mbx.setText(tr("<b>Pica Pica Messenger "VERSION_STRING"<br>(c) 2012 - 2017 Anton Sviridenko</b><br>\
+<a href=http://picapica.im>http://picapica.im</a><br><br>Contributors:<br>Daniil Ustinov - bugfixes<br>EXL - bugfixes<br><br>\
+protocol version " PICA_PROTO_VER_STRING "<br>"
+	"client protocol version " PICA_PROTO_CLIENT_VER_STRING));
     mbx.exec();
 }
 
@@ -53,6 +58,12 @@ void PicaActionCenter::exit()
 
     skynet->Exit();
     QApplication::instance()->quit();
+}
+
+void PicaActionCenter::showsettings()
+{
+	SettingsDialog sd;
+	sd.exec();
 }
 
 void PicaActionCenter::showmyid()
