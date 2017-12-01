@@ -32,11 +32,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	connect(rbEnableIncomingConns, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
 
 	QLabel *lbAddr = new QLabel(tr("Public address for incoming connections"), this);
-	addr = new QLineEdit(tr("0.0.0.0"), this);
+	addr = new QComboBox(this);
 	QLabel *lbPubPort = new QLabel(tr("External TCP port for incoming connections"), this);
 	publicPort = new QSpinBox(this);
 	QLabel *lbLocPort = new QLabel(tr("Local TCP port for incoming connections"), this);
 	localPort = new QSpinBox(this);
+
+	addr->setEditable(true);
 
 	publicPort->setRange(1, 65535);
 	localPort->setRange(1, 65535);
@@ -44,12 +46,12 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	publicPort->setValue(2298);
 	localPort->setValue(2298);
 
-	QListWidget *lwAddrs = new QListWidget(this);
 	QList<QHostAddress> hostIfAddrs = QNetworkInterface::allAddresses();
 	QHostAddress ifAddr;
 
 	foreach (ifAddr, hostIfAddrs)
-		lwAddrs->addItem(ifAddr.toString());
+		if (ifAddr.protocol() == QAbstractSocket::IPv4Protocol)
+			addr->addItem(ifAddr.toString());
 
 
 	directc2cLayout->addWidget(rbDisableDirectConns);
@@ -61,7 +63,6 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	directc2cLayout->addWidget(publicPort);
 	directc2cLayout->addWidget(lbLocPort);
 	directc2cLayout->addWidget(localPort);
-	directc2cLayout->addWidget(lwAddrs);
 	directc2cLayout->addStretch(1);
 
 	//groupBox->setLayout(directc2cLayout);
@@ -138,7 +139,7 @@ void SettingsDialog::loadSettings()
         break;
     }
 
-    addr->setText(st.loadValue("direct_c2c.public_addr", "0.0.0.0").toString());
+	addr->lineEdit()->setText(st.loadValue("direct_c2c.public_addr", "0.0.0.0").toString());
 
     publicPort->setValue(st.loadValue("direct_c2c.public_port", 2298).toInt());
     localPort->setValue(st.loadValue("direct_c2c.local_port", 2298).toInt());
@@ -161,7 +162,7 @@ void SettingsDialog::storeSettings()
 
     st.storeValue("direct_c2c.state", QString::number(c2c_state));
 
-    st.storeValue("direct_c2c.public_addr", addr->text());
+	st.storeValue("direct_c2c.public_addr", addr->lineEdit()->text());
     st.storeValue("direct_c2c.public_port", QString::number(publicPort->value()));
     st.storeValue("direct_c2c.local_port", QString::number(localPort->value()));
 }
