@@ -21,7 +21,8 @@ pica_node_SOURCES = PICA_node.c PICA_msgproc.c PICA_nodeaddrlist.c \
 		PICA_node.h PICA_msgproc.h PICA_nodeaddrlist.h \
 		PICA_nodewait.h PICA_nodeconfig.h PICA_log.h \
 		iniparser/src/dictionary.h iniparser/src/iniparser.h \
-		PICA_common.h PICA_proto.h PICA_id.h PICA_id.c
+		PICA_common.h PICA_proto.h PICA_id.h PICA_id.c \
+		PICA_netconf.c PICA_netconf.h
 		
 dist_man_MANS = pica-node.8 pica-node.conf.5
 

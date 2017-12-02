@@ -49,7 +49,6 @@ struct PICA_nodeaddr
 	struct PICA_nodeaddr *next;
 };
 
-int PICA_is_reserved_addr_ipv4(in_addr_t);
 
 int PICA_nodeaddr_list_load(const char* dbfilename, struct PICA_nodeaddr **list_head);
 int PICA_nodeaddr_save(const char* dbfilename, struct PICA_nodeaddr *naddr);

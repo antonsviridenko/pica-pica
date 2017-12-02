@@ -11,6 +11,7 @@
 #include "PICA_proto.h"
 #include "PICA_msgproc.h"
 #include "PICA_nodeaddrlist.h"
+#include "PICA_netconf.h"
 #include "PICA_common.h"
 #include "PICA_nodeconfig.h"
 #include "PICA_log.h"
