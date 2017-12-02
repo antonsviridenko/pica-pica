@@ -11,18 +11,18 @@
 
 int PICA_is_reserved_addr_ipv4(in_addr_t addr)
 {
-        if ((addr & PREFIX8)  == 0 //0.0.0.0/8
-                ||  (addr & PREFIX8)  == MAKEIP(10, 0, 0, 0) //10.0.0.0/8
-                ||  (addr & PREFIX8)  == MAKEIP(127, 0, 0, 0)//127.0.0.0/8
-                ||  (addr & PREFIX16) == MAKEIP(169, 254, 0, 0) //169.254.0.0/16
-                ||  (addr & PREFIX12) == MAKEIP(172, 16, 0, 0) //172.16.0.0/12
-                ||  (addr & PREFIX16) == MAKEIP(192, 168, 0, 0) //192.168.0.0/16
-                ||  (addr & PREFIX4)  == MAKEIP(224, 0, 0, 0) //224.0.0.0/4
-                ||  (addr & PREFIX4)  == MAKEIP(240, 0, 0, 0) //240.0.0.0/4
-                ||   addr == INADDR_BROADCAST
-           )
-                return 1;
+	if ((addr & PREFIX8)  == 0 //0.0.0.0/8
+	        ||  (addr & PREFIX8)  == MAKEIP(10, 0, 0, 0) //10.0.0.0/8
+	        ||  (addr & PREFIX8)  == MAKEIP(127, 0, 0, 0)//127.0.0.0/8
+	        ||  (addr & PREFIX16) == MAKEIP(169, 254, 0, 0) //169.254.0.0/16
+	        ||  (addr & PREFIX12) == MAKEIP(172, 16, 0, 0) //172.16.0.0/12
+	        ||  (addr & PREFIX16) == MAKEIP(192, 168, 0, 0) //192.168.0.0/16
+	        ||  (addr & PREFIX4)  == MAKEIP(224, 0, 0, 0) //224.0.0.0/4
+	        ||  (addr & PREFIX4)  == MAKEIP(240, 0, 0, 0) //240.0.0.0/4
+	        ||   addr == INADDR_BROADCAST
+	   )
+		return 1;
 
-        return 0;
+	return 0;
 }
 
