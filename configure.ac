@@ -21,6 +21,19 @@ AS_CASE([$host],
     []
 )
 
+AC_ARG_WITH([miniupnpc],
+  [AS_HELP_STRING([--without-miniupnpc],
+  [disable support for miniupnpc])],
+  [],
+  [with_miniupnpc=yes])
+
+AS_IF([test "x$with_miniupnpc" != xno],
+  [AC_CHECK_LIB([miniupnpc], [main],
+    [],
+    [AC_MSG_FAILURE(
+      [miniupnpc test failed (--without-miniupnpc to disable)])],
+  [])])
+
 # Checks for common libraries, required by both pica-node and pica-client
 AC_SEARCH_LIBS([dlopen], [dl])
 AC_CHECK_LIB([crypto], [RAND_add],[],[AC_MSG_ERROR(["libcrypto from OpenSSL package not found"])],[ -lz ])
