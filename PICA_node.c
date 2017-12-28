@@ -3009,6 +3009,23 @@ int main(int argc, char** argv)
 	if (!PICA_node_init())
 		return -1;
 
+	if (strcmp("autoconfigure", nodecfg.announced_addr) == 0)
+	{
+		//TOD check interfaces with global IP's assigned first
+#ifdef HAVE_LIBMINIUPNPC
+		char public_ip[64];
+		int ret;
+
+		ret = PICA_upnp_autoconfigure_ipv4(atoi(nodecfg.listen_port), atoi(nodecfg.listen_port), public_ip);
+		if (ret)
+		{
+			free(nodecfg.announced_addr);
+			nodecfg.announced_addr = strdup(public_ip);
+			PICA_info("autoconfigured announced address %s port %s", nodecfg.announced_addr, nodecfg.listen_port);
+		}
+#endif
+	}
+
 	if (INADDR_NONE == inet_addr(nodecfg.announced_addr) || INADDR_ANY == inet_addr(nodecfg.announced_addr))
 	{
 		PICA_fatal("announced_addr  (%.16s) is invalid or not configured. Please set correct public IP address of your pica-node instance in config file.",
