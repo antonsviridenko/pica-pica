@@ -17,5 +17,9 @@ typedef u_short in_port_t;
 
 int PICA_is_reserved_addr_ipv4(in_addr_t);
 
+#ifdef HAVE_LIBMINIUPNPC
+int PICA_upnp_autoconfigure_ipv4(int public_port, int local_port, char *public_ip);
+#endif
+
 #endif
 
