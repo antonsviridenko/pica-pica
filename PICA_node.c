@@ -3011,19 +3011,35 @@ int main(int argc, char** argv)
 
 	if (strcmp("autoconfigure", nodecfg.announced_addr) == 0)
 	{
-		//TOD check interfaces with global IP's assigned first
-#ifdef HAVE_LIBMINIUPNPC
-		char public_ip[64];
-		int ret;
+		in_addr_t guess;
+		struct in_addr in;
 
-		ret = PICA_upnp_autoconfigure_ipv4(atoi(nodecfg.listen_port), atoi(nodecfg.listen_port), public_ip);
-		if (ret)
+		guess = PICA_guess_listening_addr_ipv4();
+
+		in.s_addr = guess;
+
+		free(nodecfg.announced_addr);
+		nodecfg.announced_addr = strdup(inet_ntoa(in));
+
+		PICA_debug1("guessed interface address to be announced: %s", nodecfg.announced_addr);
+
+#ifdef HAVE_LIBMINIUPNPC
+		if (PICA_is_reserved_addr_ipv4(guess) && nodecfg.disable_reserved_addrs)
 		{
-			free(nodecfg.announced_addr);
-			nodecfg.announced_addr = strdup(public_ip);
-			PICA_info("autoconfigured announced address %s port %s", nodecfg.announced_addr, nodecfg.listen_port);
+			char public_ip[64];
+			int ret;
+
+			PICA_info("trying to get global IP with UPnP...");
+
+			ret = PICA_upnp_autoconfigure_ipv4(atoi(nodecfg.listen_port), atoi(nodecfg.listen_port), public_ip);
+			if (ret)
+			{
+				free(nodecfg.announced_addr);
+				nodecfg.announced_addr = strdup(public_ip);
+			}
 		}
 #endif
+		PICA_info("autoconfigured announced address %s port %s", nodecfg.announced_addr, nodecfg.listen_port);
 	}
 
 	if (INADDR_NONE == inet_addr(nodecfg.announced_addr) || INADDR_ANY == inet_addr(nodecfg.announced_addr))
