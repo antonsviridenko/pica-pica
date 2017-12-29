@@ -8,6 +8,12 @@
 #include <stdio.h>
 #endif
 
+#ifndef WIN32
+#include <sys/types.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#endif
+
 #define PREFIX4   htonl(0xf0000000U)
 #define PREFIX8   htonl(0xff000000U)
 #define PREFIX12 htonl(0xfff00000U)
@@ -32,6 +38,44 @@ int PICA_is_reserved_addr_ipv4(in_addr_t addr)
 		return 1;
 
 	return 0;
+}
+
+in_addr_t PICA_guess_listening_addr_ipv4()
+{
+	in_addr_t retaddr = INADDR_ANY;
+	int found_global = 0;
+#ifndef WIN32
+	struct ifaddrs *ifaddr, *ifa;
+
+	if (getifaddrs(&ifaddr) == -1)
+		return INADDR_ANY;
+
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
+	{
+		if (ifa->ifa_addr == NULL)
+			continue;
+
+		if (ifa->ifa_addr->sa_family != AF_INET)
+			continue;
+
+		if (ifa->ifa_flags & IFF_LOOPBACK)
+			continue;
+
+		if (!((ifa->ifa_flags & IFF_RUNNING) && (ifa->ifa_flags & IFF_UP)))
+			continue;
+
+		if (!found_global)
+		{
+			retaddr = ((struct sockaddr_in*)ifa->ifa_addr)->sin_addr.s_addr;
+
+			if (!PICA_is_reserved_addr_ipv4(retaddr))
+				found_global = 1;
+		}
+	}
+#else
+
+#endif
+	return retaddr;
 }
 
 #ifdef HAVE_LIBMINIUPNPC
