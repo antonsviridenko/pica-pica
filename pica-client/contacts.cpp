@@ -6,7 +6,7 @@
 Contacts::Contacts(QString storage, QByteArray user_account_id)
 	: account_id_(user_account_id)
 {
-	dbconn = QSqlDatabase::addDatabase("QSQLITE");
+	dbconn = QSqlDatabase::database();
 	dbconn.setDatabaseName(storage);
 
 	if (!dbconn.open())

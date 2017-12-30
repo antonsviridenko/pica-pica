@@ -15,7 +15,7 @@ void Accounts::SetCurrentAccount(Accounts::AccountRecord &rec)
 
 Accounts::Accounts(QString storage)
 {
-	dbconn = QSqlDatabase::addDatabase("QSQLITE");
+	dbconn = QSqlDatabase::database();
 	dbconn.setDatabaseName(storage);
 
 	if (!dbconn.open())

@@ -485,6 +485,7 @@ int main(int argc, char *argv[])
 {
 	QApplication a(argc, argv);
 
+	QSqlDatabase::addDatabase("QSQLITE");
 	if (!create_config_dir())
 		return -1;
 #ifndef WIN32

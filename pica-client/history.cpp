@@ -4,7 +4,7 @@
 History::History(QString storage, QByteArray my_id)
 	: me_(my_id)
 {
-	dbconn = QSqlDatabase::addDatabase("QSQLITE");
+	dbconn = QSqlDatabase::database();
 	dbconn.setDatabaseName(storage);
 
 	if (!dbconn.open())
