@@ -38,7 +38,8 @@ SOURCES += main.cpp\
     filetransfercontroller.cpp \
     sound.cpp \
     dialogs/settingsdialog.cpp \
-    settings.cpp
+    settings.cpp \
+    ../PICA_netconf.c
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -70,10 +71,12 @@ HEADERS  += mainwindow.h \
     filetransfercontroller.h \
     sound.h \
     dialogs/settingsdialog.h \
-    settings.h
+    settings.h \
+    ../PICA_netconf.h
 
 
 DEFINES = PICA_MULTITHREADED
+DEFINES += HAVE_LIBMINIUPNPC
 
 FORMS    += mainwindow.ui
 
@@ -85,6 +88,4 @@ unix: PKGCONFIG += libssl
 unix: CONFIG += link_pkgconfig
 unix: PKGCONFIG += libcrypto
 
-
-
-
+unix|win32: LIBS += -lminiupnpc

@@ -1,6 +1,7 @@
 #include "settingsdialog.h"
 #include "../settings.h"
 #include "../globals.h"
+#include "../../PICA_netconf.h"
 
 #include <QGroupBox>
 #include <QVBoxLayout>
@@ -28,6 +29,11 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	rbEnableOutgoingConns = new QRadioButton(tr("Connect to the remote peer directly if possible"), this);
 	rbEnableIncomingConns = new QRadioButton(tr("Enable incoming direct connections"), this);
 
+#ifdef HAVE_LIBMINIUPNPC
+	cbEnableUPnP = new QCheckBox(tr("Enable UPnP"));
+	cbEnableUPnP->setChecked(true);
+#endif
+
 	rbEnableIncomingConns->setChecked(true);
 	connect(rbEnableIncomingConns, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
 
@@ -49,6 +55,8 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	QList<QHostAddress> hostIfAddrs = QNetworkInterface::allAddresses();
 	QHostAddress ifAddr;
 
+	addr->addItem(QString("autoconfigure"));
+
 	foreach (ifAddr, hostIfAddrs)
 		if (ifAddr.protocol() == QAbstractSocket::IPv4Protocol)
 			addr->addItem(ifAddr.toString());
@@ -57,6 +65,9 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	directc2cLayout->addWidget(rbDisableDirectConns);
 	directc2cLayout->addWidget(rbEnableOutgoingConns);
 	directc2cLayout->addWidget(rbEnableIncomingConns);
+#ifdef HAVE_LIBMINIUPNPC
+	directc2cLayout->addWidget(cbEnableUPnP);
+#endif
 	directc2cLayout->addWidget(lbAddr);
 	directc2cLayout->addWidget(addr);
 	directc2cLayout->addWidget(lbPubPort);
@@ -99,6 +110,9 @@ void SettingsDialog::toggleIncomingConnections(bool checked)
 	addr->setEnabled(checked);
 	publicPort->setEnabled(checked);
 	localPort->setEnabled(checked);
+#ifdef HAVE_LIBMINIUPNPC
+	cbEnableUPnP->setEnabled(checked);
+#endif
 }
 
 void SettingsDialog::OK()
@@ -139,7 +153,37 @@ void SettingsDialog::loadSettings()
 		break;
 	}
 
-	addr->lineEdit()->setText(st.loadValue("direct_c2c.public_addr", "0.0.0.0").toString());
+#ifdef HAVE_LIBMINIUPNPC
+	cbEnableUPnP->setChecked(st.loadValue("direct_c2c.upnp_enabled", 1).toBool());
+#endif
+
+	addr->lineEdit()->setText(st.loadValue("direct_c2c.public_addr", "autoconfigure").toString());
+
+	if (addr->lineEdit()->text().contains(QString("autoconfigure")))
+	{
+		in_addr_t guess;
+		struct in_addr in;
+
+		guess = PICA_guess_listening_addr_ipv4();
+		in.s_addr = guess;
+		addr->lineEdit()->setText(QString("autoconfigured(%1)").arg(inet_ntoa(in)));
+
+#ifdef HAVE_LIBMINIUPNPC
+		if (cbEnableUPnP->isChecked() && PICA_is_reserved_addr_ipv4(guess))
+		{
+			int ret;
+			char public_ip[64];
+			ret = PICA_upnp_autoconfigure_ipv4(st.loadValue("direct_c2c.public_port", 2298).toInt(),
+												st.loadValue("direct_c2c.local_port", 2298).toInt(),
+												public_ip);
+
+			if (ret)
+			{
+				addr->lineEdit()->setText(QString("autoconfigured(%1)").arg(public_ip));
+			}
+		}
+#endif
+	}
 
 	publicPort->setValue(st.loadValue("direct_c2c.public_port", 2298).toInt());
 	localPort->setValue(st.loadValue("direct_c2c.local_port", 2298).toInt());
@@ -161,6 +205,10 @@ void SettingsDialog::storeSettings()
 		c2c_state = 2;
 
 	st.storeValue("direct_c2c.state", QString::number(c2c_state));
+
+#ifdef HAVE_LIBMINIUPNPC
+	st.storeValue("direct_c2c.upnp_enabled", cbEnableUPnP->isChecked() ? "1" : "0");
+#endif
 
 	st.storeValue("direct_c2c.public_addr", addr->lineEdit()->text());
 	st.storeValue("direct_c2c.public_port", QString::number(publicPort->value()));

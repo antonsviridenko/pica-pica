@@ -4,6 +4,7 @@
 #ifndef WIN32
 
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #else
 
@@ -19,12 +20,20 @@ typedef u_long in_addr_t;
 typedef u_short in_port_t;
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int PICA_is_reserved_addr_ipv4(in_addr_t);
 
 in_addr_t PICA_guess_listening_addr_ipv4();
 
 #ifdef HAVE_LIBMINIUPNPC
 int PICA_upnp_autoconfigure_ipv4(int public_port, int local_port, char *public_ip);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif

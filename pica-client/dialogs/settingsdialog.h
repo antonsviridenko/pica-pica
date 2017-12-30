@@ -7,6 +7,7 @@
 #include <QSpinBox>
 #include <QRadioButton>
 #include <QComboBox>
+#include <QCheckBox>
 
 class SettingsDialog : public QDialog
 {
@@ -23,6 +24,9 @@ private:
 	QRadioButton *rbDisableDirectConns;
 	QRadioButton *rbEnableOutgoingConns;
 	QRadioButton *rbEnableIncomingConns;
+#ifdef HAVE_LIBMINIUPNPC
+	QCheckBox *cbEnableUPnP;
+#endif
 
 	QComboBox *addr;
 	QSpinBox *publicPort;

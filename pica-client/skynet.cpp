@@ -11,6 +11,7 @@
 #include "dhparam.h"
 #include "askpassword.h"
 #include "settings.h"
+#include "../PICA_netconf.h"
 
 SkyNet::SkyNet()
 	: nodes(config_dbname), QObject(0)
@@ -345,9 +346,34 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 	{
 		int pub_port = st.loadValue("direct_c2c.public_port", 2298).toInt();
 		int loc_port = st.loadValue("direct_c2c.local_port", 2298).toInt();
+		QString public_addr = st.loadValue("direct_c2c.public_addr", "autoconfigure").toString();
+
+		if (public_addr.contains("autoconfigure"))
+		{
+			in_addr_t guess;
+			struct in_addr in;
+
+			guess = PICA_guess_listening_addr_ipv4();
+			in.s_addr = guess;
+			public_addr = QString(inet_ntoa(in));
+#ifdef HAVE_LIBMINIUPNPC
+			if (st.loadValue("direct_c2c.upnp_enabled", 1).toBool() && PICA_is_reserved_addr_ipv4(guess))
+			{
+				int ret;
+				char public_ip[64];
+				ret = PICA_upnp_autoconfigure_ipv4(pub_port, loc_port, public_ip);
+
+				if (ret)
+				{
+					public_addr = QString(public_ip);
+				}
+			}
+#endif
+			emit StatusMsg(QString(tr("Using autoconfigured address %1 port %2 for incoming direct connections")).arg(public_addr).arg(pub_port), false);
+		}
 
 		int ret = PICA_new_listener(acc,
-		                            st.loadValue("direct_c2c.public_addr", "0.0.0.0").toString().toAscii().constData(),
+									public_addr.toAscii().constData(),
 		                            pub_port,
 		                            loc_port, &listener);
 		if (ret != PICA_OK)

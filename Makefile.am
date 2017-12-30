@@ -111,7 +111,8 @@ PICA_client.h \
 PICA_msgproc.c \
 PICA_msgproc.h \
 PICA_common.h PICA_proto.h \
-PICA_id.c PICA_id.h
+PICA_id.c PICA_id.h \
+PICA_netconf.c PICA_netconf.h
 
 nodist_pica_client_pica_client_SOURCES  = \
 moc_accountswindow.cpp \
