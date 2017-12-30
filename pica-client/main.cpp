@@ -50,9 +50,7 @@ QString snd_newmessage("share\\picapica-snd-newmessage.wav");
 static bool create_database()
 {
 	QMessageBox msgBox;
-
-	QSqlDatabase dbconn = QSqlDatabase::addDatabase("QSQLITE");
-	dbconn.setDatabaseName(config_dbname);
+	QSqlDatabase dbconn = QSqlDatabase::database();
 
 	if (!dbconn.open())
 	{
@@ -166,8 +164,7 @@ static bool update_database()
 	QMessageBox msgBox;
 	int schema_ver;
 
-	QSqlDatabase dbconn = QSqlDatabase::addDatabase("QSQLITE");
-	dbconn.setDatabaseName(config_dbname);
+	QSqlDatabase dbconn = QSqlDatabase::database();
 
 	if (!dbconn.open())
 	{
@@ -423,6 +420,9 @@ static bool create_config_dir()
 
 	config_dbname = config_dir + QDir::separator() + QString(PICA_CLIENT_STORAGEDB);
 
+	QSqlDatabase dbconn = QSqlDatabase::addDatabase("QSQLITE");
+	dbconn.setDatabaseName(config_dbname);
+
 	if (!QFile::exists(config_dbname))
 	{
 		if (!create_database())
@@ -485,7 +485,6 @@ int main(int argc, char *argv[])
 {
 	QApplication a(argc, argv);
 
-	QSqlDatabase::addDatabase("QSQLITE");
 	if (!create_config_dir())
 		return -1;
 #ifndef WIN32
