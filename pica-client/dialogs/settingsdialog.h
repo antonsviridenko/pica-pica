@@ -32,6 +32,10 @@ private:
 	QSpinBox *publicPort;
 	QSpinBox *localPort;
 
+	QRadioButton *rbMLPProhibit;
+	QRadioButton *rbMLPReplace;
+	QRadioButton *rbMLPAllowMultiple;
+
 	QPushButton *btOk;
 	QPushButton *btCancel;
 
@@ -42,6 +46,7 @@ private slots:
 	void OK();
 	void Cancel();
 	void toggleIncomingConnections(bool checked);
+	void toggleMultipleLogins(bool checked);
 
 };
 

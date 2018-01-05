@@ -21,10 +21,12 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	QTabWidget *tabW = new QTabWidget(this);
 	QWidget* directc2ctab = new QWidget(0);
 	QWidget* soundstab = new QWidget(0);
+	QWidget* multilogintab = new QWidget(0);
 
-	//QGroupBox *groupBox = new QGroupBox(tr("Direct Connections"), directc2ctab);
 	QVBoxLayout *directc2cLayout = new QVBoxLayout();
+	QVBoxLayout *multiloginlayout = new QVBoxLayout();
 
+//Direct connections
 	rbDisableDirectConns = new QRadioButton(tr("Disable direct connections"), this);
 	rbEnableOutgoingConns = new QRadioButton(tr("Connect to the remote peer directly if possible"), this);
 	rbEnableIncomingConns = new QRadioButton(tr("Enable incoming direct connections"), this);
@@ -76,11 +78,26 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	directc2cLayout->addWidget(localPort);
 	directc2cLayout->addStretch(1);
 
-	//groupBox->setLayout(directc2cLayout);
 	directc2ctab->setLayout(directc2cLayout);
 
-	//settingsLayout->addWidget(groupBox);
+//Multiple logins
+	QLabel *lbMLP = new QLabel("Policy for same account logins from multiple devices");
+	rbMLPProhibit = new QRadioButton(tr("Prohibit new login attempts"), this);
+	rbMLPReplace = new QRadioButton(tr("Replace existing connections"), this);
+	rbMLPAllowMultiple = new QRadioButton(tr("Allow multiple logins, try to synchronise chat history"));
+
+	rbMLPProhibit->setChecked(true);
+
+	multiloginlayout->addWidget(lbMLP);
+	multiloginlayout->addWidget(rbMLPProhibit);
+	multiloginlayout->addWidget(rbMLPReplace);
+	multiloginlayout->addWidget(rbMLPAllowMultiple);
+	multiloginlayout->addStretch(1);
+
+	multilogintab->setLayout(multiloginlayout);
+
 	tabW->addTab(directc2ctab, tr("Direct Connections"));
+	tabW->addTab(multilogintab, tr("Multiple logins"));
 	tabW->addTab(soundstab, tr("Sounds"));
 	settingsLayout->addWidget(tabW);
 
@@ -113,6 +130,11 @@ void SettingsDialog::toggleIncomingConnections(bool checked)
 #ifdef HAVE_LIBMINIUPNPC
 	cbEnableUPnP->setEnabled(checked);
 #endif
+}
+
+void SettingsDialog::toggleMultipleLogins(bool checked)
+{
+
 }
 
 void SettingsDialog::OK()
@@ -174,8 +196,8 @@ void SettingsDialog::loadSettings()
 			int ret;
 			char public_ip[64];
 			ret = PICA_upnp_autoconfigure_ipv4(st.loadValue("direct_c2c.public_port", 2298).toInt(),
-												st.loadValue("direct_c2c.local_port", 2298).toInt(),
-												public_ip);
+			                                   st.loadValue("direct_c2c.local_port", 2298).toInt(),
+			                                   public_ip);
 
 			if (ret)
 			{
@@ -187,6 +209,28 @@ void SettingsDialog::loadSettings()
 
 	publicPort->setValue(st.loadValue("direct_c2c.public_port", 2298).toInt());
 	localPort->setValue(st.loadValue("direct_c2c.local_port", 2298).toInt());
+
+	//multiple logins
+	int mlpstate;
+	mlpstate = c2c_state = st.loadValue("multiple_logins.state", 0).toInt();
+
+	switch(mlpstate)
+	{
+	case 0:
+		rbMLPProhibit->setChecked(true);
+		break;
+
+	case 1:
+		rbMLPReplace->setChecked(true);
+		break;
+
+	case 2:
+		rbMLPAllowMultiple->setChecked(true);
+		break;
+
+	default:
+		break;
+	}
 
 }
 
@@ -213,4 +257,16 @@ void SettingsDialog::storeSettings()
 	st.storeValue("direct_c2c.public_addr", addr->lineEdit()->text());
 	st.storeValue("direct_c2c.public_port", QString::number(publicPort->value()));
 	st.storeValue("direct_c2c.local_port", QString::number(localPort->value()));
+
+	//multiple logins
+	int mlpstate;
+
+	if (rbMLPProhibit->isChecked())
+		mlpstate = 0;
+	else if (rbMLPReplace->isChecked())
+		mlpstate = 1;
+	else if (rbMLPAllowMultiple->isChecked())
+		mlpstate = 2;
+
+	st.storeValue("multiple_logins.state", QString::number(mlpstate));
 }
