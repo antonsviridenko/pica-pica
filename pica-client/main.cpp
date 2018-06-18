@@ -417,6 +417,7 @@ static bool create_config_dir()
 			return false;
 		}
 	}
+	QFile::setPermissions(config_dir, QFile::ReadOwner | QFile::WriteOwner);
 
 	config_dbname = config_dir + QDir::separator() + QString(PICA_CLIENT_STORAGEDB);
 
@@ -431,6 +432,7 @@ static bool create_config_dir()
 	else
 		update_database();
 
+	QFile::setPermissions(config_dbname, QFile::ReadOwner | QFile::WriteOwner);
 	/*if (!QFile::exists(config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE))
 	{
 	    OpenSSLTool osslt;

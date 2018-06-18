@@ -2,6 +2,7 @@
 #include "../globals.h"
 #include <QVBoxLayout>
 #include <QDir>
+#include <QFile>
 #include <QMessageBox>
 
 
@@ -171,6 +172,8 @@ void RegisterAccountDialog::stageSignCert(int retval, QProcess::ExitStatus)
 		lbStatus->setText(tr("Error:\n") + ost.ReadStdErr());
 		return;
 	}
+
+	QFile::setPermissions(config_dir + QDir::separator() + "privkey.pem", QFile::ReadOwner | QFile::WriteOwner);
 
 	lbStatus->setText(tr("2) Signing certificate..."));
 
