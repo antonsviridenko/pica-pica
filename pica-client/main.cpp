@@ -417,7 +417,7 @@ static bool create_config_dir()
 			return false;
 		}
 	}
-	QFile::setPermissions(config_dir, QFile::ReadOwner | QFile::WriteOwner);
+	QFile::setPermissions(config_dir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
 
 	config_dbname = config_dir + QDir::separator() + QString(PICA_CLIENT_STORAGEDB);
 
