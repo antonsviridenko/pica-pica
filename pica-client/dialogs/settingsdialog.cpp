@@ -2,6 +2,7 @@
 #include "../settings.h"
 #include "../globals.h"
 #include "../../PICA_netconf.h"
+#include "../../PICA_proto.h"
 
 #include <QGroupBox>
 #include <QVBoxLayout>
@@ -216,15 +217,15 @@ void SettingsDialog::loadSettings()
 
 	switch(mlpstate)
 	{
-	case 0:
+	case PICA_MULTILOGIN_PROHIBIT:
 		rbMLPProhibit->setChecked(true);
 		break;
 
-	case 1:
+	case PICA_MULTILOGIN_REPLACE:
 		rbMLPReplace->setChecked(true);
 		break;
 
-	case 2:
+	case PICA_MULTILOGIN_ALLOW:
 		rbMLPAllowMultiple->setChecked(true);
 		break;
 
@@ -262,11 +263,11 @@ void SettingsDialog::storeSettings()
 	int mlpstate;
 
 	if (rbMLPProhibit->isChecked())
-		mlpstate = 0;
+		mlpstate = PICA_MULTILOGIN_PROHIBIT;
 	else if (rbMLPReplace->isChecked())
-		mlpstate = 1;
+		mlpstate = PICA_MULTILOGIN_REPLACE;
 	else if (rbMLPAllowMultiple->isChecked())
-		mlpstate = 2;
+		mlpstate = PICA_MULTILOGIN_ALLOW;
 
 	st.storeValue("multiple_logins.state", QString::number(mlpstate));
 }

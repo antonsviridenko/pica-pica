@@ -322,6 +322,7 @@ bool SkyNet::open_account()
 void SkyNet::Join(Accounts::AccountRecord &accrec)
 {
 	PICA_directc2c_config directc2c_cfg = PICA_DIRECTC2C_CFG_DISABLED;
+	int multilogin = PICA_MULTILOGIN_PROHIBIT;
 	Settings st(config_dbname);
 
 	skynet_account = accrec;
@@ -341,6 +342,7 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 	}
 
 	directc2c_cfg = (PICA_directc2c_config)st.loadValue("direct_c2c.state", 1).toInt();
+	multilogin = st.loadValue("multiple_logins.state", PICA_MULTILOGIN_PROHIBIT).toInt();
 
 	if (!listener && directc2c_cfg == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
 	{
@@ -373,7 +375,7 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 		}
 
 		int ret = PICA_new_listener(acc,
-									public_addr.toAscii().constData(),
+		                            public_addr.toAscii().constData(),
 		                            pub_port,
 		                            loc_port, &listener);
 		if (ret != PICA_OK)
@@ -397,7 +399,7 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 		struct PICA_c2n *c2n = NULL;
 
 		ret = PICA_new_c2n(acc, noderecords[i].address.toUtf8().constData(), noderecords[i].port,
-		                   directc2c_cfg, listener, &c2n);
+		                   directc2c_cfg, multilogin, listener, &c2n);
 
 		if (ret == PICA_OK)
 		{

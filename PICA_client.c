@@ -1510,6 +1510,7 @@ static int c2n_stage2_sendreq(struct PICA_c2n *c2n)
 	{
 		mp->tail[0] = PICA_PROTO_VER_HIGH;
 		mp->tail[1] = PICA_PROTO_VER_LOW;
+		mp->tail[2] = c2n->multilogin_policy;
 	}
 	else
 		return PICA_ERRNOMEM;
@@ -1614,8 +1615,8 @@ static int directc2c_stage2_starttls(struct PICA_directc2c *d, struct PICA_c2c *
 //....
 
 int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int port,
-                 enum PICA_directc2c_config direct_c2c_mode, struct PICA_listener *l,
-                 struct PICA_c2n **ci)
+                 enum PICA_directc2c_config direct_c2c_mode, int multilogin,
+                 struct PICA_listener *l, struct PICA_c2n **ci)
 {
 	PICA_TRACEFUNC
 	int ret, ret_err;
@@ -1634,6 +1635,7 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
 	cid->acc = acc;
 
 	cid->directc2c_config = direct_c2c_mode;
+	cid->multilogin_policy = multilogin;
 
 	if (direct_c2c_mode == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
 	{
@@ -1755,7 +1757,7 @@ cid->state = PICA_C2N_STATE_WAITINGTLS;
 if (ret!=1)
 {
 //printf("SSL_accept  ret=%i\n  SSL_get_error=%i\n",ret,SSL_get_error(cid->ssl_comm,ret));//debug
-	//ERR_CHECK
+//ERR_CHECK
 ret_err=PICA_ERRSSL;
 goto error_ret_4;
 }*/ /*
