@@ -191,5 +191,17 @@ uninstall-hook: pica-client-uninstall-menuitem pica-client-uninstall-icon
 
 endif
 
+deploy: pica-client/pica-client
+	mkdir -p PicaPicaMessenger.app/Contents/Resources
+	mkdir -p PicaPicaMessenger.app/Contents/MacOS
+	cp apple/Info.plist PicaPicaMessenger.app/Contents/
+	cp pica-client/pica-client PicaPicaMessenger.app/Contents/MacOS/
+	cp pica-client/picapica-icon-fly.png PicaPicaMessenger.app/Contents/Resources
+	cp pica-client/picapica-icon-sit.png PicaPicaMessenger.app/Contents/Resources
+	cp pica-client/picapica-snd-newmessage.wav PicaPicaMessenger.app/Contents/Resources
+	cp dhparam4096.pem PicaPicaMessenger.app/Contents/Resources
+	macdeployqt -dmg PicaPicaMessenger.app
+
+
 endif
 #####################################
