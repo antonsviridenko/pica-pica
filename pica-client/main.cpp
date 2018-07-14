@@ -40,6 +40,10 @@ QString config_defaultCA(PICA_INSTALLPREFIX"/share/pica-client/CA.pem");
 QString config_defaultDHParam(PICA_INSTALLPREFIX"/share/pica-client/"PICA_CLIENT_DHPARAMFILE);
 
 QString snd_newmessage(PICA_INSTALLPREFIX"/share/pica-client/picapica-snd-newmessage.wav");
+#elif defined(__APPLE__)
+QString config_defaultDHParam("./"PICA_APPBUNDLENAME"/Contents/Resources/"PICA_CLIENT_DHPARAMFILE);
+
+QString snd_newmessage("./"PICA_APPBUNDLENAME"/Contents/Resources/picapica-snd-newmessage.wav");
 #else
 QString config_defaultCA("share\\CA.pem");
 QString config_defaultDHParam("share\\"PICA_CLIENT_DHPARAMFILE);
@@ -492,6 +496,9 @@ int main(int argc, char *argv[])
 #ifndef WIN32
 	picapica_ico_sit = QIcon(PICA_INSTALLPREFIX"/share/pica-client/picapica-icon-sit.png");
 	picapica_ico_fly = QIcon(PICA_INSTALLPREFIX"/share/pica-client/picapica-icon-fly.png");
+#elif defined(__APPLE__)
+	picapica_ico_sit = QIcon("./"PICA_APPBUNDLENAME"/Contents/Resources/picapica-icon-sit.png");
+	picapica_ico_fly = QIcon("./"PICA_APPBUNDLENAME"/Contents/Resources/picapica-icon-fly.png");
 #else
 	picapica_ico_sit = QIcon("share\\picapica-icon-sit.png");
 	picapica_ico_fly = QIcon("share\\picapica-icon-fly.png");

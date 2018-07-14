@@ -9,6 +9,7 @@
 #ifndef PICA_INSTALLPREFIX
 
 #define PICA_INSTALLPREFIX "/usr"
+#define PICA_APPBUNDLENAME "PicaPicaMessenger.app"
 
 #endif
 
