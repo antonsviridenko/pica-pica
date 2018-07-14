@@ -8,7 +8,8 @@ EXTRA_DIST = 	iniparser/LICENSE \
 			README \
 			debian \
 			gentoo \
-			windows
+			windows \
+			apple/Info.plist
 
 #####################################
 if PICA_NODE
