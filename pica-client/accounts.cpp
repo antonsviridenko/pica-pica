@@ -127,11 +127,5 @@ bool Accounts::CheckFiles(AccountRecord &acc, QString &error_string)
 		return false;
 	}
 
-	if (!QFile::exists(acc.CA_file))
-	{
-		error_string = QObject::tr("Certificate Authority file %1 does not exist").arg(acc.CA_file);
-		return false;
-	}
-
 	return true;
 }

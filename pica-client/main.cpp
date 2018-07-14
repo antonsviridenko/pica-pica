@@ -33,10 +33,8 @@ class PicaSysTray *systray;
 class FileTransferController *ftctrl;
 class AccountsWindow *accwindow;
 
-// /usr/share/pica-client/pica-pica_CA.pem
-//QString config_defaultCA("/home/root_jr/files/projects/picapica_wc/localhost/project_picapica/trunk/tests/trusted_CA.pem");
+
 #ifndef WIN32
-QString config_defaultCA(PICA_INSTALLPREFIX"/share/pica-client/CA.pem");
 QString config_defaultDHParam(PICA_INSTALLPREFIX"/share/pica-client/"PICA_CLIENT_DHPARAMFILE);
 
 QString snd_newmessage(PICA_INSTALLPREFIX"/share/pica-client/picapica-snd-newmessage.wav");
@@ -45,7 +43,6 @@ QString config_defaultDHParam("./"PICA_APPBUNDLENAME"/Contents/Resources/"PICA_C
 
 QString snd_newmessage("./"PICA_APPBUNDLENAME"/Contents/Resources/picapica-snd-newmessage.wav");
 #else
-QString config_defaultCA("share\\CA.pem");
 QString config_defaultDHParam("share\\"PICA_CLIENT_DHPARAMFILE);
 
 QString snd_newmessage("share\\picapica-snd-newmessage.wav");

@@ -157,7 +157,7 @@ void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, b
 	rec.name = name;
 	rec.cert_file = certfilename;
 	rec.pkey_file = pkeyfilename;
-	rec.CA_file = config_defaultCA; //;certfilename
+	rec.CA_file = QLatin1String("none");
 
 	accounts.Add(rec);
 

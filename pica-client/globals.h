@@ -18,7 +18,6 @@
 //variables are defined in main.cpp
 extern class QString config_dir;
 extern class QString config_dbname;
-extern class QString config_defaultCA;
 extern class QString config_defaultDHParam;
 extern class SkyNet *skynet;
 extern class MainWindow *mainwindow;
