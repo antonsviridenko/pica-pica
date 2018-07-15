@@ -1,5 +1,0 @@
-::1 5859 0
-aaa.mydns.com 5000 1
-localhost 5859 0
-veryverylongdomainname.aaaaaaaaaaaaaaaaaaaaaaaaaaa.com 65000 0
-
