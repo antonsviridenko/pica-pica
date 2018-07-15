@@ -1425,6 +1425,8 @@ int PICA_open_acc(const char *cert_file,
 		dh = PEM_read_DHparams(dh_file, NULL, NULL, NULL);
 		fclose(dh_file);
 	}
+	else
+		return PICA_ERRINVARG;
 
 	if (1 != SSL_CTX_set_tmp_dh(a->ctx, dh))
 	{
