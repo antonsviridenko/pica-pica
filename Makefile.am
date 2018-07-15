@@ -194,14 +194,18 @@ endif
 deploy: pica-client/pica-client
 	mkdir -p PicaPicaMessenger.app/Contents/Resources
 	mkdir -p PicaPicaMessenger.app/Contents/MacOS
+	mkdir -p PicaPicaMessenger.app/Contents/PlugIns/sqldrivers
 	cp apple/Info.plist PicaPicaMessenger.app/Contents/
-	cp pica-client/pica-client PicaPicaMessenger.app/Contents/MacOS/
+	cp pica-client/pica-client PicaPicaMessenger.app/Contents/MacOS/PicaPicaMessenger
 	cp pica-client/picapica-icon-fly.png PicaPicaMessenger.app/Contents/Resources
 	cp pica-client/picapica-icon-sit.png PicaPicaMessenger.app/Contents/Resources
 	cp pica-client/picapica-snd-newmessage.wav PicaPicaMessenger.app/Contents/Resources
 	cp dhparam4096.pem PicaPicaMessenger.app/Contents/Resources
-	macdeployqt -dmg PicaPicaMessenger.app
-
+	cp ${QTDIR}/plugins/sqldrivers/libqsqlite.dylib PicaPicaMessenger.app/Contents/PlugIns/sqldrivers
+	macdeployqt PicaPicaMessenger.app -verbose=3
+	macdeployqt PicaPicaMessenger.app -verbose=3
+	hdiutil create -srcfolder PicaPicaMessenger.app PicaPicaMessenger.dmg
+	hdiutil internet-enable -yes PicaPicaMessenger.dmg
 
 endif
 #####################################
