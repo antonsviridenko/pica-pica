@@ -7,10 +7,7 @@
 #define PICA_CLIENT_DHPARAMBITS 4096
 
 #ifndef PICA_INSTALLPREFIX
-
 #define PICA_INSTALLPREFIX "/usr"
-#define PICA_APPBUNDLENAME "PicaPicaMessenger.app"
-
 #endif
 
 #include "../PICA_id.h"
@@ -19,6 +16,7 @@
 extern class QString config_dir;
 extern class QString config_dbname;
 extern class QString config_defaultDHParam;
+extern class QString config_resourceDir;
 extern class SkyNet *skynet;
 extern class MainWindow *mainwindow;
 extern class AskPassword *askpassword;

@@ -17,9 +17,11 @@
 #include "settings.h"
 #include "dialogs/settingsdialog.h"
 
+
 //globals
 QString config_dir;
 QString config_dbname;
+QString config_resourceDir;
 SkyNet *skynet;
 MainWindow *mainwindow;
 class AskPassword *askpassword;
@@ -33,20 +35,9 @@ class PicaSysTray *systray;
 class FileTransferController *ftctrl;
 class AccountsWindow *accwindow;
 
+QString config_defaultDHParam;
+QString snd_newmessage;
 
-#ifndef WIN32
-QString config_defaultDHParam(PICA_INSTALLPREFIX"/share/pica-client/"PICA_CLIENT_DHPARAMFILE);
-
-QString snd_newmessage(PICA_INSTALLPREFIX"/share/pica-client/picapica-snd-newmessage.wav");
-#elif defined(__APPLE__)
-QString config_defaultDHParam("./"PICA_APPBUNDLENAME"/Contents/Resources/"PICA_CLIENT_DHPARAMFILE);
-
-QString snd_newmessage("./"PICA_APPBUNDLENAME"/Contents/Resources/picapica-snd-newmessage.wav");
-#else
-QString config_defaultDHParam("share\\"PICA_CLIENT_DHPARAMFILE);
-
-QString snd_newmessage("share\\picapica-snd-newmessage.wav");
-#endif
 
 static bool create_database()
 {
@@ -488,18 +479,22 @@ int main(int argc, char *argv[])
 {
 	QApplication a(argc, argv);
 
+#ifdef WIN32
+	config_resourceDir = QLatin1String("share\\");
+#elif defined(__APPLE__)
+	config_resourceDir = QCoreApplication::applicationDirPath() + QLatin1String("/../Resources/");
+#else
+	config_resourceDir = QLatin1String(PICA_INSTALLPREFIX "/share/pica-client/");
+#endif
+
 	if (!create_config_dir())
 		return -1;
-#ifndef WIN32
-	picapica_ico_sit = QIcon(PICA_INSTALLPREFIX"/share/pica-client/picapica-icon-sit.png");
-	picapica_ico_fly = QIcon(PICA_INSTALLPREFIX"/share/pica-client/picapica-icon-fly.png");
-#elif defined(__APPLE__)
-	picapica_ico_sit = QIcon("./"PICA_APPBUNDLENAME"/Contents/Resources/picapica-icon-sit.png");
-	picapica_ico_fly = QIcon("./"PICA_APPBUNDLENAME"/Contents/Resources/picapica-icon-fly.png");
-#else
-	picapica_ico_sit = QIcon("share\\picapica-icon-sit.png");
-	picapica_ico_fly = QIcon("share\\picapica-icon-fly.png");
-#endif
+
+	config_defaultDHParam = config_resourceDir + QLatin1String(PICA_CLIENT_DHPARAMFILE);
+	snd_newmessage = config_resourceDir + QLatin1String("picapica-snd-newmessage.wav");
+
+	picapica_ico_sit = QIcon(config_resourceDir + "picapica-icon-sit.png");
+	picapica_ico_fly = QIcon(config_resourceDir + "picapica-icon-fly.png");
 
 	Settings st(config_dbname);
 
