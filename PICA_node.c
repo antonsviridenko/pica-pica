@@ -354,7 +354,7 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 		return 0;
 	}
 
-	return ;
+	return 1;
 }
 
 
