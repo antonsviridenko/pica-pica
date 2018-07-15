@@ -28,7 +28,7 @@
   <string>????</string>
 
   <key>CFBundleExecutable</key>
-  <string>pica-client</string>
+  <string>PicaPicaMessenger</string>
 
   <key>CFBundleIdentifier</key>
   <string>im.picapica.pica-client</string>
