@@ -6,7 +6,7 @@ Page license
 Page directory
 Page instfiles
 
-LicenseData "LICENSE"
+LicenseData "COPYING"
 
 InstallDir "$PROGRAMFILES\Pica Pica Messenger"
 
@@ -28,7 +28,7 @@ Section "" ;No components page, name is not important
   File "QtNetwork4.dll"
   File "QtSql4.dll"
   File "picapica-icon-sit.ico"
-  File "LICENSE"
+  File "COPYING"
   File "OPENSSL.LICENSE"
   File "Qt4.LICENSE"
   File "openssl.cnf"
@@ -69,7 +69,7 @@ Section "Uninstall"
   Delete "$INSTDIR\QtNetwork4.dll"
   Delete "$INSTDIR\QtSql4.dll"
   Delete "$INSTDIR\picapica-icon-sit.ico"
-  Delete "$INSTDIR\LICENSE"
+  Delete "$INSTDIR\COPYING"
   Delete "$INSTDIR\OPENSSL.LICENSE"
   Delete "$INSTDIR\Qt4.LICENSE"
   Delete "$INSTDIR\openssl.cnf"

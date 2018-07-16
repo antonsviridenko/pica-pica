@@ -4,7 +4,7 @@ CLEANFILES =
 
 
 EXTRA_DIST = 	iniparser/LICENSE \
-			LICENSE \
+			COPYING \
 			README \
 			debian \
 			gentoo \

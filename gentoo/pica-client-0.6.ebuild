@@ -10,7 +10,7 @@ DESCRIPTION="Pica Pica Messenger"
 HOMEPAGE="http://picapica.im/"
 SRC_URI="http://picapica.im/pica-pica-${PV}.tar.gz"
 
-LICENSE="BSD-2"
+LICENSE="GPL-3+"
 SLOT="0"
 
 KEYWORDS="~amd64 ~x86"

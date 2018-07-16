@@ -10,7 +10,7 @@ DESCRIPTION="Node for Pica Pica distributed decentralized IM system"
 HOMEPAGE="http://picapica.im/"
 SRC_URI="http://picapica.im/pica-pica-${PV}.tar.gz"
 
-LICENSE="BSD-2"
+LICENSE="GPL-3+"
 SLOT="0"
 
 KEYWORDS="~amd64 ~x86"
