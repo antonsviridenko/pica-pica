@@ -2865,8 +2865,11 @@ Options:\n\
 
 void print_version()
 {
-	puts("Pica Pica Node v"PACKAGE_VERSION" \n(c) 2012 - 2017 Anton Sviridenko\n");
+	puts("Pica Pica Node v"PACKAGE_VERSION" \nCopyright  (c) 2012 - 2018 Anton Sviridenko\n");
 	puts("protocol version "PICA_PROTO_VER_STRING"\n");
+	puts("License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>\n\
+This is free software: you are free to change and redistribute it.\n\
+There is NO WARRANTY, to the extent permitted by law.\n");
 
 ////----include this only if OpenSSL is statically linked
 	puts("This product includes software developed by the OpenSSL Project\n\

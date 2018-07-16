@@ -44,10 +44,23 @@ void PicaActionCenter::about()
 	mbx.setWindowIcon(picapica_ico_sit);
 	mbx.setIconPixmap(picapica_ico_sit.pixmap(32));
 	mbx.setTextFormat(Qt::RichText);
-	mbx.setText(tr("<b>Pica Pica Messenger "VERSION_STRING"<br>(c) 2012 - 2017 Anton Sviridenko</b><br>\
+	mbx.setText(tr("<b>Pica Pica Messenger "VERSION_STRING"<br>Copyright (c) 2012 - 2018 Anton Sviridenko</b><br>\
 <a href=http://picapica.im>http://picapica.im</a><br><br>Contributors:<br>Daniil Ustinov - bugfixes<br>EXL - bugfixes<br><br>\
 protocol version " PICA_PROTO_VER_STRING "<br>"
-	               "client protocol version " PICA_PROTO_CLIENT_VER_STRING));
+"client protocol version " PICA_PROTO_CLIENT_VER_STRING "<br><br>"
+"<pre>"
+"This program is free software: you can redistribute it and/or modify" "<br>"
+"it under the terms of the GNU General Public License as published by" "<br>"
+"the Free Software Foundation, either version 3 of the License, or" "<br>"
+"(at your option) any later version." "<br>"
+"<br><br>"
+"This program is distributed in the hope that it will be useful," "<br>"
+"but WITHOUT ANY WARRANTY; without even the implied warranty of" "<br>"
+"MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the" "<br>"
+"GNU General Public License for more details." "<br>"
+"<br><br>"
+"You should have received a copy of the GNU General Public License" "<br>"
+"along with this program.  If not, see &lt;https://www.gnu.org/licenses/&gt;.</pre><br>"));
 	mbx.exec();
 }
 
