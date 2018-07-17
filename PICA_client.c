@@ -2343,7 +2343,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 	}
 }
 
-static void listener_add_connection(struct PICA_listener *lst, SOCKET *s)
+static void listener_add_connection(struct PICA_listener *lst, SOCKET s)
 {
 	PICA_TRACEFUNC
 	struct PICA_directc2c *nc;
