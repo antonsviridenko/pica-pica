@@ -22,18 +22,13 @@
 #include <openssl/dh.h>
 #include <string.h>
 
-#define PICA_DEBUG // debug
+#define PICA_DEBUG
 
 #ifdef PICA_DEBUG
 #define PICA_TRACEFUNC fprintf(stderr, "%s()\n", __PRETTY_FUNCTION__);
 #else
 #define PICA_TRACEFUNC
 #endif
-
-//static SSL_CTX* ctx;
-//unsigned char __hellomsg[4]={0xCA,0xCA,PICA_PROTO_VER_HIGH,PICA_PROTO_VER_LOW};
-
-//char _msgbuf[65536];//
 
 static struct PICA_client_callbacks callbacks;
 
@@ -43,7 +38,8 @@ static struct PICA_client_callbacks callbacks;
 static HANDLE *mt_locks;
 
 const char *PICA_inet_ntop(int af, const void *src, char *dst, size_t size);
-#define inet_ntop PICA_inet_ntop //own implementation of inet_ntop() for WinXP compatibility
+/* own implementation of inet_ntop() for WinXP compatibility */
+#define inet_ntop PICA_inet_ntop
 
 #else
 static pthread_mutex_t *mt_locks;
@@ -105,7 +101,7 @@ const struct PICA_msginfo  c2n_messages[] =
 	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ},
 	{PICA_PROTO_INITRESPOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_INITRESPOK_SIZE, procmsg_INITRESP},
 	{PICA_PROTO_VERDIFFER, PICA_MSG_FIXED_SIZE, PICA_PROTO_VERDIFFER_SIZE, procmsg_INITRESP}
-};//---!!! PING!!!
+};
 
 const struct PICA_msginfo  c2c_messages[] =
 {
@@ -128,45 +124,6 @@ struct PICA_msginfo c2c_init_messages[] =
 {
 
 };
-
-// static int pem_passwd_cb(char *buf, int size, int rwflag, void *userdata)
-//{
-//strncpy(buf, (char *)(userdata), size);
-//buf[size - 1] = 0;
-//return(strlen(buf));
-//}
-/*
-//функция возвращает номер клиента id в бинарном виде, извлекая его из строки,
-//которая возвращается функцией X509_NAME_oneline и представляет собой DN из сертификата клиента
- static int get_id_fromsubjstr(char* DN_str,unsigned int* id)
-{
-char* tmp1;
-char* tmp2;
-
-tmp1=strstr(DN_str,"/CN=");
-
-if (!tmp1)
-	return 0;
-
-tmp2=strchr(tmp1,'#');
-
-if (!tmp2)
-	return 0;
-
-*tmp2=0;
-
-tmp1+=4;
-
-if (tmp1==tmp2)
-		return 0;
-
-*id=(unsigned int)strtol(tmp1,0,10);
-
-*tmp2='#';
-return 1;
-}
-*/
-
 
 int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id)
 {
@@ -300,13 +257,13 @@ static int c2c_stage2_connid(struct PICA_c2c *chnl)
 	{
 		if (chnl->outgoing)
 		{
-			memcpy(mp->tail, chnl->acc->id, PICA_ID_SIZE);//вызвывающий
-			memcpy(mp->tail + PICA_ID_SIZE, chnl->peer_id, PICA_ID_SIZE);//вызываемый
+			memcpy(mp->tail, chnl->acc->id, PICA_ID_SIZE);/* caller ID*/
+			memcpy(mp->tail + PICA_ID_SIZE, chnl->peer_id, PICA_ID_SIZE);/* callee ID*/
 		}
 		else
 		{
-			memcpy(mp->tail, chnl->peer_id, PICA_ID_SIZE);//вызвывающий
-			memcpy(mp->tail + PICA_ID_SIZE, chnl->acc->id, PICA_ID_SIZE);//вызываемый
+			memcpy(mp->tail, chnl->peer_id, PICA_ID_SIZE);/* caller ID*/
+			memcpy(mp->tail + PICA_ID_SIZE, chnl->acc->id, PICA_ID_SIZE);/* callee ID*/
 		}
 
 		chnl->state = PICA_C2C_STATE_CONNID;
@@ -363,8 +320,6 @@ static int c2c_stage3_starttls(struct PICA_c2c *chnl)
 
 static int c2c_verify_peer_cert(struct PICA_c2c *chnl)
 {
-//проверить сертификат собеседника
-
 	chnl->peer_cert = SSL_get_peer_certificate(chnl->ssl);
 
 	if (!chnl->peer_cert)
@@ -734,7 +689,7 @@ static unsigned int procmsg_CONNREQINC(unsigned char* buf, unsigned int nb, void
 		ret = c2n_alloc_c2c( ci, &_chnl, peer_id, PICA_C2C_INCOMING);
 
 		if (!ret)
-			return 0; //ERR_CHECK - кончилась память
+			return 0;
 
 		do
 		{
@@ -1311,21 +1266,6 @@ static int check_pkey_passphrase(const char *pkey_file,
 }
 
 
-
-// Opens socket to listen for incoming direct c2c connections bypassing nodes
-//
-// acc - pointer to opened account
-//
-// public_addr - DNS name or IP address string,
-// it is an address that will be used for connecting from global Internet.
-// Should be set to router's external IP if computer running pica-client is located behind the NAT.
-//
-// public_port - TCP port for incoming connections from global Internet
-//
-// local_port - TCP port that will be actually opened on computer listening for direct c2c connections
-//
-// l - address of pointer that will be filled with address of created PICA_listener structure
-//
 int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int public_port, int local_port, struct PICA_listener **l)
 {
 	int ret, ret_err, flag;
@@ -1469,7 +1409,6 @@ int PICA_open_acc(const char *cert_file,
 		goto error_ret_2;
 	}
 
-////<<
 	if (password_cb)
 	{
 		SSL_CTX_set_default_passwd_cb(a->ctx, password_cb);
@@ -1490,11 +1429,6 @@ int PICA_open_acc(const char *cert_file,
 		ret_err = PICA_ERRSSL;
 		goto error_ret_2;
 	}
-////<<
-
-//ret=SSL_CTX_load_verify_locations(cid->ctx,CA_file,0/*"trustedCA/"*/);
-//printf("loadverifylocations ret=%i\n",ret);//debug
-//SSL_CTX_set_client_CA_list(cid->ctx,SSL_load_client_CA_file(CA_file));
 
 	ret = SSL_CTX_set_cipher_list(a->ctx, "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CAMELLIA256-SHA");
 
@@ -1617,21 +1551,6 @@ static int directc2c_stage2_starttls(struct PICA_directc2c *d, struct PICA_c2c *
 	return PICA_OK;
 }
 
-/*адрес сервера, сертификат клиента и закрытый ключ*/
-
-//Осуществляет подключение к серверу по указанному адресу.
-//Аргументы:
-//nodeaddr - адрес узла
-//port - номер порта, в нативном для хост-машины порядке байт
-//CA_file - имя файла, содержащего корневой сертификат в формате PEM
-//cert_file - имя файла, содержащего сертфикат клиента в формате PEM
-//pkey_file - имя файла, содержащего приватный ключ в формате PEM
-//password_cb - callback-функция, запрашивающая пароль к приватному ключу, см. man 3 SSL_CTX_set_default_passwd_cb;в userdata передается указатель на id
-//ci -указатель на указатель на структуру PICA_c2n, который будет проинициализирован при успешном выполнении функции
-//Память, выделенная под структуру, освобождается при вызове PICA_close_c2n
-//Возвращаемое значение - код завершения
-//PICA_OK - успешное завершение функции
-//....
 
 int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int port,
                  enum PICA_directc2c_config direct_c2c_mode, int multilogin,
@@ -1723,7 +1642,6 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
 	cid->state = PICA_C2N_STATE_CONNECTING;
 
 	ret = connect(cid->sck_comm, (struct sockaddr*)&cid->srv_addr, sizeof(cid->srv_addr));
-/////////////////state_
 
 	if (ret == 0)
 		return c2n_stage2_sendreq(cid);
@@ -1731,71 +1649,7 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
 	if ((ret_err = process_first_async_connect_result(ret)) != PICA_OK)
 		goto error_ret_4;
 
-
-	/*
-	do
-		{
-		ret = PICA_write_c2n(cid);
-		if (ret != PICA_OK)
-			{
-			ret_err = ret;
-			break;
-			}
-		ret = PICA_read_c2n(cid);
-		if (ret != PICA_OK)
-			{
-			ret_err = ret;
-			break;
-			}
-		//TODO Timeout
-		}
-	while (cid->init_resp_ok == 0);
-
-	if (cid->init_resp_ok != 1)
-		{
-		if (cid->init_resp_ok == -1)
-			{
-			if (cid->node_ver_major > PICA_PROTO_VER_HIGH ||
-					(cid->node_ver_major == PICA_PROTO_VER_HIGH && cid->node_ver_minor > PICA_PROTO_VER_LOW))
-				ret_err = PICA_ERRPROTONEW;
-			else
-				ret_err = PICA_ERRPROTOOLD;
-			}
-		goto error_ret_4;
-		}
-
-	//printf("6\n");//debug
-	*/ /*
-ret=SSL_set_fd(cid->ssl_comm,cid->sck_comm);
-
-//printf("SSL_set_fd=%i\n",ret);
-
-ret=SSL_accept(cid->ssl_comm);
-/////////////////state_
-cid->state = PICA_C2N_STATE_WAITINGTLS;
-if (ret!=1)
-{
-//printf("SSL_accept  ret=%i\n  SSL_get_error=%i\n",ret,SSL_get_error(cid->ssl_comm,ret));//debug
-//ERR_CHECK
-ret_err=PICA_ERRSSL;
-goto error_ret_4;
-}*/ /*
-cid->state = PICA_C2N_STATE_CONNECTED;//<<<!!!
-
-{
-struct PICA_proto_msg *mp;
-
-mp = c2n_writebuf_push( cid, PICA_PROTO_CLNODELISTREQ, PICA_PROTO_CLNODELISTREQ_SIZE);
-
-if (mp)
-{
-RAND_pseudo_bytes(mp->tail, 2);
-}
-}
-*/
-
 	return PICA_OK;
-
 
 error_ret_4: //(4)
 	SHUTDOWN(cid->sck_comm);
@@ -1815,9 +1669,6 @@ error_ret_1: //(1)
 }
 
 
-
-//создает ИСХОДЯЩИЙ логический зашифрованный канал связи с указанным собеседником, если тот доступен
-// в данный момент.
 int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_listener *l, struct PICA_c2c **chn)
 {
 	PICA_TRACEFUNC
@@ -2884,7 +2735,6 @@ int PICA_read_c2c(struct PICA_c2c *chn)
 	return ret;
 }
 
-//функция читает и обрабатывает данные, приходящие от сервера по управляющему соединению.
 int PICA_read_c2n(struct PICA_c2n *ci)
 {
 	int ret;

@@ -15,8 +15,7 @@
 	You should have received a copy of the GNU General Public License
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-//Программа является узлом сети
-//
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -55,9 +54,9 @@ typedef u_short uint16_t;
 
 time_t skynet_refresh_tmst;
 
-clock_t TMO_CCLINK_WAITACTIVE = 15; //CONF //таймаут ожидания перехода соединения в активное состояние
+clock_t TMO_CCLINK_WAITACTIVE = 15; //CONF
 
-char *my_addr;//TEMP CONF FIXME  собственный ip-адрес узла, на котором он ожидает соединения
+char *my_addr;//TEMP CONF FIXME
 
 SOCKET listen_comm_sck;//*
 
@@ -66,9 +65,9 @@ struct newconn newconns[MAX_NEWCONNS];
 unsigned int newconns_pos = 0;
 
 
-struct client *client_tree_root;//корень дерева клиентов
-struct client *client_list_head;//указатель на первый элемент списка клиентов или 0, если список пуст
-struct client *client_list_end;//указатель на последний элемент списка клиентов или 0, если список пуст
+struct client *client_tree_root;
+struct client *client_list_head;
+struct client *client_list_end;
 
 struct cclink *cclink_list_head;
 struct cclink *cclink_list_end;
@@ -140,7 +139,6 @@ struct newconn* newconn_add(struct newconn *ncs, int *pos);
 
 void PICA_node_joinskynet(const char* addrlistfilename, const char *my_addr);
 
-//описание формата сообщений, которые могут приходить _ОТ_ клиентов по управляющему защищенному соединению
 #define MSGINFO_MSGSNUM(arr) (sizeof(arr)/sizeof(struct PICA_msginfo))
 
 struct PICA_msginfo  _msginfo_comm[] =
@@ -1404,37 +1402,7 @@ int PICA_node_init()
 
 	return 1;
 }
-/*
-//функция возвращает номер клиента id в бинарном виде, извлекая его из строки,
-//которая возвращается функцией X509_NAME_oneline и представляет собой DN из сертификата клиента
-int get_id_fromsubjstr(char* DN_str,unsigned int* id)
-{
-char* tmp1;
-char* tmp2;
 
-tmp1=strstr(DN_str,"/CN=");
-
-if (!tmp1)
-	return 0;
-
-tmp2=strchr(tmp1,'#');
-
-if (!tmp2)
-	return 0;
-
-*tmp2=0;
-
-tmp1+=4;
-
-if (tmp1==tmp2)
-		return 0;
-
-*id=(unsigned int)strtol(tmp1,0,10);
-
-*tmp2='#';
-return 1;
-}
-*/
 
 void newconn_close(struct newconn* nc)
 {
@@ -1579,7 +1547,7 @@ void client_tree_print(struct client *c)
 		client_tree_print(c->right);
 }
 
-//удаление структуры из дерева
+
 void client_tree_remove(struct client* ci)
 {
 	struct client** p_link;//указывает на left или right в родительском узле
@@ -1930,7 +1898,6 @@ struct nodelink *nodelink_search_by_ipv4addr(in_addr_t ip, in_port_t port)
 	return nl;
 }
 
-// обработка различных таймаутов. Отправка пингов
 
 void process_timeouts_newconn()
 {

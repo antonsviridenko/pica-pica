@@ -15,8 +15,7 @@
 	You should have received a copy of the GNU General Public License
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-// структуры и функции для обработки сообщений протокола
-//
+
 #ifndef PICA_MSGPROC_H
 #define PICA_MSGPROC_H
 
@@ -28,9 +27,12 @@
 struct PICA_msginfo
 {
 	unsigned int msgid;
-	unsigned int fixedsz;//фиксированный или переменный размер
-	unsigned int sz;//фиксированный размер всего пакета либо кол-во байт, определяющих размер хвостовой части пакета
-	unsigned int (*msgprocfn)(unsigned char*, unsigned int, void*); //функция-обработчик данного типа сообщений
+	/* PICA_MSG_FIXED_SIZE if message has fixed size, PICA_MSG_VAR_SIZE in case of variable size */
+	unsigned int fixedsz;
+	/* Size of the whole message in case of fixed-size message or number of octets that store size of the message */
+	unsigned int sz;
+	/* Pointer to message handler */
+	unsigned int (*msgprocfn)(unsigned char*, unsigned int, void*);
 };
 
 unsigned int PICA_msggetsize(unsigned char *buf, unsigned int nb, struct PICA_msginfo *msgs, unsigned int nmsg);

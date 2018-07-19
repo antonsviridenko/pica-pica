@@ -140,7 +140,10 @@ struct PICA_c2c;
 
 struct PICA_acc
 {
-	unsigned char id[PICA_ID_SIZE]; //SHA224 hash of user's certificate in DER format
+	/**
+	* SHA224 hash of user's certificate in DER format
+	*/
+	unsigned char id[PICA_ID_SIZE];
 	SSL_CTX* ctx;
 };
 
@@ -165,11 +168,8 @@ struct PICA_c2n
 	struct PICA_acc *acc;
 //#warning "sockaddr!"
 	struct sockaddr_in srv_addr; // sockaddr !!
-//unsigned char id[PICA_ID_SIZE]; //SHA224 hash of user's certificate in DER format
-//SSL_CTX* ctx;
 	SOCKET sck_comm;
 	SSL* ssl_comm;
-
 
 	enum PICA_c2n_state state;
 	enum PICA_directc2c_config directc2c_config;
@@ -242,16 +242,15 @@ struct PICA_directc2c
 struct PICA_c2c
 {
 	const struct PICA_acc *acc;
-	struct PICA_c2n *conn;//соединение с сервером, через которое установлен данный логический канал связи
+	struct PICA_c2n *conn;
 	unsigned char peer_id[PICA_ID_SIZE];
 	SOCKET sck_data;
 	SSL *ssl;
 
 	struct PICA_directc2c *direct;
 
-	int outgoing;//1 если создание канала инициировано локальным клиентом, 0 - если собеседником
+	int outgoing;
 	X509 *peer_cert;
-//unsigned char msgbuf[PICA_CHNMSGBUFLEN];
 
 	unsigned char *read_buf;
 	unsigned char *write_buf;
@@ -274,7 +273,10 @@ struct PICA_c2c
 	uint64_t recvfile_size;
 	uint64_t recvfile_pos;
 	FILE *recvfile_stream;
-//this flag should be set when connection must be closed after sending last pushed packet
+
+	/** this flag should be set when connection
+	*  must be closed after sending last pushed packet
+	*/
 	int disconnect_on_empty_write_buf;
 	int switched_to_directc2c_write;
 	int switched_to_directc2c_read;
@@ -299,26 +301,60 @@ struct PICA_listener
 
 struct PICA_client_callbacks
 {
-//получение сообщения.
+	/**
+	 * New text message received
+	 */
 	void (*newmsg_cb)(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type);
-//получение подтверждения о доставке сообщения
+	/**
+	 * Message delivery confirmed
+	 */
 	void (*msgok_cb)(const unsigned char *peer_id);
-//создание канала с собеседником
+	/**
+	 * Client-to-client connection established
+	 */
 	void (*c2c_established_cb)(const unsigned char *peer_id);
-//создать канал не удалось
+	/**
+	 * Failed to establish client-to-client connection
+	 */
 	void (*c2c_failed_cb)(const unsigned char *peer_id);
-//входящий запрос на создание канала от пользователя с номером caller_id
-//возвращаемое значение: 0 - отклонить запрос, ненулевое значение - принять запрос
+	/** Received incoming client-to-client connection request
+	\return action to perform
+	\retval 0 - reject request
+	\retval non-zero - accept request
+	*/
 	int (*accept_cb)(const unsigned char  *caller_id);
-//запрошенный пользователь не найден, в оффлайне или отказался от общения
+	/**
+	 * Requested client is unavailable or rejected request
+	 */
 	void (*notfound_cb)(const unsigned char  *callee_id);
-//
+	/**
+	 * Client-to-client connection is closed
+	 */
 	void (*c2c_closed_cb)(const unsigned char *peer_id, int reason);
-
+	/**
+	 * Received list of node addresses. Callback is called for
+	 * each node address entry.
+	 * \param type address type, PICA_PROTO_NEWNODE_{IPV4,IPV6,DNS}
+	 * \param addr_bin  address in binary form, IPv4 or IPv6 in network byte order, DNS - zero-terminated string, same as addr_str
+	 * \param addr_str address in string format, zero-terminated
+	 * \param port listening port of node, in host byte order
+	 */
 	void (*nodelist_cb)(int type, void *addr_bin, const char *addr_str, unsigned int port);
-//сертификат собеседника в формате PEM. Функция должна сравнить предъявленный сертификат с сохранённым (если есть) и вернуть 1 при успешной проверке, 0 - при неуспешной
+	/**
+	 * Peer'c certificate in PEM format. Callback must compare passed cert with
+	 * previously stored cert of this peer (if it exists).
+	 * \return verification result
+	 * \retval 1 - verification success
+	 * \retval 0 - verification failed
+	 */
 	int (*peer_cert_verify_cb)(const unsigned char *peer_id, const char *cert_pem, unsigned int nb);
-// returns 0 if file is rejected, 1 if accepted, 2 if decision is postponed
+	/**
+	 * Received request of file transfer.
+	 * \return action to perform
+	 * \retval 0  - reject file
+	 * \retval 1 - accept file
+	 * \retval 2 - postpone decision. File can be accepted later by calling PICA_accept_file()
+	 */
 	int (*accept_file_cb)(const unsigned char  *peer_id, uint64_t  file_size, const char *filename, unsigned int filename_size);
 
 	void (*accepted_file_cb)(const unsigned char *peer_id);
@@ -346,27 +382,41 @@ struct PICA_client_callbacks
 extern "C" {
 #endif
 
-//read certificate from cert_file in PEM format, store id in buffer pointed by id
+/**
+ * Read certificate from cert_file in PEM format, store id in buffer pointed by id
+ * \param [in] cert_file string with certificate file name
+ * \param [out] id buffer to store ID, PICA_ID_SIZE octets
+ */
 int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id);
-//read certificate from C string in PEM format, store id in buffer pointed by id
+/**
+ * Read certificate from C string in PEM format, store id in buffer pointed by id.
+ * \param [in] cert_pem - certificate in PEM format
+ * \param [out] id buffer to store ID, PICA_ID_SIZE octets
+ */
 int PICA_get_id_from_cert_string(const char *cert_pem, unsigned char *id);
 int PICA_client_init(struct PICA_client_callbacks *clcbs);
-
 int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int port,
                  enum PICA_directc2c_config direct_c2c_mode, int multilogin,
                  struct PICA_listener *l, struct PICA_c2n **ci);
 
 int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_listener *l, struct PICA_c2c **chn);
-
+ /**
+ * Opens socket to listen for incoming direct c2c connections bypassing nodes
+ * \param acc - pointer to opened account instance
+ * \param public_addr - DNS name or IP address string,
+ * it is an address that will be used for connecting from global Internet.
+ * Should be set to router's external IP if computer running pica-client is located behind the NAT.
+ * \param public_port - TCP port for incoming connections from global Internet
+ * \param local_port - TCP port that will be actually opened on computer listening for direct c2c connections
+ * \param l - address of pointer that will be filled with address of created PICA_listener structure
+ */
 int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int public_port, int local_port, struct PICA_listener **l);
 
-// <<<////
 int PICA_open_acc(const char *cert_file,
                   const char *pkey_file,
                   const char *dh_param_file,
                   int (*password_cb)(char *buf, int size, int rwflag, void *userdata),
                   struct PICA_acc **acc);
-// <<<////
 
 //connections, listeners - NULL-terminated arrays of pointers to appropriate structures
 // timeout - timeout in milliseconds
