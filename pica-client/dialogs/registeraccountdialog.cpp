@@ -179,7 +179,7 @@ void RegisterAccountDialog::Register()
 	nickname->setEnabled(false);
 	btRegister->setEnabled(false);
 
-	ost.GenRSAKeySignal(PICA_RSA_KEYSIZE, config_dir + QDir::separator() + "privkey.pem", cbSetPassword->isChecked(),
+	ost.GenRSAKeySignal(PICA_RSA_MINKEYSIZE, config_dir + QDir::separator() + "privkey.pem", cbSetPassword->isChecked(),
 	                    password->text(), rand, this, SLOT(stageSignCert(int, QProcess::ExitStatus)));
 }
 

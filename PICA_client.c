@@ -319,29 +319,52 @@ static int c2c_stage3_starttls(struct PICA_c2c *chnl)
 	return PICA_OK;
 }
 
-static int c2c_verify_peer_cert(struct PICA_c2c *chnl)
+static int verify_peer_cert_common(X509 **peer_cert, SSL *ssl, const unsigned char *peer_id)
 {
-	chnl->peer_cert = SSL_get_peer_certificate(chnl->ssl);
+	unsigned char idbuf[PICA_ID_SIZE];
+	EVP_PKEY *pubkey;
+	RSA *rsa;
 
-	if (!chnl->peer_cert)
+	*peer_cert = SSL_get_peer_certificate(ssl);
+
+	if (!*peer_cert)
+		return PICA_ERRNOPEERCERT;
+
+	pubkey = (*peer_cert)->cert_info->key->pkey;
+
+	if (!pubkey)
+		return PICA_ERRNOPEERCERT;
+
+	rsa = EVP_PKEY_get1_RSA(pubkey);
+
+	if (!rsa || !rsa->n || BN_num_bits(rsa->n) < PICA_RSA_MINKEYSIZE)
+		return PICA_ERRNOPEERCERT;
+
+	fprintf(stderr, "rsa key bits: %d\n", BN_num_bits(rsa->n));
+
+	RSA_free(rsa);
+
+	if (PICA_id_from_X509(*peer_cert, idbuf) == 0)
 	{
 		return PICA_ERRNOPEERCERT;
 	}
 
+	if (memcmp(idbuf, peer_id, PICA_ID_SIZE) != 0)
 	{
-		unsigned char temp_id[PICA_ID_SIZE];
-
-		if (PICA_id_from_X509(chnl->peer_cert, temp_id) == 0)
-		{
-			return PICA_ERRNOPEERCERT;
-		}
-
-		if (memcmp(temp_id, chnl->peer_id, PICA_ID_SIZE) != 0)
-		{
-			return PICA_ERRINVPEERCERT;
-		}
+		return PICA_ERRINVPEERCERT;
 	}
 
+	return PICA_OK;
+}
+
+static int c2c_verify_peer_cert(struct PICA_c2c *chnl)
+{
+	int ret;
+
+	ret = verify_peer_cert_common(&chnl->peer_cert, chnl->ssl, chnl->peer_id);
+
+	if (ret != PICA_OK)
+		return ret;
 
 	{
 		BIO *mem = BIO_new(BIO_s_mem());
@@ -2006,27 +2029,12 @@ static struct PICA_c2c * find_matching_c2c(struct PICA_c2n *c2n, struct PICA_dir
 	return NULL;
 }
 
+
+
 static int directc2c_verify_peer_cert(struct PICA_directc2c *d, struct PICA_c2c *c2c)
 {
 	PICA_TRACEFUNC
-	unsigned char idbuf[PICA_ID_SIZE];
-
-	d->peer_cert = SSL_get_peer_certificate(d->ssl);
-
-	if (!d->peer_cert)
-		return PICA_ERRNOPEERCERT;
-
-	if (PICA_id_from_X509(d->peer_cert, idbuf) == 0)
-	{
-		return PICA_ERRNOPEERCERT;
-	}
-
-	if (memcmp(idbuf, c2c->peer_id, PICA_ID_SIZE) != 0)
-	{
-		return PICA_ERRINVPEERCERT;
-	}
-
-	return PICA_OK;
+	return verify_peer_cert_common(&d->peer_cert, d->ssl, c2c->peer_id);
 }
 
 static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)

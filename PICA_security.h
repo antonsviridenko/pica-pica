@@ -21,7 +21,7 @@
 
 /* Important security parameters grouped together */
 
-#define PICA_RSA_KEYSIZE 4096
+#define PICA_RSA_MINKEYSIZE 4096
 #define PICA_TLS_CIPHERLIST "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CAMELLIA256-SHA"
 #define PICA_OPENSSL_SECURUTY_LEVEL 3
 #define PICA_CERTDIGESTALGO "-sha256"
