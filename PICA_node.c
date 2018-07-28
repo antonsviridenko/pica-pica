@@ -23,6 +23,7 @@
 #include <time.h>
 #include <getopt.h>
 
+#include "PICA_security.h"
 #include "PICA_node.h"
 #include "PICA_proto.h"
 #include "PICA_msgproc.h"
@@ -1392,6 +1393,11 @@ int PICA_node_init()
 	if (!ctx)
 		PICA_fatal("unable to create SSL_CTX object");
 
+
+	ret = SSL_CTX_set_cipher_list(ctx, PICA_TLS_CIPHERLIST);
+
+	if (!ret)
+		PICA_fatal("failed to set cipher list " PICA_TLS_CIPHERLIST);
 
 	ret = SSL_CTX_load_verify_locations(ctx, nodecfg.CA_cert_file, 0);
 

@@ -72,7 +72,8 @@ HEADERS  += mainwindow.h \
     sound.h \
     dialogs/settingsdialog.h \
     settings.h \
-    ../PICA_netconf.h
+    ../PICA_netconf.h \
+    ../PICA_security.h
 
 
 DEFINES = PICA_MULTITHREADED

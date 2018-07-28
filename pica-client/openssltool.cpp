@@ -16,6 +16,7 @@
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "openssltool.h"
+#include "../PICA_security.h"
 #include <QProcess>
 #include <QRegExp>
 #include <QMessageBox>
@@ -119,7 +120,7 @@ bool OpenSSLTool::GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpass
 	args << "genrsa" << "-out" << keyfile;
 
 	if (setpassword)
-		args << "-passout" << "stdin" << "-aes256";
+		args << "-passout" << "stdin" << PICA_PRIVKEYENCALGO;
 
 	if (!rand.isEmpty())
 		args << "-rand" << rand;
@@ -160,6 +161,7 @@ bool OpenSSLTool::GenCertSignal(QString cert_file, QString keyfile, QString keyp
 	               << "-days" << "3680"
 	               << "-utf8"
 	               << "-batch"
+	               << PICA_CERTDIGESTALGO
 	               << "-passin"
 	               << "stdin");
 

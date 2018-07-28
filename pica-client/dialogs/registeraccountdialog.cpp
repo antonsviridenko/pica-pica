@@ -17,6 +17,7 @@
 */
 #include "registeraccountdialog.h"
 #include "../globals.h"
+#include "../../PICA_security.h"
 #include <QVBoxLayout>
 #include <QDir>
 #include <QFile>
@@ -178,7 +179,7 @@ void RegisterAccountDialog::Register()
 	nickname->setEnabled(false);
 	btRegister->setEnabled(false);
 
-	ost.GenRSAKeySignal(4096, config_dir + QDir::separator() + "privkey.pem", cbSetPassword->isChecked(),
+	ost.GenRSAKeySignal(PICA_RSA_KEYSIZE, config_dir + QDir::separator() + "privkey.pem", cbSetPassword->isChecked(),
 	                    password->text(), rand, this, SLOT(stageSignCert(int, QProcess::ExitStatus)));
 }
 

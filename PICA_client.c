@@ -15,6 +15,7 @@
 	You should have received a copy of the GNU General Public License
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
+#include "PICA_security.h"
 #include "PICA_client.h"
 #include "PICA_proto.h"
 #include "PICA_msgproc.h"
@@ -1375,6 +1376,10 @@ int PICA_open_acc(const char *cert_file,
 		goto error_ret_1;
 	}
 
+	/* Available since openssl 1.1.0
+	SSL_CTX_set_security_level(a->ctx, PICA_OPENSSL_SECURUTY_LEVEL);
+	*/
+
 	dh_file = fopen(dh_param_file, "r");
 
 	if (dh_file)
@@ -1430,7 +1435,7 @@ int PICA_open_acc(const char *cert_file,
 		goto error_ret_2;
 	}
 
-	ret = SSL_CTX_set_cipher_list(a->ctx, "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CAMELLIA256-SHA");
+	ret = SSL_CTX_set_cipher_list(a->ctx, PICA_TLS_CIPHERLIST);
 
 	if (ret != 1)
 	{
