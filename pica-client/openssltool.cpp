@@ -17,6 +17,7 @@
 */
 #include "openssltool.h"
 #include "../PICA_security.h"
+#include <openssl/rand.h>
 #include <QProcess>
 #include <QRegExp>
 #include <QMessageBox>
@@ -113,9 +114,11 @@ QString OpenSSLTool::CertTextFromString(QString cert_pem)
 	return QString::fromUtf8(openssl.readAllStandardOutput().constData());
 }
 
-bool OpenSSLTool::GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpassword, QString password, QString rand, QObject *receiver, const char *finished_slot)
+bool OpenSSLTool::GenRSAKeySignal(QString keyfile, bool setpassword, QString password, QString rand, QObject *receiver, const char *finished_slot)
 {
 	QStringList args;
+	quint32 numbits;
+	unsigned char rndchar;
 
 	args << "genrsa" << "-out" << keyfile;
 
@@ -124,6 +127,18 @@ bool OpenSSLTool::GenRSAKeySignal(quint32 numbits, QString keyfile, bool setpass
 
 	if (!rand.isEmpty())
 		args << "-rand" << rand;
+
+	/*
+	 * Generate random-sized key with min size 4096 and multiply of 8.
+	 * Max size is limited to 4096 + 99*8.
+	 * See https://blog.josefsson.org/2016/11/03/why-i-dont-use-2048-or-4096-rsa-key-sizes/
+	 * "Why I don’t Use 2048 or 4096 RSA Key Sizes"
+	 */
+	numbits = PICA_RSA_MINKEYSIZE;
+
+	RAND_pseudo_bytes(&rndchar, 1);
+
+	numbits += 8 * (rndchar % 100);
 
 	args << QString::number(numbits);
 
