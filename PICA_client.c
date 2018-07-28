@@ -340,8 +340,6 @@ static int verify_peer_cert_common(X509 **peer_cert, SSL *ssl, const unsigned ch
 	if (!rsa || !rsa->n || BN_num_bits(rsa->n) < PICA_RSA_MINKEYSIZE)
 		return PICA_ERRNOPEERCERT;
 
-	fprintf(stderr, "rsa key bits: %d\n", BN_num_bits(rsa->n));
-
 	RSA_free(rsa);
 
 	if (PICA_id_from_X509(*peer_cert, idbuf) == 0)
@@ -1093,7 +1091,6 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 	sender_cmd = buf[2];
 	receiver_cmd = buf[3];
 
-	fprintf(stderr, "procmsg_FILECONTROL sender_cmd = %i receiver_cmd = %i\n", sender_cmd, receiver_cmd);//debug
 
 	if ((chan->sendfilestate == PICA_CHANSENDFILESTATE_IDLE || chan->sendfilestate == PICA_CHANSENDFILESTATE_SENTREQ)
 	        && receiver_cmd != PICA_PROTO_FILECONTROL_VOID)
@@ -1101,8 +1098,6 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 
 	if (chan->recvfilestate == PICA_CHANRECVFILESTATE_IDLE && sender_cmd != PICA_PROTO_FILECONTROL_VOID)
 		return 0;
-
-	fprintf(stderr, "procmsg_FILECONTROL  switch(sender_cmd)\n");
 
 	switch(sender_cmd)
 	{
@@ -1134,7 +1129,6 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 		return 0;
 	}
 
-	fprintf(stderr, "procmsg_FILECONTROL  switch(receiver_cmd)\n");
 	switch(receiver_cmd)
 	{
 	case PICA_PROTO_FILECONTROL_PAUSE:
@@ -1165,7 +1159,6 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 		return 0;
 	}
 
-	fprintf(stderr, "procmsg_FILECONTROL  calling callback\n");
 	callbacks.file_control_cb(chan->peer_id, sender_cmd, receiver_cmd);
 
 	return 1;
@@ -2053,7 +2046,6 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 		while(d)
 		{
-			fprintf(stderr, "processing accepted direct connection\n");
 			if (d->state == PICA_DIRECTC2C_CONNSTATE_ACTIVE)
 			{
 				if ((c2c = find_matching_c2c(c2n, d)))
@@ -2170,7 +2162,6 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 						break;
 					}
 
-					fprintf(stderr, "outgoing directc2c is PICA_DIRECTC2C_CONNSTATE_ACTIVE\n");
 					d->state = PICA_DIRECTC2C_CONNSTATE_ACTIVE;
 
 				}
@@ -2305,7 +2296,6 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 
 		if (s >= 0)
 		{
-			fprintf(stderr, "accepted direct connection on socket %i\n", s);
 			IOCTLSETNONBLOCKINGSOCKET(s, 1);
 			listener_add_connection(lst, s);
 		}
@@ -2323,8 +2313,6 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 		{
 			kill_ptr = conn;
 		}
-
-		//fprintf(stderr, "process_listener_conn() returned %i\n", ret);
 
 		if (!kill_ptr)
 			pprevconn = &conn->next;
@@ -2965,8 +2953,6 @@ int PICA_pause_file(struct PICA_c2c *chan, int sending)
 	int senderctl = PICA_PROTO_FILECONTROL_VOID;
 	int receiverctl = PICA_PROTO_FILECONTROL_VOID;
 
-	fprintf(stderr, "PICA_pause_file(%p, %i)\n", chan, sending);//debug
-
 	if (sending)
 	{
 		if (chan->sendfilestate != PICA_CHANSENDFILESTATE_SENDING)
@@ -3052,8 +3038,6 @@ int PICA_cancel_file(struct PICA_c2c *chan, int sending)
 int PICA_send_filecontrol(struct PICA_c2c *chan, int senderctl, int receiverctl)
 {
 	struct PICA_proto_msg *mp;
-
-	fprintf(stderr, "PICA_send_filecontrol(%p, %i, %i)\n", chan, senderctl, receiverctl);//debug
 
 	if ((mp = c2c_writebuf_push(chan, PICA_PROTO_FILECONTROL, PICA_PROTO_FILECONTROL_SIZE)))
 	{
