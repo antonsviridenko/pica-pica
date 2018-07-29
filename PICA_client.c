@@ -352,28 +352,16 @@ static int verify_peer_cert_common(X509 **peer_cert, SSL *ssl, const unsigned ch
 		return PICA_ERRINVPEERCERT;
 	}
 
-	return PICA_OK;
-}
-
-static int c2c_verify_peer_cert(struct PICA_c2c *chnl)
-{
-	int ret;
-
-	ret = verify_peer_cert_common(&chnl->peer_cert, chnl->ssl, chnl->peer_id);
-
-	if (ret != PICA_OK)
-		return ret;
-
 	{
 		BIO *mem = BIO_new(BIO_s_mem());
 		char *cert_pem;
 		unsigned int cert_pem_nb;
 
-		PEM_write_bio_X509(mem, chnl->peer_cert);
+		PEM_write_bio_X509(mem, *peer_cert);
 
 		cert_pem_nb =  (unsigned int)BIO_get_mem_data(mem, &cert_pem);
 
-		if (callbacks.peer_cert_verify_cb(chnl->peer_id, (const char*)cert_pem, cert_pem_nb) == 0)
+		if (callbacks.peer_cert_verify_cb(peer_id, (const char*)cert_pem, cert_pem_nb) == 0)
 		{
 			BIO_free(mem);
 			return PICA_ERRINVPEERCERT;
@@ -383,6 +371,11 @@ static int c2c_verify_peer_cert(struct PICA_c2c *chnl)
 	}
 
 	return PICA_OK;
+}
+
+static int c2c_verify_peer_cert(struct PICA_c2c *chnl)
+{
+	return verify_peer_cert_common(&chnl->peer_cert, chnl->ssl, chnl->peer_id);
 }
 
 static int c2c_stage4_sendc2cconnreq(struct PICA_c2c *chnl)
@@ -2033,7 +2026,7 @@ static int directc2c_verify_peer_cert(struct PICA_directc2c *d, struct PICA_c2c 
 static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 {
 	struct PICA_directc2c *d;
-	struct PICA_c2c *c2c;
+	struct PICA_c2c *c2c = NULL;
 	int ret;
 
 	//process accepted connections
@@ -2048,7 +2041,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 		{
 			if (d->state == PICA_DIRECTC2C_CONNSTATE_ACTIVE)
 			{
-				if ((c2c = find_matching_c2c(c2n, d)))
+				if ((c2c = find_matching_c2c(c2n, d)) && (verify_peer_cert_common(&d->peer_cert, d->ssl, c2c->peer_id) == PICA_OK))
 				{
 					if (c2c->direct)
 						PICA_close_directc2c(c2c->direct);
