@@ -35,7 +35,7 @@
 #define PICA_NODECONFIG_DEF_LISTEN_PORT "2299"
 #define PICA_NODECONFIG_DEF_NODES_DB_FILE PICA_LOCALSTATEDIR"/lib/pica-node/nodelist.db"
 #define PICA_NODECONFIG_DEF_CONFIG_FILE PICA_SYSCONFDIR"/pica-node.conf"
-#define PICA_NODECONFIG_DEF_CA_CERT_FILE PICA_INSTALLPREFIX"/share/pica-node/CA.pem"
+#define PICA_NODECONFIG_DEF_DH_PARAM_FILE PICA_INSTALLPREFIX"/share/pica-node/dhparam4096.pem"
 
 struct nodeconfig
 {
@@ -43,7 +43,7 @@ struct nodeconfig
 	char 			*listen_port;
 	char 			*nodes_db_file;
 	char			*config_file;
-	char			*CA_cert_file;
+	char			*dh_param_file;
 	int 			disable_reserved_addrs;
 //int			conn_speed_limit;
 };
