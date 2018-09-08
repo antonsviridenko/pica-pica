@@ -1,6 +1,5 @@
 bin_PROGRAMS = 
 CLEANFILES =
-#dist_pkgdata_DATA = CA.pem
 
 
 EXTRA_DIST = 	iniparser/LICENSE \
@@ -44,7 +43,7 @@ EXTRA_DIST += nodelist_db_create.sql
 
 pkgpicanodedir = ${datarootdir}/pica-node
 
-dist_pkgpicanode_DATA = CA.pem README nodelist_db_create.sql
+dist_pkgpicanode_DATA = dhparam4096.pem README nodelist_db_create.sql
 
 endif
 #####################################
@@ -157,7 +156,6 @@ pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS)
 
 pkgpicaclientdir = ${datarootdir}/pica-client
 dist_pkgpicaclient_DATA =  \
-CA.pem \
 dhparam4096.pem \
 pica-client/picapica-icon-fly.png \
 pica-client/picapica-icon-sit.png \
