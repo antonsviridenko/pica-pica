@@ -1,0 +1,37 @@
+Protocol Specification.
+
+Terminology.
+
+Client - software instance that interacts with human users and lets them send and
+receive encrypted messages over Pica Pica.
+
+Node - software instance that coordinates Pica Pica network, maintains list of
+all active nodes and provides connectivity to clients.
+
+Connections.
+There are 4 types of connections between Pica Pica nodes and clients.
+
+-client to node (c2n) - control connection from client to node
+
+-client to client (c2c) - data connection between clients through node acting
+as a proxy
+
+-node to node (n2n) - control & data connection between nodes
+
+-direct client to client (directc2c) - direct connection between clients,
+using IPv4/IPv6/DNS 
+address of accepting client previously communicated through c2c connection.
+
+These connections use TCP transport. First 3 connection types start
+with TLS 1.2 handshake using anonymous Diffie-Hellman ciphersuite,
+connecting host acts as a TLS client, accepting host is TLS server.
+After connection type is identified by accepting node, anonymous TLS
+session is gracefully closed in case of c2n and c2c connections. Node starts
+new TLS session with client in case of c2n, where node acts as a TLS client and
+client acts as a TLS server, using client's RSA certificate. In case of
+c2c connection node acts as a transparent proxy, sending chunks of data
+received from the first client to the second one and vise versa. Clients
+establish mutually authenticated TLS session over proxied connection, 
+initiator client is a TLS client, accepting client has TLS server role.
+n2n connection continues to operate in ADH TLS session, as by design nodes
+do not store state that identifies them except network address.
