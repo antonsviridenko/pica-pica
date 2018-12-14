@@ -1114,7 +1114,7 @@ void cclink_list_delete(struct cclink *l)
 		{
 			SHUTDOWN(l->sck_p1);
 			CLOSE(l->sck_p1);
-			PICA_debug2("closed socket %i", l->sck_p1);
+			PICA_debug2("closed c2c socket %i", l->sck_p1);
 		}
 	}//caller_id is stored in p1 structure
 	else
@@ -1126,7 +1126,7 @@ void cclink_list_delete(struct cclink *l)
 		{
 			SHUTDOWN(l->sck_p2);
 			CLOSE(l->sck_p2);
-			PICA_debug2("closed socket %i", l->sck_p2);
+			PICA_debug2("closed c2c socket %i", l->sck_p2);
 		}
 	}
 	else
@@ -1796,7 +1796,7 @@ void client_list_delete(struct client* ci)
 		free(ci->w_buf);
 
 	CLOSE(ci->sck_comm);
-	PICA_debug2("closed socket %i", ci->sck_comm);
+	PICA_debug2("closed c2n socket %i", ci->sck_comm);
 
 	free(ci);
 }
@@ -1904,8 +1904,10 @@ void nodelink_list_delete(struct nodelink *n)
 	if (n->node_addr)
 		free(n->node_addr);
 
+	SSL_free(n->anonssl);
+
 	CLOSE(n->sck);
-	PICA_debug2("closed socket %i", n->sck);
+	PICA_debug2("closed n2n socket %i", n->sck);
 
 	if (n->prev)
 		n->prev->next = n->next;
