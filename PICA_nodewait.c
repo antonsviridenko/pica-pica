@@ -162,6 +162,22 @@ static void  *nodewait_connect_thread (void *arg)
 		}
 		else
 		{
+			nw->nc.anonssl = SSL_new(anon_ctx);
+
+			if (!nw->nc.anonssl)
+			{
+				CLOSE(nw->nc.sck);
+				return (void  *)0;
+			}
+
+			if (!SSL_set_fd(nw->nc.anonssl, nw->nc.sck) || 1 != SSL_connect(nw->nc.anonssl))
+			{
+				SSL_free(nw->nc.anonssl);
+				CLOSE(nw->nc.sck);
+				ap = ap->ai_next;
+				continue;
+			}
+
 			break;
 		}
 	}
@@ -171,11 +187,11 @@ static void  *nodewait_connect_thread (void *arg)
 		nw->nc.addr = *((struct sockaddr_in*)(ap->ai_addr));
 
 		nw->state = PICA_NODEWAIT_CONNECTED;
-		return 1;
+		return (void  *)1;
 	}
 
 	nw->state = PICA_NODEWAIT_CONNECT_FAILED;
-	return 0;
+	return (void  *)0;
 }
 
 void nodewait_start_resolve(struct PICA_nodeaddr *a)

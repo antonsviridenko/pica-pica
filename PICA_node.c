@@ -61,7 +61,8 @@ char *my_addr;//TEMP CONF FIXME
 
 SOCKET listen_comm_sck;//*
 
-SSL_CTX* ctx;
+SSL_CTX *ctx;
+SSL_CTX *anon_ctx;
 struct newconn newconns[MAX_NEWCONNS];
 unsigned int newconns_pos = 0;
 
@@ -80,9 +81,8 @@ struct nodelink *nodelink_list_end;
 unsigned int nodelink_list_count;
 
 
-
-char msg_VERDIFFER[4] = {PICA_PROTO_VERDIFFER, PICA_PROTO_VERDIFFER, PICA_PROTO_VER_HIGH, PICA_PROTO_VER_LOW};
-const unsigned int msg_VERDIFFER_len = 4;
+const char msg_INITRESPOK[] = {PICA_PROTO_INITRESPOK, PICA_PROTO_INITRESPOK, 'O', 'K'};
+const char msg_VERDIFFER[] = {PICA_PROTO_VERDIFFER, PICA_PROTO_VERDIFFER, PICA_PROTO_VER_HIGH, PICA_PROTO_VER_LOW};
 
 unsigned int procmsg_INITREQ(unsigned char* buf, unsigned int size, void* ptr);
 unsigned int procmsg_CONNID(unsigned char* buf, unsigned int size, void* ptr);
@@ -116,7 +116,8 @@ void cclink_list_delete(struct cclink *l);
 void cclink_list_addn2nclr(struct client *clr, const unsigned char *callee_id);
 void cclink_setwaitconn(struct cclink *ccl);
 void cclink_list_addn2ncle(const unsigned char *caller_id, struct nodelink *caller_node, struct client *cle);
-void cclink_activate(struct cclink *ccl, SOCKET s);
+void cclink_activate(struct cclink *ccl);
+void cclink_setwaitanontlsshutdown(struct cclink *link, struct newconn *nc);
 void cclink_attach_remotecle_node(struct cclink *ccl, struct nodelink *callee_node);
 
 void cclink_list_delete_by_client(struct client *cl);
@@ -179,6 +180,26 @@ struct PICA_msginfo _msginfo_newconn[] =
 	{PICA_PROTO_NODECONNREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_NODECONNREQ_SIZE, procmsg_NODECONNREQ}
 };
 
+static int process_async_ssl_readwrite(SSL *ssl, int ret)
+{
+	if (ret == 0)
+		return 0;
+
+	if (ret < 0)
+	{
+		switch(SSL_get_error(ssl, ret))
+		{
+		case SSL_ERROR_WANT_WRITE:
+		case SSL_ERROR_WANT_READ:
+			break;
+		default:
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
 static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 {
 	//return 1 for self-signed certificates
@@ -210,6 +231,8 @@ unsigned int procmsg_INITREQ(unsigned char* buf, unsigned int size, void* ptr)
 
 	PICA_debug1("received INITREQ");
 
+	nc->type = NEWCONN_C2N;
+
 	if (buf[2] == PICA_PROTO_VER_HIGH && buf[3] == PICA_PROTO_VER_LOW)
 	{
 		struct client *c;
@@ -217,6 +240,10 @@ unsigned int procmsg_INITREQ(unsigned char* buf, unsigned int size, void* ptr)
 		if (!c)
 			return 0;
 
+		c->state = PICA_CLSTATE_WAITANONTLSSHUTDOWN;
+		nc->iconn.cl = c;
+		nc->state = PICA_NEWCONN_SENDINGOK;
+		/*
 		newconn_free(nc);
 
 		if ((mp = client_wbuf_push(c, PICA_PROTO_INITRESPOK, PICA_PROTO_INITRESPOK_SIZE)))
@@ -225,12 +252,11 @@ unsigned int procmsg_INITREQ(unsigned char* buf, unsigned int size, void* ptr)
 			mp->tail[1] = 'K';
 		}
 
-		c->state = PICA_CLSTATE_SENDINGRESP;
+		c->state = PICA_CLSTATE_SENDINGRESP;*/
 	}///////---------<<<<<<<<<<< new client
 	else
 	{
-		//// PICA_PROTO_VERDIFFER
-		send(nc->sck, msg_VERDIFFER, msg_VERDIFFER_len, 0);
+		nc->state = PICA_NEWCONN_SENDINGREJECT;
 
 		if (buf[2] > PICA_PROTO_VER_HIGH || (buf[2] == PICA_PROTO_VER_HIGH && buf[3] > PICA_PROTO_VER_LOW))
 		{
@@ -240,11 +266,42 @@ unsigned int procmsg_INITREQ(unsigned char* buf, unsigned int size, void* ptr)
 		{
 			PICA_info("Client has older protocol version. Disconnecting ...");
 		}
-
-		return 0;
 	}
 
 	return 1;
+}
+
+void cclink_sendcleconnected(struct cclink *link)
+{
+	struct PICA_proto_msg *mp;
+
+	if (link->state == PICA_CCLINK_LOCAL_WAITCONNCLEANONTLSSHUTDOWN)
+	{
+		if((mp = client_wbuf_push(link->p1, PICA_PROTO_FOUND, PICA_PROTO_FOUND_SIZE)))
+		{
+			memcpy(mp->tail, link->callee_id, PICA_ID_SIZE);
+		}
+		else
+		{
+			cclink_list_delete(link);
+			return 0;
+		}
+	}
+
+	if (link->state == PICA_CCLINK_N2NCLE_WAITCONNCLEANONTLSSHUTDOWN)
+	{
+		if((mp = nodelink_wbuf_push(link->caller_node, PICA_PROTO_N2NALLOW, PICA_PROTO_N2NALLOW_SIZE)))
+		{
+			memcpy(mp->tail, link->caller_id, PICA_ID_SIZE);
+			memcpy(mp->tail + PICA_ID_SIZE, link->callee_id, PICA_ID_SIZE);
+		}
+		else
+		{
+			cclink_list_delete(link);
+			return 0;
+		}
+	}
+
 }
 
 unsigned int procmsg_CONNID(unsigned char* buf, unsigned int size, void* ptr)
@@ -255,6 +312,8 @@ unsigned int procmsg_CONNID(unsigned char* buf, unsigned int size, void* ptr)
 	struct cclink *link;
 
 	PICA_debug1("received CONNID");
+
+	nc->type = NEWCONN_C2C;
 
 	caller_id = buf + 2;
 	callee_id = buf + 2 + PICA_ID_SIZE;
@@ -296,35 +355,9 @@ unsigned int procmsg_CONNID(unsigned char* buf, unsigned int size, void* ptr)
 		}
 	}
 
-	if (link->state == PICA_CCLINK_LOCAL_WAITCONNCLE)
-	{
-		if((mp = client_wbuf_push(link->p1, PICA_PROTO_FOUND, PICA_PROTO_FOUND_SIZE)))
-		{
-			memcpy(mp->tail, callee_id, PICA_ID_SIZE);
-		}
-		else
-		{
-			cclink_list_delete(link);
-			return 0;
-		}
-	}
-
-	if (link->state == PICA_CCLINK_N2NCLE_WAITCONNCLE)
-	{
-		if((mp = nodelink_wbuf_push(link->caller_node, PICA_PROTO_N2NALLOW, PICA_PROTO_N2NALLOW_SIZE)))
-		{
-			memcpy(mp->tail, caller_id, PICA_ID_SIZE);
-			memcpy(mp->tail + PICA_ID_SIZE, callee_id, PICA_ID_SIZE);
-		}
-		else
-		{
-			cclink_list_delete(link);
-			return 0;
-		}
-	}
 	PICA_debug3("CONNID processed successfully");
-	cclink_activate(link, nc->sck);
-	newconn_free(nc);
+	cclink_setwaitanontlsshutdown(link, nc);
+
 	return 1;
 }
 
@@ -335,12 +368,15 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 
 	PICA_debug1("received NODECONNREQ");
 
+	nc->type = NEWCONN_N2N;
+
 	if (buf[2] == PICA_PROTO_VER_HIGH &&
 	        buf[3] == PICA_PROTO_VER_LOW)
 	{
 		////-прием входящего подключения
 		//--------------------------
-		struct nodelink *nl;
+		nc->state = PICA_NEWCONN_SENDINGOK;
+		/*struct nodelink *nl;
 		nl = nodelink_list_addnew(nc);
 		newconn_free(nc);
 		if (!nl)
@@ -350,10 +386,12 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 		{
 			mp->tail[0] = 'O';
 			mp->tail[1] = 'K';
-		}
+		}*/
 	}
 	else
 	{
+		nc->state = PICA_NEWCONN_SENDINGREJECT;
+		/*
 		//// PICA_PROTO_VERDIFFER
 		send(nc->sck, msg_VERDIFFER, msg_VERDIFFER_len, 0);
 
@@ -367,7 +405,7 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 			PICA_info("Node %s has older protocol version. Disconnecting ...", inet_ntoa(nc->addr.sin_addr));
 		}
 
-		return 0;
+		return 0;*/
 	}
 
 	return 1;
@@ -1286,39 +1324,68 @@ int cclink_allocbufs(struct cclink *ccl)
 	return 1;
 }
 
-void cclink_activate(struct cclink *ccl, SOCKET s)
+void cclink_setwaitanontlsshutdown(struct cclink *link, struct newconn *nc)
+{
+	nc->iconn.cc = link;
+	nc->state = PICA_NEWCONN_WAITANONTLSSHUTDOWN;
+
+	switch(link->state)
+	{
+	case PICA_CCLINK_LOCAL_WAITCONNCLE:
+		link->sck_p2 = nc->sck;
+		link->state = PICA_CCLINK_LOCAL_WAITCONNCLEANONTLSSHUTDOWN;
+		break;
+
+	case PICA_CCLINK_LOCAL_WAITCONNCLR:
+		link->sck_p1 = nc->sck;
+
+		if (!cclink_allocbufs(link))
+		{
+			cclink_list_delete(link);
+			return;
+		}
+		link->state = PICA_CCLINK_LOCAL_WAITCONNCLRANONTLSSHUTDOWN;
+		break;
+
+	case PICA_CCLINK_N2NCLR_WAITCONNCLR:
+		link->sck_p1 = nc->sck;
+
+		if (!cclink_allocbufs(link))
+		{
+			cclink_list_delete(link);
+			return;
+		}
+		link->state = PICA_CCLINK_N2NCLR_WAITCONNCLRANONTLSSHUTDOWN;
+		break;
+
+	case PICA_CCLINK_N2NCLE_WAITCONNCLE:
+		link->sck_p2 = nc->sck;
+
+		if (!cclink_allocbufs(link))
+		{
+			cclink_list_delete(link);
+			return;
+		}
+
+		link->state = PICA_CCLINK_N2NCLE_WAITCONNCLEANONTLSSHUTDOWN;
+		break;
+	}
+}
+
+void cclink_activate(struct cclink *ccl)
 {
 	switch(ccl->state)
 	{
-	case PICA_CCLINK_LOCAL_WAITCONNCLE:
-		ccl->sck_p2 = s;
+	case PICA_CCLINK_LOCAL_WAITCONNCLEANONTLSSHUTDOWN:
 		ccl->state = PICA_CCLINK_LOCAL_WAITCONNCLR;
 		break;
-	case PICA_CCLINK_LOCAL_WAITCONNCLR:
-		ccl->sck_p1 = s;
-		if (!cclink_allocbufs(ccl))
-		{
-			cclink_list_delete(ccl);
-			return;
-		}
+	case PICA_CCLINK_LOCAL_WAITCONNCLRANONTLSSHUTDOWN:
 		ccl->state = PICA_CCLINK_LOCAL_ACTIVE;
 		break;
-	case PICA_CCLINK_N2NCLR_WAITCONNCLR:
-		ccl->sck_p1 = s;
-		if (!cclink_allocbufs(ccl))
-		{
-			cclink_list_delete(ccl);
-			return;
-		}
+	case PICA_CCLINK_N2NCLR_WAITCONNCLRANONTLSSHUTDOWN:
 		ccl->state = PICA_CCLINK_N2NCLR_ACTIVE;
 		break;
-	case PICA_CCLINK_N2NCLE_WAITCONNCLE:
-		ccl->sck_p2 = s;
-		if (!cclink_allocbufs(ccl))
-		{
-			cclink_list_delete(ccl);
-			return;
-		}
+	case PICA_CCLINK_N2NCLE_WAITCONNCLEANONTLSSHUTDOWN:
 		ccl->state = PICA_CCLINK_N2NCLE_ACTIVE;
 		break;
 	}
@@ -1330,6 +1397,8 @@ int PICA_node_init()
 	struct sockaddr_in sd;
 	int ret;
 	int flag;
+	FILE *dh_file;
+	DH *dh = NULL;
 
 	SSL_load_error_strings();
 	SSL_library_init();
@@ -1389,22 +1458,39 @@ int PICA_node_init()
 //#endif
 
 	ctx = SSL_CTX_new(TLSv1_2_method());
+	anon_ctx = SSL_CTX_new(TLSv1_2_method());
 
-	if (!ctx)
+	if (!ctx || !anon_ctx)
 		PICA_fatal("unable to create SSL_CTX object");
-
 
 	ret = SSL_CTX_set_cipher_list(ctx, PICA_TLS_CIPHERLIST);
 
 	if (!ret)
 		PICA_fatal("failed to set cipher list " PICA_TLS_CIPHERLIST);
 
-	ret = SSL_CTX_load_verify_locations(ctx, nodecfg.CA_cert_file, 0);
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback);
+
+	dh_file = fopen(nodecfg.dh_param_file, "r");
+
+	if (dh_file)
+	{
+		dh = PEM_read_DHparams(dh_file, NULL, NULL, NULL);
+		fclose(dh_file);
+	}
+	else
+		PICA_fatal("Unable to open DH parameters file %", nodecfg.dh_param_file);
+
+	ret = SSL_CTX_set_tmp_dh(anon_ctx, dh);
+
+	if (ret != 1)
+		PICA_fatal("Failed to set DH parameters");
+
+	ret = SSL_CTX_set_cipher_list(anon_ctx, PICA_TLS_ANONDHCIPHERLIST);
 
 	if (!ret)
-		PICA_fatal("call to SSL_CTX_load_verify_locations failed(). Check if %s exists and is accesible", nodecfg.CA_cert_file);
+		PICA_fatal("failed to set cipher list " PICA_TLS_ANONDHCIPHERLIST);
 
-	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback);
+	newconns_init();
 
 	return 1;
 }
@@ -1415,8 +1501,31 @@ void newconn_close(struct newconn* nc)
 	CLOSE(nc->sck);
 	PICA_debug3("newconn_close(): nc = %p closed socket %i", nc, nc->sck);
 
-	nc->sck = 0;
+	nc->sck = -1;
 	nc->pos = 0;
+
+	if (nc->iconn.cl && nc->type == NEWCONN_C2N)
+		client_list_delete(nc->iconn.cl);
+
+	if (nc->iconn.cc && nc->type == NEWCONN_C2C)
+		cclink_list_delete(nc->iconn.cc);
+
+	nc->iconn.cl = NULL;
+
+	nc->type = NEWCONN_UNKNOWN;
+}
+
+void newconns_init()
+{
+	int i;
+
+	memset(newconns, 0, sizeof(struct newconn) * MAX_NEWCONNS);
+
+	for (i = 0; i < MAX_NEWCONNS; i++)
+	{
+		newconns[i].sck = -1;
+		newconns[i].type = NEWCONN_UNKNOWN;
+	}
 }
 
 //функция ищет свободный элемент в массиве структур newconn и возвращает на него указатель
@@ -1426,7 +1535,7 @@ struct newconn* newconn_add(struct newconn *ncs, int *pos)
 {
 	time_t min;
 	int min_pos = 0;
-	if (*pos < MAX_NEWCONNS && !ncs[*pos].sck)
+	if (*pos < MAX_NEWCONNS && ncs[*pos].sck == -1)
 	{
 		goto ret;
 	}
@@ -1434,7 +1543,7 @@ struct newconn* newconn_add(struct newconn *ncs, int *pos)
 	{
 		*pos = 0;
 		min = ncs->tmst;
-		while(ncs[*pos].sck && *pos < MAX_NEWCONNS)
+		while(*pos < MAX_NEWCONNS && ncs[*pos].sck >= 0)
 		{
 			if (ncs[*pos].tmst < min)
 			{
@@ -1449,11 +1558,12 @@ struct newconn* newconn_add(struct newconn *ncs, int *pos)
 			*pos = min_pos;
 			SHUTDOWN(ncs[min_pos].sck);
 			CLOSE(ncs[min_pos].sck);
-			PICA_debug2("closed socket %i", ncs[min_pos].sck);
+			PICA_debug2("closed newconn socket %i", ncs[min_pos].sck);
 		}
 	}
 
 ret:
+	ncs[*pos].sck = -1;
 	ncs[*pos].pos = 0;
 	ncs[*pos].tmst = time(0);
 	return &ncs[(*pos)++];
@@ -1461,7 +1571,7 @@ ret:
 
 void newconn_free(struct newconn* nc)
 {
-	nc->sck = 0;
+	nc->sck = -1;
 //nc->pos=0; - pos value is being used in processmsgdatastream
 }
 
@@ -1765,6 +1875,7 @@ struct nodelink *nodelink_list_addnew(struct newconn *nc)
 
 	nl->sck = nc->sck;
 	nl->addr = nc->addr;
+	nl->anonssl = nc->anonssl;
 
 	nl->r_buf = calloc(1, DEFAULT_BUF_SIZE);
 	if (!nl->r_buf)
@@ -1914,7 +2025,7 @@ void process_timeouts_newconn()
 
 	for (i = 0; i < MAX_NEWCONNS; i++)
 	{
-		if (newconns[i].sck)
+		if (newconns[i].sck >= 0)
 		{
 			if (newconns[i].tmst < t)
 			{
@@ -2113,7 +2224,7 @@ void newconn_set_fds(fd_set *readfds, int *nfds)
 	int i;
 
 	for (i = 0; i < MAX_NEWCONNS; i++)
-		if (newconns[i].sck)
+		if (newconns[i].sck >= 0)
 			set_select_fd(newconns[i].sck, readfds, nfds);
 }
 
@@ -2173,8 +2284,27 @@ void process_listen_read(fd_set *readfds)
 		{
 			nc = newconn_add(newconns, &newconns_pos);
 
+			nc->anonssl = SSL_new(anon_ctx);
+
+			if (!nc->anonssl)
+			{
+				PICA_error("failed to allocate SSL struct");
+				return;
+			}
+
+			if (!SSL_set_fd(nc->anonssl, s))
+			{
+				SSL_free(nc->anonssl);
+				return;
+			}
+
+
 			nc->sck = s;
 			nc->addr = addr;
+			nc->state = PICA_NEWCONN_WAITANONTLSACCEPT;
+
+			IOCTLSETNONBLOCKINGSOCKET(s, 1);
+
 			PICA_debug1("accepted connection from %.16s, new socket %i", inet_ntoa(addr.sin_addr), s);//IPv6
 		}
 		else
@@ -2186,28 +2316,208 @@ void process_listen_read(fd_set *readfds)
 //IPv6
 }
 
+void process_newconn_write()
+{
+	int i, ret;
+
+	for (i = 0; i < MAX_NEWCONNS; i++)
+		if (newconns[i].sck >= 0)
+		{
+
+			switch(newconns[i].state)
+			{
+			case PICA_NEWCONN_SENDINGOK:
+				PICA_debug3("sending OK response to newconn on socket %i...\n", newconns[i].sck);
+				ret = SSL_write(newconns[i].anonssl, msg_INITRESPOK, sizeof msg_INITRESPOK);
+
+				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
+					break;
+
+				if (ret <= 0)
+				{
+					SSL_free(newconns[i].anonssl);
+					newconn_close(&newconns[i]);
+					break;
+				}
+
+				if (ret == sizeof msg_INITRESPOK)
+				{
+					if (newconns[i].type == NEWCONN_N2N)
+					{
+						if (!nodelink_list_addnew(&newconns[i]))
+						{
+							SSL_free(newconns[i].anonssl);
+							newconn_close(&newconns[i]);
+						}
+
+						newconn_free(&newconns[i]);
+					}
+					else
+						newconns[i].state = PICA_NEWCONN_WAITANONTLSSHUTDOWN;
+				}
+				break;
+
+			case PICA_NEWCONN_SENDINGREJECT:
+				PICA_debug3("sending reject response to newconn on socket %i...\n", newconns[i].sck);
+				ret = SSL_write(newconns[i].anonssl, msg_VERDIFFER, sizeof msg_VERDIFFER);
+
+				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
+					break;
+
+				if (ret <= 0)
+				{
+					SSL_free(newconns[i].anonssl);
+					newconn_close(&newconns[i]);
+					break;
+				}
+
+				SSL_shutdown(newconns[i].anonssl);
+				SHUTDOWN(newconns[i].sck);
+				SSL_free(newconns[i].anonssl);
+				newconn_close(&newconns[i]);
+			}
+
+		}
+
+}
+
 void process_newconn_read(fd_set *readfds)
 {
 	int i, ret;
 
 	for (i = 0; i < MAX_NEWCONNS; i++)
-		if (newconns[i].sck && FD_ISSET(newconns[i].sck, readfds))
+		if (newconns[i].sck >= 0 && FD_ISSET(newconns[i].sck, readfds))
 		{
-			ret = recv(newconns[i].sck, newconns[i].buf + newconns[i].pos, NEWCONN_BUFSIZE - newconns[i].pos, 0);
 
-			if (ret <= 0)
+			switch(newconns[i].state)
 			{
-				//perror("process_newconn_read - recv:");//debug
-				newconn_close(newconns + i);
-				continue;
-			}
-			newconns[i].pos += ret;
+			case PICA_NEWCONN_WAITANONTLSACCEPT:
+				ret = SSL_accept(newconns[i].anonssl);
 
-			if(!PICA_processdatastream(newconns[i].buf, &(newconns[i].pos), newconns + i  /*arg*/, _msginfo_newconn, MSGINFO_MSGSNUM(_msginfo_newconn) ))
-			{
-				newconn_close(newconns + i);
+				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
+					break;
+
+				if (ret <= 0)
+				{
+					SSL_free(newconns[i].anonssl);
+					newconn_close(&newconns[i]);
+					break;
+				}
+				else if (ret == 1)
+				{
+					newconns[i].state = PICA_NEWCONN_WAITREQUEST;
+				}
+
+			case PICA_NEWCONN_WAITREQUEST:
+				ret = SSL_read(newconns[i].anonssl, newconns[i].buf + newconns[i].pos, NEWCONN_BUFSIZE - newconns[i].pos);
+
+				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
+					break;
+
+				if (ret <= 0)
+				{
+					SSL_free(newconns[i].anonssl);
+					newconn_close(&newconns[i]);
+					break;
+				}
+
+				newconns[i].pos += ret;
+
+				if(!PICA_processdatastream(newconns[i].buf, &(newconns[i].pos), newconns + i, _msginfo_newconn, MSGINFO_MSGSNUM(_msginfo_newconn) ))
+				{
+					SSL_free(newconns[i].anonssl);
+					newconn_close(&newconns[i]);
+				}
+
+				break;
+
+			/*case PICA_NEWCONN_SENDINGOK:
+				PICA_debug3("sending OK response to newconn on socket %i...\n", newconns[i].sck);
+				ret = SSL_write(newconns[i].anonssl, msg_INITRESPOK, sizeof msg_INITRESPOK);
+
+				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
+					break;
+
+				if (ret <= 0)
+				{
+					SSL_free(newconns[i].anonssl);
+					newconn_close(&newconns[i]);
+					break;
+				}
+
+				if (ret == sizeof msg_INITRESPOK)
+				{
+					if (newconns[i].type == NEWCONN_N2N)
+					{
+						if (!nodelink_list_addnew(&newconns[i]))
+						{
+							SSL_free(newconns[i].anonssl);
+							newconn_close(&newconns[i]);
+						}
+
+						newconn_free(&newconns[i]);
+					}
+					else
+						newconns[i].state = PICA_NEWCONN_WAITANONTLSSHUTDOWN;
+				}*/
+
+			case PICA_NEWCONN_WAITANONTLSSHUTDOWN:
+				PICA_debug3("waiting for anon TLS shutdown on socket %i...\n", newconns[i].sck);
+				ret = SSL_shutdown(newconns[i].anonssl);
+
+				if (ret == 0)
+					break;
+
+				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
+					break;
+
+				if (ret < 0)
+				{
+					SSL_free(newconns[i].anonssl);
+					newconn_close(&newconns[i]);
+					break;
+				}
+
+				//switch state of client or cclink on successful shutdown
+				if (ret == 1)
+				{
+					if (newconns[i].iconn.cl && newconns[i].type == NEWCONN_C2N)
+					{
+						newconns[i].iconn.cl->state = PICA_CLSTATE_TLSNEGOTIATION;
+						newconn_free(&newconns[i]);
+						break;
+					}
+
+					if (newconns[i].iconn.cc && newconns[i].type == NEWCONN_C2C)
+					{
+						cclink_sendcleconnected(newconns[i].iconn.cc);
+						cclink_activate(newconns[i].iconn.cc);
+
+						newconn_free(&newconns[i]);
+						break;
+					}
+				}
+				break;
+
+			/*case PICA_NEWCONN_SENDINGREJECT:
+				ret = SSL_write(newconns[i].anonssl, msg_VERDIFFER, sizeof msg_VERDIFFER);
+
+				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
+					break;
+
+				if (ret <= 0)
+				{
+					SSL_free(newconns[i].anonssl);
+					newconn_close(&newconns[i]);
+					break;
+				}
+
+				SSL_shutdown(newconns[i].anonssl);
+				SHUTDOWN(newconns[i].sck);
+				SSL_free(newconns[i].anonssl);
+				newconn_close(&newconns[i]);*/
 			}
-			//FD_CLR(newconns[i].sck,readfds);
+
 		}
 }
 
@@ -2330,15 +2640,9 @@ void process_n2n_read(fd_set *readfds)
 	{
 		if (FD_ISSET(nl->sck, readfds))
 		{
-			ret = recv(nl->sck, nl->r_buf + nl->r_pos, nl->buflen_r - nl->r_pos, 0);
+			ret = SSL_read(nl->anonssl, nl->r_buf + nl->r_pos, nl->buflen_r - nl->r_pos);
 
-			if (ret <= 0)
-			{
-				if (ret < 0)
-					PICA_debug3("recv() failed in process_n2n_read(): %s", strerror(errno));
-				kill_ptr = nl;
-			}
-			else
+			if (ret > 0)
 			{
 				nl->r_pos += ret;
 
@@ -2348,6 +2652,14 @@ void process_n2n_read(fd_set *readfds)
 				if (nl->buflen_r == nl->r_pos)
 					if (!nodelink_rbuf_grow(nl))
 						kill_ptr = nl;
+			}
+			else
+			{
+				if (ret == 0 || process_async_ssl_readwrite(nl->anonssl, ret) == 0)
+				{
+					PICA_debug3("SSL_read() failed in process_n2n_read()");
+					kill_ptr = nl;
+				}
 			}
 		}
 
@@ -2387,6 +2699,9 @@ void process_c2n_write()
 
 			if (ret == i_ptr->btw_ssl)
 			{
+				if (ret < i_ptr->w_pos)
+					memmove(i_ptr->w_buf, i_ptr->w_buf + ret, i_ptr->w_pos - ret); //may be it's better to implement ring buffer here
+
 				i_ptr->w_pos -= i_ptr->btw_ssl;
 				i_ptr->btw_ssl = 0;
 			}
@@ -2401,7 +2716,10 @@ void process_c2n_write()
 					kill_ptr = i_ptr;
 			}
 			break;
-		case PICA_CLSTATE_SENDINGRESP:
+		case PICA_CLSTATE_WAITANONTLSSHUTDOWN:
+			// do nothing here, state will be switched by newconn
+			break;
+/*		case PICA_CLSTATE_SENDINGRESP:
 			ret = send(i_ptr->sck_comm, i_ptr->w_buf, i_ptr->w_pos, 0);
 			if (!ret)
 				kill_ptr = i_ptr;
@@ -2418,7 +2736,7 @@ void process_c2n_write()
 			if (!i_ptr->w_pos)
 				i_ptr->state = PICA_CLSTATE_TLSNEGOTIATION;
 
-			break;
+			break;*/
 		case PICA_CLSTATE_TLSNEGOTIATION:
 			i_ptr->w_pos = 0;
 			ret = SSL_connect(i_ptr->ssl_comm);
@@ -2662,28 +2980,24 @@ void process_n2n_write()
 	{
 		if (nl->w_pos > 0)
 		{
-			ret = send(nl->sck, nl->w_buf, nl->w_pos, MSG_NOSIGNAL);
+			if (!nl->btw_ssl)
+				nl->btw_ssl = nl->w_pos;
 
-			if (ret > 0)
+			ret = SSL_write(nl->anonssl, nl->w_buf, nl->btw_ssl);
+
+			if (ret == nl->btw_ssl)
 			{
 				if (ret < nl->w_pos)
 					memmove(nl->w_buf, nl->w_buf + ret, nl->w_pos - ret); //may be it's better to implement ring buffer here
-				nl->w_pos -= ret;
+				nl->w_pos -= nl->btw_ssl;
+				nl->btw_ssl = 0;
 			}
-			if (ret < 0)
+
+			if (ret == 0 || ret < 0 && process_async_ssl_readwrite(nl->anonssl, ret) == 0)
 			{
-#ifdef WIN32
-				ret = WSAGetLastError();
-				if (!(ret == WSAEWOULDBLOCK || ret == WSAENOBUFS))
-					kill_ptr = nl;
-#else
-				ret = errno;
-				if (!(ret == EAGAIN || ret == ENOBUFS || ret == EINTR))
-					kill_ptr = nl;
-#endif
-			}
-			if (ret == 0)
 				kill_ptr = nl;
+			}
+
 		}
 
 		nl = nl->next;
@@ -2834,6 +3148,7 @@ int node_loop()
 		process_c2n_write();
 		process_c2c_write();
 		process_n2n_write();
+		process_newconn_write();
 
 		process_timeouts();
 		process_nodewait();
