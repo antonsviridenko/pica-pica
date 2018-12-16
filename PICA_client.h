@@ -145,6 +145,7 @@ struct PICA_acc
 	*/
 	unsigned char id[PICA_ID_SIZE];
 	SSL_CTX* ctx;
+	SSL_CTX* anon_ctx;
 };
 
 enum PICA_c2n_state

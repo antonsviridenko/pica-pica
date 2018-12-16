@@ -1385,6 +1385,14 @@ int PICA_open_acc(const char *cert_file,
 		goto error_ret_1;
 	}
 
+	a->anon_ctx = SSL_CTX_new(TLSv1_2_method());//(3)
+
+	if (!a->anon_ctx)
+	{
+		ret_err = PICA_ERRSSL;
+		goto error_ret_2;
+	}
+
 	/* Available since openssl 1.1.0
 	SSL_CTX_set_security_level(a->ctx, PICA_OPENSSL_SECURUTY_LEVEL);
 	*/
@@ -1397,22 +1405,26 @@ int PICA_open_acc(const char *cert_file,
 		fclose(dh_file);
 	}
 	else
-		return PICA_ERRINVARG;
+	{
+		ret_err = PICA_ERRINVARG;
+		goto error_ret_3;
+	}
 
-	if (1 != SSL_CTX_set_tmp_dh(a->ctx, dh))
+	if (1 != SSL_CTX_set_tmp_dh(a->ctx, dh) || 1 != SSL_CTX_set_tmp_dh(a->anon_ctx, dh))
 	{
 		ret_err = PICA_ERRSSL;
-		goto error_ret_2;
+		goto error_ret_3;
 	}
 
 	DH_free(dh);
 
 	SSL_CTX_set_options(a->ctx, SSL_OP_SINGLE_DH_USE);
+	SSL_CTX_set_options(a->anon_ctx, SSL_OP_SINGLE_DH_USE);
 
 	if (!PICA_get_id_from_cert_file(cert_file, a->id))
 	{
 		ret_err = PICA_ERRINVCERT;
-		goto error_ret_2;
+		goto error_ret_3;
 	}
 
 	ret = check_pkey_passphrase(pkey_file, password_cb, a->id);
@@ -1420,7 +1432,7 @@ int PICA_open_acc(const char *cert_file,
 	if (ret != PICA_OK)
 	{
 		ret_err = ret;
-		goto error_ret_2;
+		goto error_ret_3;
 	}
 
 	if (password_cb)
@@ -1434,26 +1446,31 @@ int PICA_open_acc(const char *cert_file,
 	if (ret != 1)
 	{
 		ret_err = PICA_ERRSSL;
-		goto error_ret_2;
+		goto error_ret_3;
 	}
 
 	ret = SSL_CTX_use_PrivateKey_file(a->ctx, pkey_file, SSL_FILETYPE_PEM);
 	if (ret != 1)
 	{
 		ret_err = PICA_ERRSSL;
-		goto error_ret_2;
+		goto error_ret_3;
 	}
 
 	ret = SSL_CTX_set_cipher_list(a->ctx, PICA_TLS_CIPHERLIST);
 
+	if (ret == 1)
+		ret = SSL_CTX_set_cipher_list(a->anon_ctx, PICA_TLS_ANONDHCIPHERLIST);
+
 	if (ret != 1)
 	{
 		ret_err = PICA_ERRSSL;
-		goto error_ret_2;
+		goto error_ret_3;
 	}
 
 	return PICA_OK;
 
+error_ret_3:
+	SSL_CTX_free(a->anon_ctx);//(3)
 error_ret_2: //(2)
 	SSL_CTX_free(a->ctx);
 
