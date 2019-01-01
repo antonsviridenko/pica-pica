@@ -81,12 +81,11 @@ static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned i
 
 static int process_first_async_connect_result(int connect_ret);
 static int check_async_connect_result(int sock, struct sockaddr* a, int addrlen);
-static int process_async_ssl_errors(SSL *ssl, int ret);
+static int process_async_ssl_errors(SSL *ssl, int ret, int *want_write, int *want_read);
 
 static int PICA_write_c2n(struct PICA_c2n *ci);
 static int PICA_write_c2c(struct PICA_c2c *chn);
 static int PICA_write_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned int *btw);
-static int PICA_write_socket(SOCKET s, unsigned char *buf, unsigned int *ppos);
 static int PICA_read_c2n(struct PICA_c2n *ci);
 static int PICA_read_c2c(struct PICA_c2c *chn);
 static int PICA_read_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned int size);
@@ -1481,12 +1480,33 @@ error_ret_1: //(1)
 	return ret_err;
 }
 
-static int c2n_stage2_sendreq(struct PICA_c2n *c2n)
+static int c2n_stage2_startanontls(struct PICA_c2n *c2n)
+{
+	int ret;
+
+	ret = SSL_set_fd(c2n->ssl_comm, c2n->sck_comm);
+
+	if (ret != 1)
+		return PICA_ERRSSL;
+
+	ret = SSL_connect(c2n->ssl_comm);
+
+	ret = process_async_ssl_errors(c2n->ssl_comm, ret, &c2n->want_write, 0);
+
+	if (ret != PICA_OK)
+		return ret;
+
+	c2n->state = PICA_C2N_STATE_WAITINGANONTLS;
+
+	return PICA_OK;
+}
+
+static int c2n_stage3_sendreq(struct PICA_c2n *c2n)
 {
 	PICA_TRACEFUNC
 	struct PICA_proto_msg *mp;
 
-	puts("c2n_stage2_sendreq");//debug
+	puts("c2n_stage3_sendreq");//debug
 
 	mp = c2n_writebuf_push(c2n, PICA_PROTO_INITREQ, PICA_PROTO_INITREQ_SIZE);
 
@@ -1504,10 +1524,35 @@ static int c2n_stage2_sendreq(struct PICA_c2n *c2n)
 	return PICA_OK;
 }
 
-static int c2n_stage3_starttls(struct PICA_c2n *c2n)
+static int c2n_stage4_shutdownanontls(struct PICA_c2n *c2n)
+{
+	int ret;
+
+	ret = SSL_shutdown(c2n->ssl_comm);
+
+	if (ret < 0)
+		ret = process_async_ssl_errors(c2n->ssl_comm, ret, &c2n->want_write, 0);
+
+	if (ret != PICA_OK)
+		return ret;
+
+	c2n->state = PICA_C2N_STATE_WAITINGANONTLSSHUTDOWN;
+
+	return PICA_OK;
+}
+
+static int c2n_stage5_starttls(struct PICA_c2n *c2n)
 {
 	PICA_TRACEFUNC
 	int ret;
+
+	/* Free anon ssl struct */
+	SSL_free(c2n->ssl_comm);
+
+	c2n->ssl_comm = SSL_new(c2n->acc->ctx);
+
+	if (!c2n->ssl_comm)
+		return PICA_ERRSSL;
 
 	ret = SSL_set_fd(c2n->ssl_comm, c2n->sck_comm);
 
@@ -1520,19 +1565,17 @@ static int c2n_stage3_starttls(struct PICA_c2n *c2n)
 		return PICA_ERRSSL;
 
 	if (ret < 0)
-	{
-		ret = SSL_get_error(c2n->ssl_comm, ret);
+		ret = process_async_ssl_errors(c2n->ssl_comm, ret, &c2n->want_write, 0);
 
-		if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
-			return PICA_ERRSSL;
-	}
+	if (ret != PICA_OK)
+		return ret;
 
 	c2n->state = PICA_C2N_STATE_WAITINGTLS;
 
 	return PICA_OK;
 }
 
-static int c2n_stage4_nodelistrequest(struct PICA_c2n *c2n)
+static int c2n_stage6_nodelistrequest(struct PICA_c2n *c2n)
 {
 	PICA_TRACEFUNC
 	struct PICA_proto_msg *mp;
@@ -1618,7 +1661,7 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
 		goto error_ret_1;
 	}
 
-	cid->ssl_comm = SSL_new(acc->ctx); //(3)
+	cid->ssl_comm = SSL_new(acc->anon_ctx); //(3)
 
 	if (!cid->ssl_comm)
 	{
@@ -1675,7 +1718,7 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
 	ret = connect(cid->sck_comm, (struct sockaddr*)&cid->srv_addr, sizeof(cid->srv_addr));
 
 	if (ret == 0)
-		return c2n_stage2_sendreq(cid);
+		return c2n_stage2_startanontls(cid);
 
 	if ((ret_err = process_first_async_connect_result(ret)) != PICA_OK)
 		goto error_ret_4;
@@ -1730,7 +1773,7 @@ int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_
 	return PICA_OK;
 }
 
-static int process_async_ssl_errors(SSL *ssl, int ret)
+static int process_async_ssl_errors(SSL *ssl, int ret, int *want_write, int *want_read)
 {
 	PICA_TRACEFUNC
 	if (ret == 0)
@@ -1740,7 +1783,12 @@ static int process_async_ssl_errors(SSL *ssl, int ret)
 		switch(SSL_get_error(ssl, ret))
 		{
 		case SSL_ERROR_WANT_WRITE:
+			if (want_write)
+				*want_write = 1;
+			break;
 		case SSL_ERROR_WANT_READ:
+			if (want_read)
+				*want_read = 1;
 			break;
 		default:
 			return PICA_ERRSSL;
@@ -1806,7 +1854,24 @@ static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 			if (ret == PICA_OK)
 			{
-				ret = c2n_stage2_sendreq(c2n);
+				ret = c2n_stage2_startanontls(c2n);
+			}
+		}
+		break;
+
+	case PICA_C2N_STATE_WAITINGANONTLS:
+
+		if (FD_ISSET(c2n->sck_comm, wfds) || FD_ISSET(c2n->sck_comm, rfds))
+		{
+			int sslret;
+
+			sslret = SSL_connect(c2n->ssl_comm);
+
+			if (sslret == 1)
+				ret = c2n_stage3_sendreq(c2n);
+			else
+			{
+				ret = process_async_ssl_errors(c2n->ssl_comm, sslret, &c2n->want_write, 0);
 			}
 		}
 		break;
@@ -1826,7 +1891,7 @@ static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 		if (ret == PICA_OK && c2n->init_resp_ok != 0)
 		{
 			if (c2n->init_resp_ok == 1)
-				ret = c2n_stage3_starttls(c2n);
+				ret = c2n_stage4_shutdownanontls(c2n);
 			else
 			{
 				if (c2n->node_ver_major > PICA_PROTO_VER_HIGH ||
@@ -1839,6 +1904,24 @@ static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 		break;
 
+	case PICA_C2N_STATE_WAITINGANONTLSSHUTDOWN:
+		if (FD_ISSET(c2n->sck_comm, wfds) || FD_ISSET(c2n->sck_comm, rfds))
+		{
+			int sslret;
+
+			sslret = SSL_shutdown(c2n->ssl_comm);
+
+			if (sslret == 0)
+				break;
+
+			if (sslret < 0)
+				ret = process_async_ssl_errors(c2n->ssl_comm, sslret, &c2n->want_write, 0);
+
+			if (sslret == 1)
+				ret = c2n_stage5_starttls(c2n);
+		}
+		break;
+
 	case PICA_C2N_STATE_WAITINGTLS:
 
 		if (FD_ISSET(c2n->sck_comm, wfds) || FD_ISSET(c2n->sck_comm, rfds))
@@ -1848,19 +1931,11 @@ static int process_c2n(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 			sslret = SSL_accept(c2n->ssl_comm);
 
 			if (sslret == 1)
-				ret = c2n_stage4_nodelistrequest(c2n);
+				ret = c2n_stage6_nodelistrequest(c2n);
 			else if (sslret == 0)
 				ret = PICA_ERRSSL;
 			else if (sslret < 0)
-			{
-				sslret = SSL_get_error(c2n->ssl_comm, sslret);
-
-				if (sslret != SSL_ERROR_WANT_READ && sslret != SSL_ERROR_WANT_WRITE)
-					ret = PICA_ERRSSL;
-
-				if (sslret == SSL_ERROR_WANT_WRITE)
-					c2n->want_write = 1;
-			}
+				ret = process_async_ssl_errors(c2n->ssl_comm, sslret, &c2n->want_write, 0);
 		}
 
 		break;
@@ -2143,10 +2218,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 					if (ret != 1)
 					{
-						if (SSL_get_error(d->ssl, ret) == SSL_ERROR_WANT_WRITE)
-							d->want_write = 1;
-
-						ret = process_async_ssl_errors(d->ssl, ret);
+						ret = process_async_ssl_errors(d->ssl, ret, &d->want_write, 0);
 
 						if (ret != PICA_OK)
 						{
@@ -2519,39 +2591,6 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 	return PICA_OK;
 }
 
-int PICA_write_socket(SOCKET s, unsigned char *buf, unsigned int *ppos)
-{
-	int ret;
-
-	if (*ppos > 0 )
-	{
-		ret = send( s, buf, *ppos, MSG_NOSIGNAL);
-
-		if (ret > 0)
-		{
-			if (ret < *ppos)
-				memmove( buf, buf + ret, *ppos - ret);
-			*ppos -= ret;
-		}
-
-		if (ret < 0)
-		{
-#ifdef WIN32
-			ret = WSAGetLastError();
-			if (! (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS))
-#else
-			ret = errno;
-			if (! (ret == EAGAIN || ret == ENOBUFS || ret == EINTR))
-#endif
-				return PICA_ERRSOCK;
-		}
-		if (ret == 0)
-			return PICA_ERRSERV;
-
-	}
-	return PICA_OK;
-}
-
 int PICA_write_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned int *btw)
 {
 	int ret;
@@ -2588,10 +2627,7 @@ int PICA_write_c2n(struct PICA_c2n *ci)
 {
 	int ret = PICA_ERRINVARG;
 
-	if (PICA_C2N_STATE_WAITINGREP == ci->state)
-		ret = PICA_write_socket( ci->sck_comm, ci->write_buf, &ci->write_pos);
-	else if (PICA_C2N_STATE_CONNECTED == ci->state)
-		ret = PICA_write_ssl( ci->ssl_comm, ci->write_buf, &ci->write_pos, &ci->write_sslbytestowrite);
+	ret = PICA_write_ssl( ci->ssl_comm, ci->write_buf, &ci->write_pos, &ci->write_sslbytestowrite);
 
 	if (ci->disconnect_on_empty_write_buf)
 		PICA_close_c2n(ci);
@@ -2609,9 +2645,6 @@ int PICA_write_c2c(struct PICA_c2c *chn)
 		exit(-1);
 	}
 
-	if (PICA_C2C_STATE_CONNID == chn->state)
-		ret = PICA_write_socket(chn->sck_data, chn->write_buf, &chn->write_pos);
-	else
 	{
 		SSL *ssl_to_write = chn->ssl;
 
@@ -2750,14 +2783,7 @@ int PICA_read_c2n(struct PICA_c2n *ci)
 {
 	int ret;
 
-
-//ret=SSL_read(ci->ssl_comm, ci->read_buf + ci->read_pos, PICA_CONNREADBUFSIZE - ci->read_pos);
-	if (PICA_C2N_STATE_WAITINGREP == ci->state)
-		ret = PICA_read_socket(ci->sck_comm, ci->read_buf, &ci->read_pos, PICA_CONNREADBUFSIZE);
-	else if (PICA_C2N_STATE_CONNECTED == ci->state)
-		ret = PICA_read_ssl(ci->ssl_comm,  ci->read_buf, &ci->read_pos, PICA_CONNREADBUFSIZE);
-
-
+	ret = PICA_read_ssl(ci->ssl_comm,  ci->read_buf, &ci->read_pos, PICA_CONNREADBUFSIZE);
 
 	if (ret == PICA_OK)
 	{
