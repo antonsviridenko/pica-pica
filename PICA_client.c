@@ -89,7 +89,6 @@ static int PICA_write_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsi
 static int PICA_read_c2n(struct PICA_c2n *ci);
 static int PICA_read_c2c(struct PICA_c2c *chn);
 static int PICA_read_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned int size);
-static int PICA_read_socket(SOCKET s, unsigned char *buf, unsigned int *ppos, unsigned int size);
 
 #define MSGINFO_MSGSNUM(arr) (sizeof(arr)/sizeof(struct PICA_msginfo))
 const struct PICA_msginfo  c2n_messages[] =
@@ -2674,51 +2673,6 @@ int PICA_write_c2c(struct PICA_c2c *chn)
 		PICA_close_c2c(chn);
 
 	return ret;
-}
-
-int PICA_read_socket(SOCKET s, unsigned char *buf, unsigned int *ppos, unsigned int size)
-{
-	int ret;
-
-	ret = recv(s, buf + *ppos, size - *ppos, 0);
-
-	if (ret == 0)
-		return PICA_ERRDISCONNECT;
-
-	if (ret < 0)
-	{
-#ifdef WIN32
-		switch(WSAGetLastError())
-		{
-		case WSAEINTR:
-		case WSAEINPROGRESS:
-		case WSAEWOULDBLOCK:
-			break;
-		default:
-			return PICA_ERRSOCK;
-		}
-#else
-		switch(errno)
-		{
-		case EAGAIN :
-#if EAGAIN != EWOULDBLOCK
-		case EWOULDBLOCK:
-#endif
-		case EINTR:
-			break;
-
-		default:
-			return PICA_ERRSOCK;//ERR_CHECK
-		}
-#endif
-	}
-
-	if (ret > 0)
-	{
-		*ppos += ret;
-	}
-
-	return PICA_OK;
 }
 
 int PICA_read_ssl(SSL *ssl, unsigned char *buf, unsigned int *ppos, unsigned int size)
