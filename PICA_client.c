@@ -246,8 +246,31 @@ static int c2n_alloc_c2c(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsig
 
 	return 1;
 }
+static int c2c_stage2_startanontls(struct PICA_c2c *chnl)
+{
+	int ret;
 
-static int c2c_stage2_connid(struct PICA_c2c *chnl)
+	chnl->ssl = SSL_new(chnl->acc->anon_ctx);
+
+	if (!chnl->ssl)
+		return PICA_ERRSSL;
+
+	ret = SSL_set_fd(chnl->ssl, chnl->sck_data);
+
+	if (ret != 1)
+		return PICA_ERRSSL;
+
+	ret = SSL_connect(chnl->ssl);
+
+	ret = process_async_ssl_errors(chnl->ssl, ret, &chnl->want_write, 0);
+
+	if (ret != PICA_OK)
+		return ret;
+
+	chnl->state = PICA_C2C_STATE_WAITINGANONTLS;
+}
+
+static int c2c_stage3_connid(struct PICA_c2c *chnl)
 {
 	struct PICA_proto_msg *mp;
 
@@ -275,10 +298,28 @@ static int c2c_stage2_connid(struct PICA_c2c *chnl)
 	return PICA_OK;
 }
 
-static int c2c_stage3_starttls(struct PICA_c2c *chnl)
+static int c2c_stage4_shutdownanontls(struct PICA_c2c *chnl)
 {
 	int ret;
 
+	ret = SSL_shutdown(chnl->ssl);
+
+	if (ret < 0)
+		ret = process_async_ssl_errors(chnl->ssl, ret, &chnl->want_write, 0);
+
+	if (ret != PICA_OK)
+		return ret;
+
+	chnl->state = PICA_C2C_STATE_WAITINGANONTLSSHUTDOWN;
+
+	return PICA_OK;
+}
+
+static int c2c_stage5_starttls(struct PICA_c2c *chnl)
+{
+	int ret;
+
+	SSL_free(chnl->ssl);
 	chnl->ssl = SSL_new(chnl->acc->ctx);
 
 	if (!chnl->ssl)
@@ -376,7 +417,7 @@ static int c2c_verify_peer_cert(struct PICA_c2c *chnl)
 	return verify_peer_cert_common(&chnl->peer_cert, chnl->ssl, chnl->peer_id);
 }
 
-static int c2c_stage4_sendc2cconnreq(struct PICA_c2c *chnl)
+static int c2c_stage6_sendc2cconnreq(struct PICA_c2c *chnl)
 {
 	struct PICA_proto_msg *mp;
 
@@ -413,7 +454,7 @@ static int c2c_start(struct PICA_c2c *chnl)
 
 		if (ret == 0)
 		{
-			ret = c2c_stage2_connid(chnl);
+			ret = c2c_stage2_startanontls(chnl);
 
 			if (ret != PICA_OK)
 			{
@@ -1970,9 +2011,26 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 
 			if (ret == PICA_OK)
 			{
-				ret = c2c_stage2_connid(c2c);
+				ret = c2c_stage2_startanontls(c2c);
 			}
 		}
+		break;
+
+	case PICA_C2C_STATE_WAITINGANONTLS:
+		if (FD_ISSET(c2c->sck_data, wfds) || FD_ISSET(c2c->sck_data, rfds))
+		{
+			int sslret;
+
+			sslret = SSL_connect(c2c->ssl);
+
+			if (sslret == 1)
+				ret = c2c_stage3_connid(c2c);
+			else
+			{
+				ret = process_async_ssl_errors(c2c->ssl, sslret, &c2c->want_write, NULL);
+			}
+		}
+
 		break;
 
 	case PICA_C2C_STATE_CONNID:
@@ -1984,9 +2042,25 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 
 		if (c2c->write_pos == 0)
 		{
-			ret = c2c_stage3_starttls(c2c);
+			ret = c2c_stage4_shutdownanontls(c2c);
 		}
 
+		break;
+
+	case PICA_C2C_STATE_WAITINGANONTLSSHUTDOWN:
+		if (FD_ISSET(c2c->sck_data, wfds) || FD_ISSET(c2c->sck_data, rfds))
+		{
+			int sslret;
+
+			sslret = SSL_shutdown(c2c->ssl);
+
+			if (sslret == 0)
+				break;
+			if (sslret < 0)
+				ret = process_async_ssl_errors(c2c->ssl, sslret, &c2c->want_write, NULL);
+			if (sslret == 1)
+				ret = c2c_stage5_starttls(c2c);
+		}
 		break;
 
 	case PICA_C2C_STATE_WAITINGTLS:
@@ -2018,7 +2092,7 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 				ret = c2c_verify_peer_cert(c2c);
 
 				if (ret == PICA_OK && c2c->outgoing)
-					ret = c2c_stage4_sendc2cconnreq(c2c);
+					ret = c2c_stage6_sendc2cconnreq(c2c);
 
 				if (ret == PICA_OK && c2c->outgoing == 0)
 					c2c->state = PICA_C2C_STATE_WAITINGC2CPROTOVER;
