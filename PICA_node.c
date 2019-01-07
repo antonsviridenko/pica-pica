@@ -22,7 +22,7 @@
 #include <string.h>
 #include <time.h>
 #include <getopt.h>
-
+#include <signal.h>
 #include "PICA_security.h"
 #include "PICA_node.h"
 #include "PICA_proto.h"
@@ -1407,6 +1407,10 @@ int PICA_node_init()
 #ifdef WIN32
 	WSADATA wsd;
 	WSAStartup(MAKEWORD(2, 2), &wsd);
+#endif
+
+#ifndef WIN32
+	signal(SIGPIPE, SIG_IGN);
 #endif
 
 //CONF -AF_INET6 ????
