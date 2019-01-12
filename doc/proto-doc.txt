@@ -35,3 +35,26 @@ establish mutually authenticated TLS session over proxied connection,
 initiator client is a TLS client, accepting client has TLS server role.
 n2n connection continues to operate in ADH TLS session, as by design nodes
 do not store state that identifies them except network address.
+
+
+Packet Format.
+
+Pica Pica protocol message packet contains header and tail.
+
+[Header][Tail]
+
+Header is a 2 octet sequence that identifies packet. First and second octets
+are always equal to each other.
+Tail is a remaining part of the packet. Can be empty. Tail can have fixed
+predefined length or in case of variable length packet it begins with 1 or 2
+octet sequence that contains unsigned integer number which defines length in 
+octets of remaining part of the tail not including lenght octets. Length field
+is stored in little-endian format, least significant octet first.
+
+Example:
+
+0x55 0x55 0x03 0x00 0xAA 0xBB 0xCC
+[0x55 0x55] - header
+[0x03 0x00] - tail length, 2 octets
+[0xAA 0xBB 0xCC] payload, 3 octets
+
