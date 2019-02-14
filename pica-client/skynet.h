@@ -161,10 +161,13 @@ private:
 
 	static void listener_error_cb(struct PICA_listener *lst, int errorcode);
 
+	static void multilogin_cb(time_t timestamp, void *addr_bin, const char *addr_str, uint16_t port);
+
 private slots:
 	void nodelink_activated(PICA_c2n *c2n);
 	void nodelink_closed(PICA_c2n *c2n, int error);
 	void nodelink_failed(PICA_c2n *c2n, int error);
+	void multilogin_event(time_t timestamp, const char *addr, uint16_t port);
 
 	void node_status_changed(Nodes::NodeRecord nr, bool alive);
 	void verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified);

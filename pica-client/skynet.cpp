@@ -55,7 +55,8 @@ SkyNet::SkyNet()
 		c2n_established_cb,
 		c2n_failed_cb,
 		c2n_closed_cb,
-		listener_error_cb
+		listener_error_cb,
+		multilogin_cb
 	};
 
 	PICA_client_init(&cbs);
@@ -185,7 +186,12 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 		emit LostSelfAwareness();
 }
 
-
+void SkyNet::multilogin_event(time_t timestamp, const char *addr, uint16_t port)
+{
+	emit StatusMsg(QString("%3 Detected new login of your account at node %1:%2")
+				.arg(addr).arg(port).arg(QDateTime::fromTime_t(timestamp).toString("yyyy-MM-dd hh:mm:ss")),
+				true);
+}
 
 void SkyNet::node_status_changed(Nodes::NodeRecord nr, bool alive)
 {
@@ -1004,4 +1010,9 @@ void SkyNet::c2n_closed_cb(struct PICA_c2n *c2n, int error)
 void SkyNet::listener_error_cb(struct PICA_listener *lst, int errorcode)
 {
 
+}
+
+void SkyNet::multilogin_cb(time_t timestamp, void *addr_bin, const char *addr_str, uint16_t port)
+{
+	skynet->multilogin_event(timestamp, addr_str, port);
 }

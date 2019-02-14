@@ -146,6 +146,9 @@ struct PICA_acc
 	unsigned char id[PICA_ID_SIZE];
 	SSL_CTX* ctx;
 	SSL_CTX* anon_ctx;
+	const char *pkey_file;
+	const char *cert_file;
+	int (*password_cb)(char *buf, int size, int rwflag, void *userdata);
 };
 
 enum PICA_c2n_state
@@ -177,6 +180,7 @@ struct PICA_c2n
 	enum PICA_c2n_state state;
 	enum PICA_directc2c_config directc2c_config;
 	int multilogin_policy;
+	uint64_t multilogin_last_timestamp;
 	struct PICA_listener *directc2c_listener;
 
 	unsigned char *read_buf;
@@ -379,6 +383,8 @@ struct PICA_client_callbacks
 	void (*c2n_closed_cb)(struct PICA_c2n *c2n, int error);
 
 	void (*listener_error_cb)(struct PICA_listener *lst, int errorcode);
+
+	void (*multilogin_cb)(time_t timestamp, void *addr_bin, const char *addr_str, uint16_t port);
 };
 
 

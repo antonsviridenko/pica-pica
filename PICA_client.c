@@ -20,8 +20,10 @@
 #include "PICA_proto.h"
 #include "PICA_msgproc.h"
 #include "PICA_common.h"
+#include "PICA_signverify.h"
 #include <openssl/dh.h>
 #include <string.h>
+#include <time.h>
 
 #define PICA_DEBUG
 
@@ -74,6 +76,7 @@ static unsigned int procmsg_C2CCONNREQ(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_MULTILOGIN(unsigned char*, unsigned int, void*);
 
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
@@ -99,7 +102,8 @@ const struct PICA_msginfo  c2n_messages[] =
 	{PICA_PROTO_CLNODELIST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CLNODELIST},
 	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ},
 	{PICA_PROTO_INITRESPOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_INITRESPOK_SIZE, procmsg_INITRESP},
-	{PICA_PROTO_VERDIFFER, PICA_MSG_FIXED_SIZE, PICA_PROTO_VERDIFFER_SIZE, procmsg_INITRESP}
+	{PICA_PROTO_VERDIFFER, PICA_MSG_FIXED_SIZE, PICA_PROTO_VERDIFFER_SIZE, procmsg_INITRESP},
+	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN}
 };
 
 const struct PICA_msginfo  c2c_messages[] =
@@ -1416,6 +1420,10 @@ int PICA_open_acc(const char *cert_file,
 	if (!a)
 		return PICA_ERRNOMEM;
 
+	a->pkey_file = pkey_file;
+	a->cert_file = cert_file;
+	a->password_cb = password_cb;
+
 	a->ctx = SSL_CTX_new(TLSv1_2_method());//(2)
 
 	if (!a->ctx)
@@ -1554,7 +1562,6 @@ static int c2n_stage3_sendreq(struct PICA_c2n *c2n)
 	{
 		mp->tail[0] = PICA_PROTO_VER_HIGH;
 		mp->tail[1] = PICA_PROTO_VER_LOW;
-		mp->tail[2] = c2n->multilogin_policy;
 	}
 	else
 		return PICA_ERRNOMEM;
@@ -1615,6 +1622,233 @@ static int c2n_stage5_starttls(struct PICA_c2n *c2n)
 	return PICA_OK;
 }
 
+static int do_signature(struct PICA_acc *acc, void **datapointers, int *datalengths, unsigned char **sig, int *siglen)
+{
+	int ret = PICA_ERRNOMEM;
+	EVP_MD_CTX *mdctx = NULL;
+	EVP_PKEY *pkey = NULL;
+	RSA *rsa = NULL;
+	FILE *f;
+
+	mdctx = EVP_MD_CTX_create();
+
+	if (!mdctx)
+		return PICA_ERRNOMEM;
+
+	pkey = EVP_PKEY_new();
+
+	if (!pkey)
+		goto sig_exit1;
+
+	f = fopen(acc->pkey_file, "r");
+
+	if (!f)
+	{
+		ret = PICA_ERRFILEOPEN;
+		goto sig_exit2;
+	}
+
+	ret = PICA_ERRSSL;
+
+	rsa = PEM_read_RSAPrivateKey(f, NULL, acc->password_cb, acc->id);
+	fclose(f);
+
+	if (!rsa)
+		goto sig_exit2;
+
+	ret = EVP_PKEY_set1_RSA(pkey, rsa);
+
+	if (ret != 1)
+		goto sig_exit3;
+
+	ret = EVP_DigestSignInit(mdctx, NULL, EVP_sha224(), NULL, pkey);
+
+	if (ret != 1)
+		goto sig_exit3;
+
+	while(*datapointers)
+	{
+		ret = EVP_DigestSignUpdate(mdctx, *datapointers, *datalengths);
+
+		if (ret != 1)
+		{
+			goto sig_exit3;
+			break;
+		}
+
+		datapointers++;
+		datalengths++;
+	}
+
+	ret = EVP_DigestSignFinal(mdctx, NULL, siglen);
+
+	if (ret != 1)
+		goto sig_exit3;
+
+	*sig = (unsigned char*) malloc(*siglen);
+
+	if (!*sig)
+	{
+		ret = PICA_ERRNOMEM;
+		goto sig_exit3;
+	}
+
+	ret = EVP_DigestSignFinal(mdctx, *sig, siglen);
+
+	if (ret == 1)
+		ret = PICA_OK;
+	else
+		free(*sig);
+
+sig_exit3:
+	RSA_free(rsa);
+sig_exit2:
+	EVP_PKEY_free(pkey);
+sig_exit1:
+	EVP_MD_CTX_destroy(mdctx);
+
+	return ret;
+}
+
+static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void *p)
+{
+	struct PICA_c2n *c2n = (struct PICA_c2n *) p;
+	void *sigdatas[4];
+	int sigdatalengths[4];
+	uint64_t timestamp;
+	FILE *f;
+	X509 *x;
+	int ret;
+	uint16_t payload_len = *(uint16_t*)(buf + 2);
+	int siglen;
+
+	if (payload_len <= sizeof timestamp + PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
+		return 0;
+
+	timestamp = *(uint64_t*)(buf + 4);
+	if (timestamp <= c2n->multilogin_last_timestamp)
+		return 0;
+
+	f = fopen(c2n->acc->cert_file, "r");
+
+	if (!f)
+		return 0;
+
+	x = PEM_read_X509(f, 0, 0, 0);
+	fclose(f);
+
+	if (!x)
+		return 0;
+
+	sigdatas[0] = c2n->acc->id;
+	sigdatalengths[0] = PICA_ID_SIZE;
+
+	sigdatas[1] = buf + 4;
+	sigdatalengths[1] = sizeof(uint64_t);
+
+	sigdatas[2] = buf + 4 + sizeof(uint64_t);
+
+	switch (buf[4 + sizeof(uint64_t)])
+	{
+	case PICA_PROTO_NEWNODE_IPV4:
+		sigdatalengths[2] = PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
+		break;
+
+	default: // IPv6 !!
+		goto multilogin_err;
+		break;
+	}
+
+	sigdatas[3] = NULL;
+	sigdatalengths[3] = 0;
+
+	siglen = payload_len - sizeof(uint64_t) - sigdatalengths[2];
+
+	if (siglen <= 0)
+		goto multilogin_err;
+
+	ret = PICA_signverify(x->cert_info->key->pkey, sigdatas, sigdatalengths, buf + 4 + sizeof(uint64_t) + sigdatalengths[2], siglen);
+
+	if (ret != PICA_OK)
+		goto multilogin_err;
+
+	{
+		char ipaddr_string[INET6_ADDRSTRLEN];
+
+		unsigned char *ipv4_pos = buf + 4 + sizeof(uint64_t) + 1;
+		unsigned char *port_pos = buf + 4 + sizeof(uint64_t) + 1 + 4;
+
+		callbacks.multilogin_cb(timestamp, sigdatas[2],
+						inet_ntop(AF_INET, ipv4_pos, ipaddr_string, INET6_ADDRSTRLEN),
+						ntohs(*(uint16_t*)(port_pos)));
+	}
+
+	ret = 1;
+
+multilogin_err:
+	X509_free(x);
+	return ret;
+}
+
+static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
+{
+	struct PICA_proto_msg *mp;
+	void *sigdatas[4];
+	int sigdatalengths[4];
+	uint64_t timestamp;
+	unsigned char node_addr[PICA_PROTO_NODELIST_ITEM_IPV4_SIZE];
+	int siglen;
+	unsigned char *sig;
+	int ret;
+
+	sigdatas[0] = c2n->acc->id;
+	sigdatalengths[0] = PICA_ID_SIZE;
+
+	timestamp = (uint64_t) time(NULL);
+
+	sigdatas[1] = &timestamp;
+	sigdatalengths[1] = sizeof timestamp;
+
+	//nodeaddr buf, IPv4 for now
+	// TODO IPv6, DNS
+	node_addr[0] = PICA_PROTO_NEWNODE_IPV4;
+	memcpy(node_addr + 1, c2n->srv_addr.sin_addr.s_addr, 4);
+	memcpy(node_addr + 5, c2n->srv_addr.sin_port, 2);
+
+	sigdatas[2] = node_addr;
+	sigdatalengths[2] = PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
+
+	sigdatas[3] = NULL;
+	sigdatalengths[3] = 0;
+
+	ret = do_signature(c2n->acc, sigdatas, sigdatalengths, &sig, &siglen);
+
+	if (ret != PICA_OK)
+		return ret;
+
+	if (siglen > PICA_PROTO_MULTILOGIN_MAXSIGSIZE)
+	{
+		free(sig);
+		return PICA_ERRMSGSIZE;
+	}
+
+	mp = c2n_writebuf_push(c2n, PICA_PROTO_MULTILOGIN, 2 + 2 + sizeof timestamp + sigdatalengths[2] + siglen);
+
+	if (mp)
+	{
+		*((uint16_t*)mp->tail) = sizeof timestamp + sigdatalengths[2] + siglen;
+		memcpy(mp->tail + 2, &timestamp, sizeof timestamp);
+		memcpy(mp->tail + 2 + sizeof timestamp, sigdatas[2], sigdatalengths[2]);
+		memcpy(mp->tail + 2 + sizeof timestamp + sigdatalengths[2], sig, siglen);
+		ret = PICA_OK;
+	}
+		else
+			ret = PICA_ERRNOMEM;
+
+	free(sig);
+	return ret;
+}
+
 static int c2n_stage6_nodelistrequest(struct PICA_c2n *c2n)
 {
 	PICA_TRACEFUNC
@@ -1632,6 +1866,9 @@ static int c2n_stage6_nodelistrequest(struct PICA_c2n *c2n)
 	c2n->state = PICA_C2N_STATE_CONNECTED;
 
 	callbacks.c2n_established_cb(c2n);
+
+	if (c2n->multilogin_policy != PICA_MULTILOGIN_PROHIBIT)
+		return c2n_optstage7_multilogin(c2n);
 
 	return PICA_OK;
 }
