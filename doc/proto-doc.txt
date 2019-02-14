@@ -48,8 +48,10 @@ are always equal to each other.
 Tail is a remaining part of the packet. Can be empty. Tail can have fixed
 predefined length or in case of variable length packet it begins with 1 or 2
 octet sequence that contains unsigned integer number which defines length in 
-octets of remaining part of the tail not including lenght octets. Length field
+octets of remaining part of the tail not including length octets. Length field
 is stored in little-endian format, least significant octet first.
+Whole packet length is limited to 65536 octets, so length field value is within
+0..65532 range.
 
 Example:
 
@@ -57,4 +59,61 @@ Example:
 [0x55 0x55] - header
 [0x03 0x00] - tail length, 2 octets
 [0xAA 0xBB 0xCC] payload, 3 octets
+
+
+C2N Messages.
+====================================================
+C2N Connection initialization request.
+Sent by client.
+ANON TLS
+
+[0xCA 0xCA][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+====================================================
+C2N connection initialization success.
+Sent by node.
+ANON TLS
+
+[0x01 0x01]['O']['K']
+
+4 octets
+
+After this message client and node initiate ANON TLS session shutdown
+and after successful shutdown initiate new authenticated TLS session
+over the same TCP connection. Client acts as a TLS server and presents
+client sertificate, node acts as a TLS client and does not present
+certificate.
+====================================================
+Protocol versions mismatch.
+Sent by node.
+ANON TLS
+
+[0x02 0x02][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+VER_MAJOR, VER_MINOR - Pica Pica protocol version supported by node
+
+This message is sent if node and client protocol versions are not equal.
+After sending and receiving this message TCP connection is closed by both
+hosts.
+====================================================
+Multilogin notification.
+Sent by client that logged in. Retranslated to other nodes.
+Delivered to existing connected client instance.
+
+[0x0E 0x0E][length 2 octets][timestamp][node address][signature from UH, timestamp, node
+address]
+
+timestamp - time when client logged in, 64-bit Unix timestamp in UTC timezone
+
+node address - one of 0xA0, 0xA1, 0xA2 message, announced address of the node
+which sending client is connected to.
+
+signature - digital signature using SHA224 hash and private RSA key of sending
+client. Signature is calculated from concatenated sender's UH, timestamp and
+node address = Sign(UH|timestamp|node address)
+
 
