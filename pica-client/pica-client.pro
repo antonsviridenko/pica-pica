@@ -39,7 +39,8 @@ SOURCES += main.cpp\
     sound.cpp \
     dialogs/settingsdialog.cpp \
     settings.cpp \
-    ../PICA_netconf.c
+    ../PICA_netconf.c \
+    ../PICA_signverify.c
 
 HEADERS  += mainwindow.h \
     chatwindow.h \
@@ -73,7 +74,8 @@ HEADERS  += mainwindow.h \
     dialogs/settingsdialog.h \
     settings.h \
     ../PICA_netconf.h \
-    ../PICA_security.h
+    ../PICA_security.h \
+    ../PICA_signverify.h
 
 
 DEFINES = PICA_MULTITHREADED
