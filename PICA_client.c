@@ -384,6 +384,7 @@ static int verify_peer_cert_common(X509 **peer_cert, SSL *ssl, const unsigned ch
 		return PICA_ERRNOPEERCERT;
 
 	RSA_free(rsa);
+	EVP_PKEY_free(pubkey);
 
 	if (PICA_id_from_X509(*peer_cert, idbuf) == 0)
 	{
