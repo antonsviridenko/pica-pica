@@ -1813,8 +1813,8 @@ static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
 	//nodeaddr buf, IPv4 for now
 	// TODO IPv6, DNS
 	node_addr[0] = PICA_PROTO_NEWNODE_IPV4;
-	memcpy(node_addr + 1, c2n->srv_addr.sin_addr.s_addr, 4);
-	memcpy(node_addr + 5, c2n->srv_addr.sin_port, 2);
+	memcpy(node_addr + 1, &c2n->srv_addr.sin_addr.s_addr, 4);
+	memcpy(node_addr + 5, &c2n->srv_addr.sin_port, 2);
 
 	sigdatas[2] = node_addr;
 	sigdatalengths[2] = PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
