@@ -373,7 +373,7 @@ static int verify_peer_cert_common(X509 **peer_cert, SSL *ssl, const unsigned ch
 	if (!*peer_cert)
 		return PICA_ERRNOPEERCERT;
 
-	pubkey = (*peer_cert)->cert_info->key->pkey;
+	pubkey = X509_get_pubkey(*peer_cert);
 
 	if (!pubkey)
 		return PICA_ERRNOPEERCERT;
