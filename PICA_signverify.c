@@ -21,5 +21,90 @@
 
 int PICA_signverify(EVP_PKEY *pubkey, void **datapointers, int *datalengths, unsigned char *sig, int siglen)
 {
+	EVP_MD_CTX *mdctx = NULL;
+	int ret = 0;
 
+	mdctx = EVP_MD_CTX_create();
+
+	if (!mdctx)
+		return 0;
+
+	ret = EVP_DigestVerifyInit(mdctx, NULL, EVP_sha224(), NULL, pubkey);
+
+	if (ret != 1)
+		goto signverify_exit;
+
+	while (*datapointers)
+	{
+		ret = EVP_DigestVerifyUpdate(mdctx, *datapointers, *datalengths);
+
+		if (ret != 1)
+			goto signverify_exit;
+
+		datapointers++;
+		datalengths++;
+	}
+
+	ret = EVP_DigestVerifyFinal(mdctx, sig, siglen);
+
+	if (ret != 1)
+		ret = 0;
+
+signverify_exit:
+	EVP_MD_CTX_destroy(mdctx);
+	return ret;
+}
+
+int PICA_do_signature(EVP_PKEY *privkey, void **datapointers, int *datalengths, unsigned char **sig, int *siglen)
+{
+	int ret = 0;
+	EVP_MD_CTX *mdctx = NULL;
+
+	mdctx = EVP_MD_CTX_create();
+
+	if (!mdctx)
+		return 0;
+
+	ret = EVP_DigestSignInit(mdctx, NULL, EVP_sha224(), NULL, privkey);
+
+	if (ret != 1)
+		goto sig_exit;
+
+	while(*datapointers)
+	{
+		ret = EVP_DigestSignUpdate(mdctx, *datapointers, *datalengths);
+
+		if (ret != 1)
+		{
+			goto sig_exit;
+			break;
+		}
+
+		datapointers++;
+		datalengths++;
+	}
+
+	ret = EVP_DigestSignFinal(mdctx, NULL, (size_t*) siglen);
+
+	if (ret != 1)
+		goto sig_exit;
+
+	*sig = (unsigned char*) malloc(*siglen);
+
+	if (!*sig)
+	{
+		ret = 0;
+		goto sig_exit;
+	}
+
+	ret = EVP_DigestSignFinal(mdctx, *sig, (size_t*) siglen);
+
+	if (ret == 1)
+		ret = 1;
+	else
+		free(*sig);
+
+sig_exit:
+	EVP_MD_CTX_destroy(mdctx);
+	return ret;
 }

@@ -22,4 +22,6 @@
 #include <openssl/evp.h>
 
 int PICA_signverify(EVP_PKEY *pubkey, void **datapointers, int *datalengths, unsigned char *sig, int siglen);
+int PICA_do_signature(EVP_PKEY *privkey, void **datapointers, int *datalengths, unsigned char **sig, int *siglen);
+
 #endif

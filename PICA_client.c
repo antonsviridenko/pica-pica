@@ -1623,94 +1623,6 @@ static int c2n_stage5_starttls(struct PICA_c2n *c2n)
 	return PICA_OK;
 }
 
-static int do_signature(struct PICA_acc *acc, void **datapointers, int *datalengths, unsigned char **sig, int *siglen)
-{
-	int ret = PICA_ERRNOMEM;
-	EVP_MD_CTX *mdctx = NULL;
-	EVP_PKEY *pkey = NULL;
-	RSA *rsa = NULL;
-	FILE *f;
-
-	mdctx = EVP_MD_CTX_create();
-
-	if (!mdctx)
-		return PICA_ERRNOMEM;
-
-	pkey = EVP_PKEY_new();
-
-	if (!pkey)
-		goto sig_exit1;
-
-	f = fopen(acc->pkey_file, "r");
-
-	if (!f)
-	{
-		ret = PICA_ERRFILEOPEN;
-		goto sig_exit2;
-	}
-
-	ret = PICA_ERRSSL;
-
-	rsa = PEM_read_RSAPrivateKey(f, NULL, acc->password_cb, acc->id);
-	fclose(f);
-
-	if (!rsa)
-		goto sig_exit2;
-
-	ret = EVP_PKEY_set1_RSA(pkey, rsa);
-
-	if (ret != 1)
-		goto sig_exit3;
-
-	ret = EVP_DigestSignInit(mdctx, NULL, EVP_sha224(), NULL, pkey);
-
-	if (ret != 1)
-		goto sig_exit3;
-
-	while(*datapointers)
-	{
-		ret = EVP_DigestSignUpdate(mdctx, *datapointers, *datalengths);
-
-		if (ret != 1)
-		{
-			goto sig_exit3;
-			break;
-		}
-
-		datapointers++;
-		datalengths++;
-	}
-
-	ret = EVP_DigestSignFinal(mdctx, NULL, siglen);
-
-	if (ret != 1)
-		goto sig_exit3;
-
-	*sig = (unsigned char*) malloc(*siglen);
-
-	if (!*sig)
-	{
-		ret = PICA_ERRNOMEM;
-		goto sig_exit3;
-	}
-
-	ret = EVP_DigestSignFinal(mdctx, *sig, siglen);
-
-	if (ret == 1)
-		ret = PICA_OK;
-	else
-		free(*sig);
-
-sig_exit3:
-	RSA_free(rsa);
-sig_exit2:
-	EVP_PKEY_free(pkey);
-sig_exit1:
-	EVP_MD_CTX_destroy(mdctx);
-
-	return ret;
-}
-
 static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void *p)
 {
 	struct PICA_c2n *c2n = (struct PICA_c2n *) p;
@@ -1718,8 +1630,9 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 	int sigdatalengths[4];
 	uint64_t timestamp;
 	FILE *f;
+	EVP_PKEY *pubkey;
 	X509 *x;
-	int ret;
+	int ret = 0;
 	uint16_t payload_len = *(uint16_t*)(buf + 2);
 	int siglen;
 
@@ -1741,6 +1654,11 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 	if (!x)
 		return 0;
 
+	pubkey = X509_get_pubkey(x);
+
+	if (!pubkey)
+		goto multilogin_err1;
+
 	sigdatas[0] = c2n->acc->id;
 	sigdatalengths[0] = PICA_ID_SIZE;
 
@@ -1756,7 +1674,7 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 		break;
 
 	default: // IPv6 !!
-		goto multilogin_err;
+		goto multilogin_err2;
 		break;
 	}
 
@@ -1766,12 +1684,12 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 	siglen = payload_len - sizeof(uint64_t) - sigdatalengths[2];
 
 	if (siglen <= 0)
-		goto multilogin_err;
+		goto multilogin_err2;
 
-	ret = PICA_signverify(x->cert_info->key->pkey, sigdatas, sigdatalengths, buf + 4 + sizeof(uint64_t) + sigdatalengths[2], siglen);
+	ret = PICA_signverify(pubkey, sigdatas, sigdatalengths, buf + 4 + sizeof(uint64_t) + sigdatalengths[2], siglen);
 
-	if (ret != PICA_OK)
-		goto multilogin_err;
+	if (ret != 1)
+		goto multilogin_err2;
 
 	{
 		char ipaddr_string[INET6_ADDRSTRLEN];
@@ -1786,7 +1704,9 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 
 	ret = 1;
 
-multilogin_err:
+multilogin_err2:
+	EVP_PKEY_free(pubkey);
+multilogin_err1:
 	X509_free(x);
 	return ret;
 }
@@ -1799,8 +1719,11 @@ static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
 	uint64_t timestamp;
 	unsigned char node_addr[PICA_PROTO_NODELIST_ITEM_IPV4_SIZE];
 	int siglen;
-	unsigned char *sig;
-	int ret;
+	unsigned char *sig = NULL;
+	EVP_PKEY *pkey = NULL;
+	RSA *rsa = NULL;
+	FILE *f;
+	int ret = PICA_ERRNOMEM;
 
 	sigdatas[0] = c2n->acc->id;
 	sigdatalengths[0] = PICA_ID_SIZE;
@@ -1822,15 +1745,41 @@ static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
 	sigdatas[3] = NULL;
 	sigdatalengths[3] = 0;
 
-	ret = do_signature(c2n->acc, sigdatas, sigdatalengths, &sig, &siglen);
+	pkey = EVP_PKEY_new();
 
-	if (ret != PICA_OK)
-		return ret;
+	if (!pkey)
+		goto sendmultilogin_exit1;
+
+	f = fopen(c2n->acc->pkey_file, "r");
+
+	if (!f)
+	{
+		ret = PICA_ERRFILEOPEN;
+		goto sendmultilogin_exit2;
+	}
+
+	ret = PICA_ERRSSL;
+
+	rsa = PEM_read_RSAPrivateKey(f, NULL, c2n->acc->password_cb, c2n->acc->id);
+	fclose(f);
+
+	if (!rsa)
+		goto sendmultilogin_exit2;
+
+	ret = EVP_PKEY_set1_RSA(pkey, rsa);
+
+	if (ret != 1)
+		goto sendmultilogin_exit3;
+
+	ret = PICA_do_signature(pkey, sigdatas, sigdatalengths, &sig, &siglen);
+
+	if (ret != 1)
+		goto sendmultilogin_exit4;
 
 	if (siglen > PICA_PROTO_MULTILOGIN_MAXSIGSIZE)
 	{
-		free(sig);
-		return PICA_ERRMSGSIZE;
+		ret = PICA_ERRMSGSIZE;
+		goto sendmultilogin_exit4;
 	}
 
 	mp = c2n_writebuf_push(c2n, PICA_PROTO_MULTILOGIN, 2 + 2 + sizeof timestamp + sigdatalengths[2] + siglen);
@@ -1846,7 +1795,13 @@ static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
 		else
 			ret = PICA_ERRNOMEM;
 
+sendmultilogin_exit4:
 	free(sig);
+sendmultilogin_exit3:
+	RSA_free(rsa);
+sendmultilogin_exit2:
+	EVP_PKEY_free(pkey);
+sendmultilogin_exit1:
 	return ret;
 }
 
