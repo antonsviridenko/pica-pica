@@ -284,7 +284,7 @@ void cclink_sendcleconnected(struct cclink *link)
 		else
 		{
 			cclink_list_delete(link);
-			return 0;
+			return;
 		}
 	}
 
@@ -298,7 +298,7 @@ void cclink_sendcleconnected(struct cclink *link)
 		else
 		{
 			cclink_list_delete(link);
-			return 0;
+			return;
 		}
 	}
 
