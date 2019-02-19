@@ -125,6 +125,7 @@ void cclink_list_delete_by_nodelink(struct nodelink *node);
 
 struct client* client_tree_search(const unsigned char *id);//
 struct client *client_list_addnew(struct newconn *nc);
+void client_list_delete(struct client* ci);
 struct PICA_proto_msg* client_wbuf_push(struct client *c, unsigned int msgid, unsigned int size);
 int client_rbuf_grow(struct client *c);
 
@@ -138,6 +139,7 @@ struct nodelink *nodelink_search_by_ipv4addr(in_addr_t addr, in_port_t port); /*
 void newconn_close(struct newconn* nc);
 void newconn_free(struct newconn* nc);
 struct newconn* newconn_add(struct newconn *ncs, int *pos);
+void newconns_init();
 
 void PICA_node_joinskynet(const char* addrlistfilename, const char *my_addr);
 
