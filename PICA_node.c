@@ -33,6 +33,7 @@
 #include "PICA_nodeconfig.h"
 #include "PICA_log.h"
 #include "PICA_nodewait.h"
+#include "PICA_signverify.h"
 
 #ifdef NO_RAND_DEV
 #include "PICA_rand_seed.h"
@@ -106,7 +107,9 @@ unsigned int procmsg_PINGREQ_client(unsigned char* buf, unsigned int size, void*
 unsigned int procmsg_PINGREP_client(unsigned char* buf, unsigned int size, void* ptr);
 unsigned int procmsg_PINGREQ_node(unsigned char* buf, unsigned int size, void* ptr);
 unsigned int procmsg_PINGREP_node(unsigned char* buf, unsigned int size, void* ptr);
-
+unsigned int procmsg_dummy_multi_c2n(unsigned char* buf, unsigned int size, void* ptr);
+unsigned int procmsg_MULTILOGIN_client(unsigned char* buf, unsigned int size, void* ptr);
+unsigned int procmsg_MULTILOGIN_node(unsigned char* buf, unsigned int size, void* ptr);
 
 struct cclink* cclink_list_add(struct client *clr, struct client *cle);
 struct cclink* cclink_list_search(const unsigned char *caller_id, const unsigned char *callee_id);
@@ -152,7 +155,8 @@ struct PICA_msginfo  _msginfo_comm[] =
 	{PICA_PROTO_CONNDENY, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNDENY_SIZE, procmsg_CONNDENY},
 	{PICA_PROTO_CLNODELISTREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CLNODELISTREQ_SIZE, procmsg_NODELISTREQ},
 	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ_client},
-	{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREP_SIZE, procmsg_PINGREP_client}
+	{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREP_SIZE, procmsg_PINGREP_client},
+	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN_client}
 };
 
 struct PICA_msginfo _msginfo_node[] =
@@ -171,8 +175,8 @@ struct PICA_msginfo _msginfo_node[] =
 	{PICA_PROTO_N2NNOTFOUND, PICA_MSG_FIXED_SIZE, PICA_PROTO_N2NNOTFOUND_SIZE, procmsg_N2NNOTFOUND},
 	{PICA_PROTO_N2NMSG, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_N2NMSG},
 	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ_node},
-	{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREP_SIZE, procmsg_PINGREP_node}
-
+	{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREP_SIZE, procmsg_PINGREP_node},
+	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN_node}
 };
 
 struct PICA_msginfo _msginfo_newconn[] =
@@ -180,6 +184,17 @@ struct PICA_msginfo _msginfo_newconn[] =
 	{PICA_PROTO_INITREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_INITREQ_SIZE, procmsg_INITREQ},
 	{PICA_PROTO_CONNID, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNID_SIZE, procmsg_CONNID},
 	{PICA_PROTO_NODECONNREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_NODECONNREQ_SIZE, procmsg_NODECONNREQ}
+};
+
+struct PICA_msginfo  _msginfo_multi[] =
+{
+	{PICA_PROTO_CONNREQOUTG, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNREQOUTG_SIZE, procmsg_dummy_multi_c2n},
+	{PICA_PROTO_CONNALLOW, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNALLOW_SIZE, procmsg_dummy_multi_c2n},
+	{PICA_PROTO_CONNDENY, PICA_MSG_FIXED_SIZE, PICA_PROTO_CONNDENY_SIZE, procmsg_dummy_multi_c2n},
+	{PICA_PROTO_CLNODELISTREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CLNODELISTREQ_SIZE, procmsg_NODELISTREQ},
+	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ_client},
+	{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREP_SIZE, procmsg_PINGREP_client},
+	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN_client}
 };
 
 static int process_async_ssl_readwrite(SSL *ssl, int ret)
@@ -414,6 +429,16 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 }
 
 
+void mapfunc_sendmultilogin(struct nodelink *p, const unsigned char *msgbuf)
+{
+	struct PICA_proto_msg *mp;
+	uint16_t payload_size = *(uint16_t*)(msgbuf + 2);
+
+	mp = nodelink_wbuf_push(p, PICA_PROTO_MULTILOGIN, payload_size + 4);
+	if (mp)
+		memcpy(mp->tail, msgbuf + 2, payload_size + 2);
+}
+
 void mapfunc_sendsearchreq(struct nodelink *p, const unsigned char *id)
 {
 	struct PICA_proto_msg *mp;
@@ -595,6 +620,146 @@ unsigned int procmsg_PINGREP_client(unsigned char* buf, unsigned int size, void*
 
 	c->disconnect_ticking = 0;
 	c->tmst = time(0);
+
+	return 1;
+}
+
+unsigned int procmsg_MULTILOGIN_client(unsigned char* buf, unsigned int size, void* ptr)
+{
+	struct client *other, *me = (struct client*)ptr;
+
+	PICA_debug3("MULTILOGIN c2n");
+
+	//send to other instances connected to this node
+	other = client_tree_search(me->id);
+
+	while(other)
+	{
+		if (other != me)
+		{
+			struct PICA_proto_msg *mp;
+
+			if ((mp = client_wbuf_push(other, PICA_PROTO_MULTILOGIN, size)))
+			{
+				memcpy(mp->tail, buf + 2, size - 2);
+			}
+		}
+
+		other = other->next_multi;
+	}
+	//relay to other nodes
+	LISTMAP(nodelink, nodelink, mapfunc_sendmultilogin, buf);
+
+	return 1;
+}
+
+unsigned int procmsg_MULTILOGIN_node(unsigned char* buf, unsigned int size, void* ptr)
+{
+	struct nodelink *n = (struct nodelink *)ptr;
+	struct client *c = client_list_head;
+	uint64_t timestamp;
+	void *sigdatas[4];
+	int sigdatalengths[4];
+	uint16_t payload_len = *(uint16_t*)(buf + 2);
+	int ret;
+	int siglen;
+	unsigned char *sig;
+
+	PICA_debug3("MULTILOGIN n2n");
+
+	if (payload_len <= sizeof timestamp + PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
+		return 0;
+
+	timestamp = *(uint64_t*)(buf + 4);
+	//TODO compare timestamps
+
+	sigdatalengths[0] = PICA_ID_SIZE;
+
+	//add timestamp to signature data
+	sigdatas[1] = buf + 4;
+	sigdatalengths[1] = sizeof(uint64_t);
+
+	//add sender node address to signature data
+	sigdatas[2] = buf + 4 + sizeof(uint64_t);
+
+	switch (buf[4 + sizeof(uint64_t)])
+	{
+	case PICA_PROTO_NEWNODE_IPV4:
+		sigdatalengths[2] = PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
+		break;
+
+	case PICA_PROTO_NEWNODE_IPV6:
+		sigdatalengths[2] = PICA_PROTO_NODELIST_ITEM_IPV6_SIZE;
+		break;
+
+	case PICA_PROTO_NEWNODE_DNS:
+		sigdatalengths[2] = 4 + buf[5 + sizeof(uint64_t)];
+	default:
+		PICA_warn("Received MULTILOGIN message with invalid node address");
+		return 1;
+	}
+
+	siglen = payload_len - sizeof(uint64_t) - sigdatalengths[2];
+	sig = buf + 4 + sizeof(uint64_t) + sigdatalengths[2];
+
+	sigdatas[3] = NULL;
+	sigdatalengths[3] = 0;
+
+	while(c)
+	{
+		//check signature against current client ID and data in MULTILOGIN packet
+		if (c->state == PICA_CLSTATE_CONNECTED)
+		{
+			EVP_PKEY *pubkey;
+			X509* x;
+
+			sigdatas[0] = c->id;
+
+			if ((x = SSL_get_peer_certificate(c->ssl_comm)) &&
+				(pubkey = X509_get_pubkey(x)))
+			{
+				ret = PICA_signverify(pubkey, sigdatas, sigdatalengths, sig, siglen);
+
+				EVP_PKEY_free(pubkey);
+				X509_free(x);
+
+				if (ret == 1)
+				{
+					PICA_debug3("found matching client connection for incoming n2n MULTILOGIN message");
+					break;
+				}
+			}
+		}
+
+		c = c->next;
+	}
+
+	if (!c)
+	{
+		PICA_debug3("no matching client found for receved n2n MULTILOGIN");
+		return 1;
+	}
+
+	while(c) //relay received MULTILOGIN to each client with same id
+	{
+		struct PICA_proto_msg *mp;
+
+		mp = client_wbuf_push(c, PICA_PROTO_MULTILOGIN, size);
+
+		if (mp)
+		{
+			memcpy(mp, buf, size);
+		}
+
+		c = c->next_multi;
+	}
+
+	return 1;
+}
+
+unsigned int procmsg_dummy_multi_c2n(unsigned char* buf, unsigned int size, void* ptr)
+{
+	PICA_debug3("message %X from %p is handled by dummy procmsg", buf[0], ptr);
 
 	return 1;
 }
@@ -1670,6 +1835,12 @@ void client_tree_print(struct client *c)
 }
 
 
+void client_attach_multi_secondary(struct client *primary, struct client *secondary)
+{
+	secondary->next_multi = primary->next_multi;
+	primary->next_multi = secondary;
+}
+
 void client_tree_remove(struct client* ci)
 {
 	struct client** p_link;//указывает на left или right в родительском узле
@@ -1771,6 +1942,35 @@ struct client *client_list_addnew(struct newconn *nc)
 	return ci;
 }
 
+void client_tree_replace_multi(struct client *primary)
+{
+	struct client** p_link;
+	struct client *secondary;
+
+	PICA_debug2("client_tree_replace_multi(%p)", (void*)primary);
+
+	if (!primary->up)
+	{
+		p_link = &client_tree_root;
+	}
+	else
+	{
+		if (primary == primary->up->left)
+			p_link = &(primary->up->left);
+		else
+			p_link = &(primary->up->right);
+	}
+
+	*p_link = primary->next_multi;
+
+	secondary = primary->next_multi;
+
+	secondary->state = primary->state;
+	secondary->up = primary->up;
+	secondary->left = primary->left;
+	secondary->right = primary->right;
+}
+
 void client_list_delete(struct client* ci)
 {
 	PICA_debug1("client_list_delete(%p)", (void*)ci);
@@ -1789,7 +1989,10 @@ void client_list_delete(struct client* ci)
 //удаление из дерева
 	if (client_tree_search(ci->id) == ci)
 	{
-		client_tree_remove(ci);
+		if (ci->next_multi)
+			client_tree_replace_multi(ci);
+		else
+			client_tree_remove(ci);
 		client_tree_print(client_tree_root);
 	}
 
@@ -2545,6 +2748,7 @@ void process_c2n_read(fd_set *readfds)
 			switch(i_ptr->state)
 			{
 			case PICA_CLSTATE_CONNECTED:
+			case PICA_CLSTATE_MULTILOGIN_SECONDARY:
 				ret = SSL_read(i_ptr->ssl_comm, i_ptr->r_buf + i_ptr->r_pos, i_ptr->buflen_r - i_ptr->r_pos);
 
 				if (!ret)
@@ -2562,8 +2766,17 @@ void process_c2n_read(fd_set *readfds)
 
 				if (ret > 0)
 				{
+					const struct PICA_msginfo *msgs = _msginfo_comm;
+					unsigned int nmsgs = MSGINFO_MSGSNUM(_msginfo_comm);
+
+					if (i_ptr->state == PICA_CLSTATE_MULTILOGIN_SECONDARY)
+					{
+						msgs = _msginfo_multi;
+						nmsgs = MSGINFO_MSGSNUM(_msginfo_multi);
+					}
+
 					i_ptr->r_pos += ret;
-					if(!PICA_processdatastream(i_ptr->r_buf, &(i_ptr->r_pos), i_ptr, _msginfo_comm, MSGINFO_MSGSNUM(_msginfo_comm) ))
+					if(!PICA_processdatastream(i_ptr->r_buf, &(i_ptr->r_pos), i_ptr, msgs, nmsgs))
 						kill_ptr = i_ptr;
 
 					if (i_ptr->buflen_r == i_ptr->r_pos)
@@ -2776,6 +2989,7 @@ void process_c2n_write()
 				//проверить сертификат пользователя
 			{
 				X509* client_cert;
+				struct client *primary;
 
 				PICA_info("SSL c2n connection established using %s cipher", SSL_get_cipher(i_ptr->ssl_comm));
 
@@ -2806,15 +3020,18 @@ void process_c2n_write()
 					}
 				}
 
-				if (!kill_ptr && client_tree_search(i_ptr->id))
+				if (!kill_ptr && (primary = client_tree_search(i_ptr->id)))
 				{
-					PICA_info("Disconnecting client %p because other user with same ID = %u is already connected", i_ptr, i_ptr->id);
-					memset(i_ptr->id, 0, PICA_ID_SIZE);//reset id to all zeros to prevent removing existing ID from previous connection from client_tree
-					ret = 0;//id already exists in tree
+					//PICA_info("Disconnecting client %p because other user with same ID = %u is already connected", i_ptr, i_ptr->id);
+					//memset(i_ptr->id, 0, PICA_ID_SIZE);//reset id to all zeros to prevent removing existing ID from previous connection from client_tree
+					//ret = 0;//id already exists in tree
+					i_ptr->state = PICA_CLSTATE_MULTILOGIN_SECONDARY;
+					client_attach_multi_secondary(primary, i_ptr);
 				}
 				else
 				{
 					ret = client_tree_add(i_ptr);
+					i_ptr->state = PICA_CLSTATE_CONNECTED;
 					client_tree_print(client_tree_root);
 				}
 				if (!ret)
@@ -2822,7 +3039,6 @@ void process_c2n_write()
 					//ERR_CHECK  //не уникальный id
 					kill_ptr = i_ptr;
 				}
-				i_ptr->state = PICA_CLSTATE_CONNECTED;
 			}
 			break;
 		}

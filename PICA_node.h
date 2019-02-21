@@ -68,6 +68,7 @@
 //#define PICA_CLSTATE_SENDINGRESP 1
 #define PICA_CLSTATE_TLSNEGOTIATION 2
 #define PICA_CLSTATE_CONNECTED 3
+#define PICA_CLSTATE_MULTILOGIN_SECONDARY 4
 
 //LOCAL - both clients are connected to the same node
 //N2NCLR - caller client is connected to this node
@@ -109,6 +110,7 @@ struct client
 	struct client *up;
 	struct client *left;
 	struct client *right;
+	struct client *next_multi;
 	SOCKET sck_comm;
 	struct sockaddr_in addr;
 	SSL *ssl_comm;
