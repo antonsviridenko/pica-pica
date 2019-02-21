@@ -1421,8 +1421,8 @@ int PICA_open_acc(const char *cert_file,
 	if (!a)
 		return PICA_ERRNOMEM;
 
-	a->pkey_file = pkey_file;
-	a->cert_file = cert_file;
+	a->pkey_file = strdup(pkey_file);
+	a->cert_file = strdup(cert_file);
 	a->password_cb = password_cb;
 
 	a->ctx = SSL_CTX_new(TLSv1_2_method());//(2)
@@ -1523,6 +1523,8 @@ error_ret_2: //(2)
 	SSL_CTX_free(a->ctx);
 
 error_ret_1: //(1)
+	free(a->pkey_file);
+	free(a->cert_file);
 	free(a);
 	*acc = 0;
 
@@ -3469,6 +3471,8 @@ void PICA_close_c2n(struct PICA_c2n *cid)
 void PICA_close_acc(struct PICA_acc *a)
 {
 	SSL_CTX_free(a->ctx);
+	free(a->pkey_file);
+	free(a->cert_file);
 	free(a);
 }
 
