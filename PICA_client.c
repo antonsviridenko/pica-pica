@@ -272,6 +272,8 @@ static int c2c_stage2_startanontls(struct PICA_c2c *chnl)
 		return ret;
 
 	chnl->state = PICA_C2C_STATE_WAITINGANONTLS;
+
+	return PICA_OK;
 }
 
 static int c2c_stage3_connid(struct PICA_c2c *chnl)
