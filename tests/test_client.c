@@ -218,6 +218,11 @@ void listener_error(struct PICA_listener *lst, int errorcode)
 	l = NULL;
 }
 
+void multilogin_cb(time_t timestamp, void *addr_bin, const char *addr_str, uint16_t port)
+{
+	printf("received MULTILOGIN\n");
+}
+
 struct PICA_client_callbacks cbs =
 {
 	newmsg_cb,
@@ -238,7 +243,8 @@ struct PICA_client_callbacks cbs =
 	c2n_established_cb,
 	c2n_failed_cb,
 	c2n_closed_cb,
-	listener_error
+	listener_error,
+	multilogin_cb
 };
 
 int main(int argc, char** argv)
@@ -250,13 +256,16 @@ int main(int argc, char** argv)
 	fd_set stdinfds;
 	struct timeval tv;
 
+
 	const char *nodeaddr = NULL, *nodeport = NULL,
 		   *certfile = NULL, *peerid = NULL,
 		   *localdirectaddr = NULL, *extport = NULL,
 		   *filetosend = NULL,
 		   *locport = NULL;
 
-	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:f:tmr")) != -1)
+	int multilogin = PICA_MULTILOGIN_PROHIBIT;
+
+	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:f:tmrM:")) != -1)
 	{
 		switch(opt)
 		{
@@ -304,6 +313,20 @@ int main(int argc, char** argv)
 			random_message_mode = 1;
 		break;
 
+		case 'M':
+			if (strcmp(optarg, "prohibit") == 0)
+				multilogin = PICA_MULTILOGIN_PROHIBIT;
+			else if (strcmp(optarg, "replace") == 0)
+				multilogin = PICA_MULTILOGIN_REPLACE;
+			else if (strcmp(optarg, "sync") == 0)
+				multilogin = PICA_MULTILOGIN_ALLOW;
+			else
+			{
+				fprintf(stderr, "invalid multilogin option argument: %s\n", optarg);
+				return -1;
+			}
+		break;
+
 		default:
 			fprintf(stderr, "invalid arg %s\n", optarg);
 			return -1;
@@ -325,6 +348,7 @@ int main(int argc, char** argv)
 		-t enable connect-only mode for direct c2c connections\n\
 		-m start in echo mode, received messages are sent back, input from stdin is not accepted\n\
 		-r send random test messages and exit, expects other side to be run in echo mode\n\
+		-M multilogin policy, one from \"prohibit\", \"replace\", \"sync\"\n\
 cert_filename should point to file that contains client certificate, private key and Diffie-Hellman parameters in PEM format");
 		return 0;
 	}
@@ -371,7 +395,7 @@ cert_filename should point to file that contains client certificate, private key
 	printf("making connection...\n");
 
 //PICA_new_c2n(const char *nodeaddr, unsigned int port, const char *CA_file, const char *cert_file, const char *pkey_file, const char* password, struct PICA_c2n **ci)
-	ret = PICA_new_c2n(acc, nodeaddr, atoi(nodeport), directc2c_cfg, l, &c);
+	ret = PICA_new_c2n(acc, nodeaddr, atoi(nodeport), directc2c_cfg, multilogin, l, &c);
 
 	ERR_print_errors_fp(stdout);
 
