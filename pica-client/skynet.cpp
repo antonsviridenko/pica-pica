@@ -191,6 +191,12 @@ void SkyNet::multilogin_event(time_t timestamp, const char *addr, uint16_t port)
 	emit StatusMsg(QString("%3 Detected new login of your account at node %1:%2")
 				.arg(addr).arg(port).arg(QDateTime::fromTime_t(timestamp).toString("yyyy-MM-dd hh:mm:ss")),
 				true);
+
+	if (active_nodelink->multilogin_policy == PICA_MULTILOGIN_REPLACE)
+	{
+		emit StatusMsg(QString("Multilogin policy is set to \"replace\". Going offline..."), true);
+		SkyNet::Exit();
+	}
 }
 
 void SkyNet::node_status_changed(Nodes::NodeRecord nr, bool alive)
