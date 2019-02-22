@@ -253,6 +253,7 @@ static int c2n_alloc_c2c(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsig
 static int c2c_stage2_startanontls(struct PICA_c2c *chnl)
 {
 	int ret;
+	PICA_TRACEFUNC
 
 	chnl->ssl = SSL_new(chnl->acc->anon_ctx);
 
@@ -1639,24 +1640,28 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 	int ret = 0;
 	uint16_t payload_len = *(uint16_t*)(buf + 2);
 	int siglen;
+	unsigned char *sig;
 
+	PICA_TRACEFUNC
+	//TODO report invalid MULTILOGIN messages
 	if (payload_len <= sizeof timestamp + PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
-		return 0;
+		return 1;
 
 	timestamp = *(uint64_t*)(buf + 4);
+
 	if (timestamp <= c2n->multilogin_last_timestamp)
-		return 0;
+		return 1;
 
 	f = fopen(c2n->acc->cert_file, "r");
 
 	if (!f)
-		return 0;
+		return 1;
 
 	x = PEM_read_X509(f, 0, 0, 0);
 	fclose(f);
 
 	if (!x)
-		return 0;
+		return 1;
 
 	pubkey = X509_get_pubkey(x);
 
@@ -1690,7 +1695,9 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 	if (siglen <= 0)
 		goto multilogin_err2;
 
-	ret = PICA_signverify(pubkey, sigdatas, sigdatalengths, buf + 4 + sizeof(uint64_t) + sigdatalengths[2], siglen);
+	sig = buf + 4 + sizeof(uint64_t) + sigdatalengths[2];
+
+	ret = PICA_signverify(pubkey, sigdatas, sigdatalengths, sig, siglen);
 
 	if (ret != 1)
 		goto multilogin_err2;
@@ -1706,13 +1713,13 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 						ntohs(*(uint16_t*)(port_pos)));
 	}
 
-	ret = 1;
+	c2n->multilogin_last_timestamp = timestamp;
 
 multilogin_err2:
 	EVP_PKEY_free(pubkey);
 multilogin_err1:
 	X509_free(x);
-	return ret;
+	return 1;
 }
 
 static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
@@ -1728,6 +1735,8 @@ static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
 	RSA *rsa = NULL;
 	FILE *f;
 	int ret = PICA_ERRNOMEM;
+
+	PICA_TRACEFUNC
 
 	sigdatas[0] = c2n->acc->id;
 	sigdatalengths[0] = PICA_ID_SIZE;
