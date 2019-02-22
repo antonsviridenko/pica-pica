@@ -2908,6 +2908,7 @@ void process_c2n_write()
 		switch(i_ptr->state)
 		{
 		case PICA_CLSTATE_CONNECTED:
+		case PICA_CLSTATE_MULTILOGIN_SECONDARY:
 			if (!i_ptr->w_pos)
 				break;
 
