@@ -1973,6 +1973,8 @@ void client_tree_replace_multi(struct client *primary)
 
 void client_list_delete(struct client* ci)
 {
+	struct client *s;
+
 	PICA_debug1("client_list_delete(%p)", (void*)ci);
 	SSL_free(ci->ssl_comm);
 //удаление из списка
@@ -1987,13 +1989,28 @@ void client_list_delete(struct client* ci)
 		client_list_end = ci->prev;
 
 //удаление из дерева
-	if (client_tree_search(ci->id) == ci)
+	s = client_tree_search(ci->id);
+
+	if (s == ci)
 	{
 		if (ci->next_multi)
 			client_tree_replace_multi(ci);
 		else
 			client_tree_remove(ci);
 		client_tree_print(client_tree_root);
+	}
+	else if (s)
+	{
+		while(s)
+		{
+			if (s->next_multi == ci)
+			{
+				s->next_multi = ci->next_multi;
+				break;
+			}
+
+			s = s->next_multi;
+		}
 	}
 
 	cclink_list_delete_by_client(ci);
