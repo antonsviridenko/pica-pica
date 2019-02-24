@@ -1743,6 +1743,7 @@ ret:
 void newconn_free(struct newconn* nc)
 {
 	nc->sck = -1;
+	nc->iconn.cl = NULL;
 //nc->pos=0; - pos value is being used in processmsgdatastream
 }
 
