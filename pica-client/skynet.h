@@ -80,6 +80,7 @@ signals:
 private:
 	Nodes nodes;
 	QList<QPair<struct PICA_c2n *, Nodes::NodeRecord> > connecting_nodes;
+	QList<struct PICA_c2n *> connected_nodes_to_close;
 	bool self_aware;
 	QString status;
 	struct PICA_c2n *active_nodelink;

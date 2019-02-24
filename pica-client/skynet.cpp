@@ -85,7 +85,7 @@ void SkyNet::nodelink_activated(PICA_c2n *c2n)
 
 	if (self_aware)
 	{
-		PICA_close_c2n(c2n);
+		connected_nodes_to_close.append(c2n);
 	}
 	else
 	{
@@ -283,6 +283,11 @@ void SkyNet::timerEvent(QTimerEvent *e)
 			nodelinks.append(NULL);
 
 			ret = PICA_event_loop(nodelinks.data(), 1);
+
+			while(!connected_nodes_to_close.empty())
+			{
+				PICA_close_c2n(connected_nodes_to_close.takeFirst());
+			}
 
 			if (ret != PICA_OK)
 				emit StatusMsg("event loop error!", true);//show some error message
