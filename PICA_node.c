@@ -1820,13 +1820,20 @@ struct client* client_tree_search(const unsigned char *id)
 
 void client_tree_print(struct client *c)
 {
+	char id_buf[2 * PICA_ID_SIZE];
 	if (!c)
 	{
 		puts("NULL");
 		return;
 	}
 
-	printf("%p: %u LEFT: %p, RIGHT: %p\n", (void*)c, c->id, (void*)c->left, (void*)c->right);
+	printf("%p: %s state: %u\nUP: %p\nnext_multi: %p\nLEFT: %p, RIGHT: %p\n\n",
+			(void*)c, PICA_id_to_base64(c->id, id_buf), c->state,
+			(void*)c->up, (void*)c->next_multi,
+			(void*)c->left, (void*)c->right);
+
+	if (c->next_multi)
+		client_tree_print(c->next_multi);
 
 	if (c->left)
 		client_tree_print(c->left);
@@ -1970,6 +1977,11 @@ void client_tree_replace_multi(struct client *primary)
 	secondary->up = primary->up;
 	secondary->left = primary->left;
 	secondary->right = primary->right;
+
+	if (primary->left)
+		primary->left->up = secondary;
+	if (primary->right)
+		primary->right->up = secondary;
 }
 
 void client_list_delete(struct client* ci)
@@ -3046,6 +3058,7 @@ void process_c2n_write()
 					//ret = 0;//id already exists in tree
 					i_ptr->state = PICA_CLSTATE_MULTILOGIN_SECONDARY;
 					client_attach_multi_secondary(primary, i_ptr);
+					client_tree_print(client_tree_root);
 				}
 				else
 				{
