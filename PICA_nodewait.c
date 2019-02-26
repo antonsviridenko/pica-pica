@@ -173,6 +173,7 @@ static void  *nodewait_connect_thread (void *arg)
 			if (!SSL_set_fd(nw->nc.anonssl, nw->nc.sck) || 1 != SSL_connect(nw->nc.anonssl))
 			{
 				SSL_free(nw->nc.anonssl);
+				nw->nc.anonssl = NULL;
 				CLOSE(nw->nc.sck);
 				ap = ap->ai_next;
 				continue;

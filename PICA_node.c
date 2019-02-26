@@ -1683,6 +1683,12 @@ void newconn_close(struct newconn* nc)
 
 	nc->iconn.cl = NULL;
 
+	if (nc->anonssl)
+	{
+		SSL_free(nc->anonssl);
+		nc->anonssl = NULL;
+	}
+
 	nc->type = NEWCONN_UNKNOWN;
 }
 
@@ -1744,6 +1750,7 @@ void newconn_free(struct newconn* nc)
 {
 	nc->sck = -1;
 	nc->iconn.cl = NULL;
+	nc->anonssl = NULL;
 //nc->pos=0; - pos value is being used in processmsgdatastream
 }
 
@@ -2115,6 +2122,7 @@ struct nodelink *nodelink_list_addnew(struct newconn *nc)
 	nl->sck = nc->sck;
 	nl->addr = nc->addr;
 	nl->anonssl = nc->anonssl;
+	nc->anonssl = NULL;
 
 	nl->r_buf = calloc(1, DEFAULT_BUF_SIZE);
 	if (!nl->r_buf)
@@ -2536,6 +2544,7 @@ void process_listen_read(fd_set *readfds)
 			if (!SSL_set_fd(nc->anonssl, s))
 			{
 				SSL_free(nc->anonssl);
+				nc->anonssl = NULL;
 				return;
 			}
 
@@ -2576,7 +2585,6 @@ void process_newconn_write()
 
 				if (ret <= 0)
 				{
-					SSL_free(newconns[i].anonssl);
 					newconn_close(&newconns[i]);
 					break;
 				}
@@ -2587,7 +2595,6 @@ void process_newconn_write()
 					{
 						if (!nodelink_list_addnew(&newconns[i]))
 						{
-							SSL_free(newconns[i].anonssl);
 							newconn_close(&newconns[i]);
 						}
 
@@ -2607,14 +2614,12 @@ void process_newconn_write()
 
 				if (ret <= 0)
 				{
-					SSL_free(newconns[i].anonssl);
 					newconn_close(&newconns[i]);
 					break;
 				}
 
 				SSL_shutdown(newconns[i].anonssl);
 				SHUTDOWN(newconns[i].sck);
-				SSL_free(newconns[i].anonssl);
 				newconn_close(&newconns[i]);
 			}
 
@@ -2640,7 +2645,6 @@ void process_newconn_read(fd_set *readfds)
 
 				if (ret <= 0)
 				{
-					SSL_free(newconns[i].anonssl);
 					newconn_close(&newconns[i]);
 					break;
 				}
@@ -2657,7 +2661,6 @@ void process_newconn_read(fd_set *readfds)
 
 				if (ret <= 0)
 				{
-					SSL_free(newconns[i].anonssl);
 					newconn_close(&newconns[i]);
 					break;
 				}
@@ -2666,7 +2669,6 @@ void process_newconn_read(fd_set *readfds)
 
 				if(!PICA_processdatastream(newconns[i].buf, &(newconns[i].pos), newconns + i, _msginfo_newconn, MSGINFO_MSGSNUM(_msginfo_newconn) ))
 				{
-					SSL_free(newconns[i].anonssl);
 					newconn_close(&newconns[i]);
 				}
 
@@ -2714,7 +2716,6 @@ void process_newconn_read(fd_set *readfds)
 
 				if (ret < 0)
 				{
-					SSL_free(newconns[i].anonssl);
 					newconn_close(&newconns[i]);
 					break;
 				}
