@@ -384,7 +384,7 @@ struct PICA_client_callbacks
 
 	void (*listener_error_cb)(struct PICA_listener *lst, int errorcode);
 
-	void (*multilogin_cb)(time_t timestamp, void *addr_bin, const char *addr_str, uint16_t port);
+	void (*multilogin_cb)(uint64_t timestamp, void *addr_bin, const char *addr_str, uint16_t port);
 };
 
 

@@ -66,6 +66,7 @@ SkyNet::SkyNet()
 	this->listener = NULL;
 
 	connect(this, SIGNAL(PeerCertificateReceived(QByteArray, QString, bool*)), this, SLOT(verify_peer_cert(QByteArray, QString, bool*)), Qt::DirectConnection);
+	connect(this, SIGNAL(MultiloginMessageReceived(quint64,QString,quint16)), this, SLOT(multilogin_event(quint64,QString,quint16)), Qt::QueuedConnection);
 
 	event_loop_timer_id = startTimer(0);
 
@@ -186,10 +187,10 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 		emit LostSelfAwareness();
 }
 
-void SkyNet::multilogin_event(time_t timestamp, const char *addr, uint16_t port)
+void SkyNet::multilogin_event(quint64 timestamp, QString node_addr, quint16 node_port)
 {
 	emit StatusMsg(QString("%3 Detected new login of your account at node %1:%2")
-				.arg(addr).arg(port).arg(QDateTime::fromTime_t(timestamp).toString("yyyy-MM-dd hh:mm:ss")),
+				.arg(node_addr).arg(node_port).arg(QDateTime::fromTime_t(timestamp).toString("yyyy-MM-dd hh:mm:ss")),
 				true);
 
 	if (active_nodelink->multilogin_policy == PICA_MULTILOGIN_REPLACE)
@@ -845,6 +846,10 @@ void SkyNet::emit_c2cClosed(QByteArray peer_id)
 	emit c2cClosed(peer_id);
 }
 
+void SkyNet::emit_MultiloginMessageReceived(quint64 timestamp, QString node_addr, quint16 node_port)
+{
+	emit MultiloginMessageReceived(timestamp, node_addr, node_port);
+}
 
 //callbacks
 
@@ -1023,7 +1028,7 @@ void SkyNet::listener_error_cb(struct PICA_listener *lst, int errorcode)
 
 }
 
-void SkyNet::multilogin_cb(time_t timestamp, void *addr_bin, const char *addr_str, uint16_t port)
+void SkyNet::multilogin_cb(uint64_t timestamp, void *addr_bin, const char *addr_str, uint16_t port)
 {
-	skynet->multilogin_event(timestamp, addr_str, port);
+	skynet->emit_MultiloginMessageReceived(timestamp, QString(addr_str), port);
 }

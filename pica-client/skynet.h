@@ -74,6 +74,7 @@ signals:
 	void OutgoingFileResumed(QByteArray peer_id);
 	void OutgoingFileFinished(QByteArray peer_id);
 	void IncomingFileFinished(QByteArray peer_id);
+	void MultiloginMessageReceived(quint64 timestamp, QString node_addr, quint16 node_port);
 
 	void c2cClosed(QByteArray peer_id);
 
@@ -120,6 +121,7 @@ private:
 
 	void emit_OutgoingFileFinished(QByteArray peer_id);
 	void emit_IncomingFileFinished(QByteArray peer_id);
+	void emit_MultiloginMessageReceived(quint64 timestamp, QString node_addr, quint16 node_port);
 
 	void emit_c2cClosed(QByteArray peer_id);
 
@@ -162,13 +164,13 @@ private:
 
 	static void listener_error_cb(struct PICA_listener *lst, int errorcode);
 
-	static void multilogin_cb(time_t timestamp, void *addr_bin, const char *addr_str, uint16_t port);
+	static void multilogin_cb(uint64_t timestamp, void *addr_bin, const char *addr_str, uint16_t port);
 
 private slots:
 	void nodelink_activated(PICA_c2n *c2n);
 	void nodelink_closed(PICA_c2n *c2n, int error);
 	void nodelink_failed(PICA_c2n *c2n, int error);
-	void multilogin_event(time_t timestamp, const char *addr, uint16_t port);
+	void multilogin_event(quint64 timestamp, QString node_addr, quint16 node_port);
 
 	void node_status_changed(Nodes::NodeRecord nr, bool alive);
 	void verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified);
