@@ -105,7 +105,7 @@ void ContactListWidget::add_contact()
 
 	if (ok && !input.isEmpty())
 	{
-		QByteArray user_id = QByteArray::fromBase64(input.toAscii()).left(PICA_ID_SIZE);
+		QByteArray user_id = QByteArray::fromBase64(input.toLatin1()).left(PICA_ID_SIZE);
 
 		if (user_id.size() != PICA_ID_SIZE)
 		{

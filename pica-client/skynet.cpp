@@ -68,7 +68,7 @@ SkyNet::SkyNet()
 	connect(this, SIGNAL(PeerCertificateReceived(QByteArray, QString, bool*)), this, SLOT(verify_peer_cert(QByteArray, QString, bool*)), Qt::DirectConnection);
 	connect(this, SIGNAL(MultiloginMessageReceived(quint64,QString,quint16)), this, SLOT(multilogin_event(quint64,QString,quint16)), Qt::QueuedConnection);
 
-	event_loop_timer_id = startTimer(0);
+	event_loop_timer_id = startTimer(100);
 
 }
 
@@ -249,8 +249,8 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 
 		QByteArray stored_DER, received_DER;
 
-		stored_DER = QByteArray::fromBase64(stripped_stored_cert.toAscii().constData());
-		received_DER = QByteArray::fromBase64(stripped_received_cert.toAscii().constData());
+		stored_DER = QByteArray::fromBase64(stripped_stored_cert.toLatin1().constData());
+		received_DER = QByteArray::fromBase64(stripped_received_cert.toLatin1().constData());
 
 		if (stored_DER.size() != received_DER.size() ||
 		        memcmp(stored_DER.constData(), received_DER.constData(), stored_DER.size()) != 0)
@@ -283,7 +283,7 @@ void SkyNet::timerEvent(QTimerEvent *e)
 
 			nodelinks.append(NULL);
 
-			ret = PICA_event_loop(nodelinks.data(), 1);
+			ret = PICA_event_loop(nodelinks.data(), 25);
 
 			while(!connected_nodes_to_close.empty())
 			{
@@ -410,7 +410,7 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 		}
 
 		int ret = PICA_new_listener(acc,
-		                            public_addr.toAscii().constData(),
+		                            public_addr.toLatin1().constData(),
 		                            pub_port,
 		                            loc_port, &listener);
 		if (ret != PICA_OK)
@@ -915,7 +915,7 @@ int SkyNet::peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_p
 {
 	bool verified = true;
 
-	skynet->emit_PeerCertificateReceived(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString::fromAscii(cert_pem, nb), &verified);
+	skynet->emit_PeerCertificateReceived(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString::fromLatin1(cert_pem, nb), &verified);
 
 	if (!verified)
 		return 0;

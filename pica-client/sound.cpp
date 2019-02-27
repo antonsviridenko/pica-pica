@@ -50,7 +50,7 @@ void Sound::play(const QString sndfile)
 	QProcess::execute("aplay -q " + sndfile);
 #endif
 #if defined(WIN32)
-	sndPlaySound(sndfile.toAscii().constData(), SND_ASYNC | SND_NODEFAULT);
+	sndPlaySound(sndfile.toLatin1().constData(), SND_ASYNC | SND_NODEFAULT);
 #endif
 #if defined(__APPLE__)
 	QProcess::execute("/usr/bin/afplay " + sndfile);

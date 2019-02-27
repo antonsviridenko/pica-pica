@@ -27,12 +27,34 @@ AC_ARG_WITH([miniupnpc],
   [],
   [with_miniupnpc=yes])
 
+AC_ARG_WITH([qt],
+  [AS_HELP_STRING([--with-qt=qt4|qt5 qt5 is default],
+  [Select Qt version, 4 or 5])],
+  [qt_version=$withval],
+  [qt_version=qt5])
+
 AS_IF([test "x$with_miniupnpc" != xno],
   [AC_CHECK_LIB([miniupnpc], [main],
     [],
     [AC_MSG_FAILURE(
       [miniupnpc test failed (--without-miniupnpc to disable)])],
   [])])
+
+AS_IF([test "x$qt_version" = xqt5],
+	[
+	QT_MODULES="Qt5Core Qt5Gui Qt5Sql Qt5Network Qt5Widgets"
+	QT_UIC_NAMES="uic-qt5 uic5 uic"
+	QT_MOC_NAMES="moc-qt5 moc5 moc"
+	CFLAGS="-fPIC $CFLAGS"
+	CXXFLAGS="-fPIC $CXXFLAGS"
+	],
+  [test "x$qt_version" = xqt4],
+	[
+	QT_MODULES="QtCore QtGui QtSql QtNetwork"
+	QT_UIC_NAMES="uic-qt4 uic4 uic"
+	QT_MOC_NAMES="moc-qt4 moc4 moc"
+	],
+  [AC_MSG_ERROR(["Invalid Qt version"])])
 
 # Checks for common libraries, required by both pica-node and pica-client
 AC_SEARCH_LIBS([dlopen], [dl])
@@ -81,11 +103,11 @@ AS_IF([test "x$SQLITE3" != xyes],  [ AC_MSG_ERROR(["sqlite3 program not found"])
 #pica-client tests
 AS_IF([test "x$PICA_CLIENT_ENABLED" = "xyes"],[
 #AC_PROG_CXX
-PKG_CHECK_MODULES([QT_DEPENDENCIES], [QtCore QtGui QtSql QtNetwork])
+PKG_CHECK_MODULES([QT_DEPENDENCIES], [$QT_MODULES])
 AC_SUBST([QT_DEPENDENCIES_CFLAGS])
 AC_SUBST([QT_DEPENDENCIES_LIBS])
-AC_CHECK_PROGS([UIC], [uic-qt4 uic4 uic], [notfound])
-AC_CHECK_PROGS([MOC], [moc-qt4 moc4 moc], [notfound])
+AC_CHECK_PROGS([UIC], [$QT_UIC_NAMES], [notfound])
+AC_CHECK_PROGS([MOC], [$QT_MOC_NAMES], [notfound])
 #fail if not found ...
 AS_IF([test "x$UIC" = xnotfound],[AC_MSG_ERROR(["uic program not found. Please install Qt development package"])])
 AS_IF([test "x$MOC" = xnotfound],[AC_MSG_ERROR(["moc program not found. Please install Qt development package"])])

@@ -68,7 +68,7 @@ QString OpenSSLTool::NameFromCertString(QString cert_pem)
 	if (!openssl.waitForStarted())
 		return QString();
 
-	openssl.write(cert_pem.toAscii());
+	openssl.write(cert_pem.toLatin1());
 
 	if (!openssl.waitForFinished())
 		return QString();
@@ -104,7 +104,7 @@ QString OpenSSLTool::CertTextFromString(QString cert_pem)
 	if (!openssl.waitForStarted())
 		return QString();
 
-	ba = cert_pem.toAscii();
+	ba = cert_pem.toLatin1();
 	ret = openssl.write(data = (char*)ba.constData());
 	openssl.closeWriteChannel();
 
@@ -150,7 +150,7 @@ bool OpenSSLTool::GenRSAKeySignal(QString keyfile, bool setpassword, QString pas
 
 	if (setpassword)
 	{
-		openssl_.write((password + "\n").toAscii().constData());
+		openssl_.write((password + "\n").toLatin1().constData());
 	}
 
 	openssl_.disconnect(&openssl_, SIGNAL(finished(int, QProcess::ExitStatus)), 0, 0);
@@ -183,7 +183,7 @@ bool OpenSSLTool::GenCertSignal(QString cert_file, QString keyfile, QString keyp
 	if (!openssl_.waitForStarted())
 		return false;
 
-	openssl_.write((keypassword + "\n").toAscii().constData());
+	openssl_.write((keypassword + "\n").toLatin1().constData());
 
 	openssl_.disconnect(&openssl_, SIGNAL(finished(int, QProcess::ExitStatus)), 0, 0);
 	openssl_.connect(&openssl_, SIGNAL(finished(int, QProcess::ExitStatus)), receiver, finished_slot);

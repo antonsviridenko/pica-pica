@@ -15,7 +15,9 @@
 	You should have received a copy of the GNU General Public License
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-#include <QtGui/QApplication>
+//#include <QtGui/QApplication>
+#include <QCoreApplication>
+#include <QApplication>
 #include "mainwindow.h"
 #include "accountswindow.h"
 #include "globals.h"
