@@ -78,7 +78,7 @@ void Settings::storeValue(QString name, QString val)
 	QSqlQuery query;
 
 	query.prepare("insert into settings (name, value) values (:name, :val)");
-	query.bindValue(":addr", name);
+	query.bindValue(":name", name);
 	query.bindValue(":val", val);
 	query.exec();
 
