@@ -743,7 +743,7 @@ QList<QByteArray> SkyNet::filter_existing_chans(QList<QByteArray> peer_ids)
 	while(iptr)
 	{
 		if (peer_ids.contains(QByteArray((const char*)iptr->peer_id, PICA_ID_SIZE)))
-			ret.removeOne((const char*)iptr->peer_id);
+			ret.removeOne(QByteArray((const char*)iptr->peer_id, PICA_ID_SIZE));
 
 		iptr = iptr->next;
 	}
