@@ -31,7 +31,7 @@
 #include "../PICA_netconf.h"
 
 SkyNet::SkyNet()
-	: nodes(config_dbname), QObject(0)
+	: nodes(config_dbname), QObject(0), active_filetransfers(0)
 {
 	self_aware = false;
 
@@ -69,7 +69,42 @@ SkyNet::SkyNet()
 	connect(this, SIGNAL(MultiloginMessageReceived(quint64,QString,quint16)), this, SLOT(multilogin_event(quint64,QString,quint16)), Qt::QueuedConnection);
 
 	event_loop_timer_id = startTimer(100);
+	file_transfer_timer_id = 0;
 
+}
+
+void SkyNet::active_filetransfers_up()
+{
+	active_filetransfers++;
+
+	if (active_filetransfers > 0 && file_transfer_timer_id == 0)
+	{
+		file_transfer_timer_id = startTimer(0);
+	}
+}
+
+void SkyNet::active_filetransfers_down()
+{
+	active_filetransfers--;
+
+	Q_ASSERT(active_filetransfers >= 0);
+
+	if (active_filetransfers == 0 && file_transfer_timer_id != 0)
+	{
+		killTimer(file_transfer_timer_id);
+		file_transfer_timer_id = 0;
+	}
+}
+
+void SkyNet::active_filetransfers_reset()
+{
+	active_filetransfers = 0;
+
+	if (file_transfer_timer_id != 0)
+	{
+		killTimer(file_transfer_timer_id);
+		file_transfer_timer_id = 0;
+	}
 }
 
 void SkyNet::nodelink_activated(PICA_c2n *c2n)
@@ -266,7 +301,7 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 
 void SkyNet::timerEvent(QTimerEvent *e)
 {
-	if (e->timerId() == event_loop_timer_id)
+	if (e->timerId() == file_transfer_timer_id || e->timerId() == event_loop_timer_id)
 	{
 		if (connecting_nodes.size() > 0 || self_aware)
 		{
@@ -467,6 +502,7 @@ void SkyNet::Exit()
 
 	self_aware = false;
 
+	active_filetransfers_reset();
 	killTimer(retry_timer_id);
 
 	msgqueues.clear();
@@ -542,6 +578,8 @@ void SkyNet::AcceptFile(QByteArray from, QString filepath)
 		{
 			//show error somewhere somehow
 		}
+		else
+			active_filetransfers_up();
 	}
 
 }
@@ -935,6 +973,7 @@ void SkyNet::accepted_file_cb(const unsigned char *peer_id)
 {
 	qDebug() << "FILE: file was accepted by remote side\n";
 
+	skynet->active_filetransfers_up();
 	skynet->emit_OutgoingFileRequestAccepted(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 }
 
@@ -959,18 +998,22 @@ void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd,
 		switch(sender_cmd)
 		{
 		case PICA_PROTO_FILECONTROL_PAUSE:
+			skynet->active_filetransfers_down();
 			skynet->emit_IncomingFilePaused(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_RESUME:
+			skynet->active_filetransfers_up();
 			skynet->emit_IncomingFileResumed(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_CANCEL:
+			skynet->active_filetransfers_down();
 			skynet->emit_IncomingFileCancelled(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_IOERROR:
+			skynet->active_filetransfers_down();
 			skynet->emit_IncomingFileIoError(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 		}
@@ -980,18 +1023,22 @@ void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd,
 		switch(receiver_cmd)
 		{
 		case PICA_PROTO_FILECONTROL_PAUSE:
+			skynet->active_filetransfers_down();
 			skynet->emit_OutgoingFilePaused(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_RESUME:
+			skynet->active_filetransfers_up();
 			skynet->emit_OutgoingFileResumed(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_CANCEL:
+			skynet->active_filetransfers_down();
 			skynet->emit_OutgoingFileCancelled(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_IOERROR:
+			skynet->active_filetransfers_down();
 			skynet->emit_OutgoingFileIoError(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 		}
@@ -1001,6 +1048,8 @@ void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd,
 void SkyNet::file_finished(const unsigned char *peer_id, int sending)
 {
 	qDebug() << "file_finished callback\n";
+
+	skynet->active_filetransfers_down();
 
 	if (sending)
 		skynet->emit_OutgoingFileFinished(QByteArray((const char *)peer_id, PICA_ID_SIZE));

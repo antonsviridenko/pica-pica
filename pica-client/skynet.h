@@ -93,6 +93,7 @@ private:
 	QMap<QByteArray, QList<QString> > sndfilequeues;
 	int retry_timer_id;
 	int event_loop_timer_id;
+	int file_transfer_timer_id;
 
 	void timerEvent(QTimerEvent * e);
 
@@ -100,6 +101,10 @@ private:
 	struct PICA_c2c *find_active_chan(QByteArray peer_id);
 	QList<QByteArray> filter_existing_chans(QList<QByteArray> peer_ids);
 	bool open_account();
+	void active_filetransfers_up();
+	void active_filetransfers_down();
+	void active_filetransfers_reset();
+	quint32 active_filetransfers;
 
 	void emit_MessageReceived(QByteArray from, QString msg);
 	void emit_UnableToDeliver(QByteArray to, QString msg);
