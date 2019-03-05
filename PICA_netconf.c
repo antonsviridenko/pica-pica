@@ -16,6 +16,7 @@
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "PICA_netconf.h"
+#include <stddef.h>
 
 #ifdef HAVE_LIBMINIUPNPC
 #include <miniupnpc/miniupnpc.h>
