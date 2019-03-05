@@ -83,9 +83,6 @@ AS_IF([test "x$PICA_NODE_ENABLED" != "xyes" && test "x$PICA_CLIENT_ENABLED" != "
   AC_MSG_ERROR(["Either pica-node or pica-client must be enabled"])
 )
 
-#check if installing menu item for pica-client is disabled
-AC_ARG_ENABLE([menuitem],
-    AS_HELP_STRING([--disable-menuitem], [Disable pica-client menu item installation]))
 
 AM_CONDITIONAL([PICA_NODE], [test "x$PICA_NODE_ENABLED" = "xyes"])
 AM_CONDITIONAL([PICA_CLIENT], [test "x$PICA_CLIENT_ENABLED" = "xyes"])
@@ -112,19 +109,12 @@ AC_CHECK_PROGS([MOC], [$QT_MOC_NAMES], [notfound])
 AS_IF([test "x$UIC" = xnotfound],[AC_MSG_ERROR(["uic program not found. Please install Qt development package"])])
 AS_IF([test "x$MOC" = xnotfound],[AC_MSG_ERROR(["moc program not found. Please install Qt development package"])])
 
-#check for xdg-utils
-AS_IF([test "x$enable_menuitem" != "xno"], [
-AC_CHECK_PROG([XDG_DESKTOP_MENU], [xdg-desktop-menu], [yes], [no])
-AS_IF([test "x$XDG_DESKTOP_MENU" != xyes],[AC_MSG_WARN(["Looks like xdg-utils are not installed. Desktop menu item installation disabled"])])  
-])
-
 #check for openssl command line tool
 
 AC_CHECK_PROG([OPENSSL_TOOL], [openssl], [yes], [no])
 AS_IF([test "x$OPENSSL_TOOL" != xyes],[AC_MSG_WARN(["openssl command line tool not found. This is a runtime dependency for pica-client!"])])
 ])
 
-AM_CONDITIONAL([XDG_UTILS], [test "x$XDG_DESKTOP_MENU" = "xyes"])
 
 # Checks for header files.
 AC_CHECK_HEADERS([arpa/inet.h limits.h netdb.h netinet/in.h stdlib.h string.h sys/ioctl.h sys/socket.h sys/time.h unistd.h])

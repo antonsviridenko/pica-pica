@@ -168,29 +168,6 @@ CLEANFILES += moc_*.cpp ui_*.h
 
 EXTRA_DIST += pica-client/pica-client.desktop 
 
-if XDG_UTILS
-
-pica-client-install-icon: pica-client/picapica-icon-sit.png
-	xdg-icon-resource install --size 32 $< pica-client
-	xdg-icon-resource install --size 22 $< pica-client
-	xdg-icon-resource install --size 64 $< pica-client
-
-pica-client-install-menuitem: pica-client/pica-client.desktop 
-	xdg-desktop-menu install $<
-
-install-data-hook: pica-client-install-icon pica-client-install-menuitem
-
-pica-client-uninstall-icon:
-	xdg-icon-resource uninstall --size 32 pica-client
-	xdg-icon-resource uninstall --size 22 pica-client
-	xdg-icon-resource uninstall --size 64 pica-client
-
-pica-client-uninstall-menuitem:
-	xdg-desktop-menu uninstall pica-client.desktop
-
-uninstall-hook: pica-client-uninstall-menuitem pica-client-uninstall-icon
-
-endif
 
 deploy: pica-client/pica-client
 	mkdir -p PicaPicaMessenger.app/Contents/Resources
