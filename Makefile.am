@@ -29,7 +29,7 @@ dist_man_MANS = pica-node.8 pica-node.conf.5
 
 pica_node_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" -DPICA_SYSCONFDIR=\"$(sysconfdir)\" -DPICA_LOCALSTATEDIR=\"$(localstatedir)\"
 
-pkglocalstatedir = $(localstatedir)/lib/pica-node
+pkglocalstatedir = $(localstatedir)/pica-node
 
 dist_pkglocalstate_DATA = nodelist.db
 dist_sysconf_DATA = pica-node.conf 
