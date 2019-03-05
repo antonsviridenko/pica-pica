@@ -2723,6 +2723,8 @@ void process_newconn_read(fd_set *readfds)
 				//switch state of client or cclink on successful shutdown
 				if (ret == 1)
 				{
+					SSL_free(newconns[i].anonssl);
+
 					if (newconns[i].iconn.cl && newconns[i].type == NEWCONN_C2N)
 					{
 						newconns[i].iconn.cl->state = PICA_CLSTATE_TLSNEGOTIATION;
