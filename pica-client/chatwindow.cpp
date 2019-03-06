@@ -28,7 +28,7 @@
 #include <QMessageBox>
 
 
-ChatWindow::ChatWindow(QByteArray peer_id) :
+ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 	QWidget(0), peer_id_(peer_id), hist(config_dbname, Accounts::GetCurrentAccount().id)
 {
 	QVBoxLayout *layout;
@@ -58,6 +58,7 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
 
 	layout = new QVBoxLayout;
 
+	lbConnStatus = new QLabel(status);
 	chatw = new QTextEdit(this);
 	sendtextw = new TextSend(this);
 
@@ -67,8 +68,17 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
 	sendtextw->setMinimumWidth(240);
 	sendtextw->setAcceptRichText(false);
 
+	{
+		QFont f = lbConnStatus->font();
+		f.setBold(true);
+		//f.setItalic(true);
+		f.setStyleHint(QFont::Monospace);
+		lbConnStatus->setFont(f);
+	}
+
 	chatw->setReadOnly(true);
 
+	layout->addWidget(lbConnStatus, 0);
 	layout->addWidget(chatw, 3);
 	layout->addWidget(sendtextw, 1, Qt::AlignBottom);
 
@@ -120,6 +130,11 @@ ChatWindow::ChatWindow(QByteArray peer_id) :
 	connect(hist1week, SIGNAL(triggered()), this, SLOT(show_history1w()));
 	connect(histAll, SIGNAL(triggered()), this, SLOT(show_historyAll()));
 
+}
+
+void ChatWindow::update_status(QString status)
+{
+	lbConnStatus->setText(status);
 }
 
 void ChatWindow::put_message(QString msg, QByteArray id, bool is_me)

@@ -42,6 +42,7 @@ MsgUIRouter::MsgUIRouter(QObject *parent) :
 	connect(skynet, SIGNAL(CertificateForged(QByteArray, QString, QString)), this, SLOT(scary_cert_message(QByteArray, QString, QString)));
 	connect(skynet, SIGNAL(StatusMsg(QString, bool)), this, SLOT(notification(QString, bool)));
 	connect(systray, SIGNAL(doubleclicked()), this, SLOT(trayicon_dclick()));
+	connect(skynet, SIGNAL(ConnectionStatusUpdated(QByteArray,QString)), this, SLOT(update_status(QByteArray,QString)));
 
 }
 
@@ -80,11 +81,22 @@ void MsgUIRouter::trayicon_dclick()
 	}
 }
 
+void MsgUIRouter::update_status(QByteArray peer_id, QString status)
+{
+	connstatus[peer_id] = status;
+
+	if (chatwindows.contains(peer_id))
+		chatwindows[peer_id]->update_status(status);
+}
+
 void MsgUIRouter::create_chatwindow(QByteArray peer_id)
 {
 	ChatWindow *cw;
 
-	cw = new ChatWindow(peer_id);
+	if (!connstatus.contains(peer_id))
+		connstatus[peer_id] = QString(tr("Disconnected"));
+
+	cw = new ChatWindow(peer_id, connstatus[peer_id]);
 
 	chatwindows[peer_id] = cw;
 

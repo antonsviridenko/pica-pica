@@ -506,7 +506,7 @@ static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb, void
 
 		cc->state = PICA_C2C_STATE_ACTIVE;
 
-		callbacks.c2c_established_cb(cc->peer_id);
+		callbacks.c2c_established_cb(cc->peer_id, SSL_get_cipher_name(cc->ssl));
 
 		if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
 			PICA_send_directc2caddrlist(cc);
@@ -542,7 +542,7 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, vo
 	{
 	case PICA_PROTO_INITRESPOK:
 		cc->state = PICA_C2C_STATE_ACTIVE;
-		callbacks.c2c_established_cb(cc->peer_id);
+		callbacks.c2c_established_cb(cc->peer_id, SSL_get_cipher_name(cc->ssl));
 
 		if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
 			PICA_send_directc2caddrlist(cc);

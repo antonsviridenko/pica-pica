@@ -350,7 +350,7 @@ void SkyNet::timerEvent(QTimerEvent *e)
 
 			ret = PICA_new_c2c(active_nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
 
-			qDebug() << "restoring c2c to " << c2c_peer_ids[i] << " ret =" << ret << " in timer event\n";
+			qDebug() << "restoring c2c to " << c2c_peer_ids[i].toBase64() << " ret =" << ret << " in timer event\n";
 
 		}
 
@@ -889,6 +889,11 @@ void SkyNet::emit_MultiloginMessageReceived(quint64 timestamp, QString node_addr
 	emit MultiloginMessageReceived(timestamp, node_addr, node_port);
 }
 
+void SkyNet::emit_ConnectionStatusUpdated(QByteArray peer_id, QString status)
+{
+	emit ConnectionStatusUpdated(peer_id, status);
+}
+
 //callbacks
 
 void SkyNet::newmsg_cb(const unsigned char *peer_id, const char *msgbuf, unsigned int nb, int type)
@@ -903,14 +908,16 @@ void SkyNet::msgok_cb(const unsigned char *peer_id)
 	skynet->emit_Delivered(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
-void SkyNet::c2c_established_cb(const unsigned char *peer_id)
+void SkyNet::c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
 {
+	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString("🔐: %1").arg(ciphersuitename));
 	skynet->flush_queues(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
 void SkyNet::c2c_failed(const unsigned char *peer_id)
 {
 	qDebug() << "c2c failed (" << QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64() << ")\n";
+	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString(tr("Failed to connect")));
 }
 
 int SkyNet::accept_cb(const unsigned char *caller_id)
@@ -941,6 +948,7 @@ void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
 	         << ", error_code =" << reason << ")\n";
 
 	skynet->emit_c2cClosed(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString(tr("Disconnected")));
 }
 
 void SkyNet::nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port)

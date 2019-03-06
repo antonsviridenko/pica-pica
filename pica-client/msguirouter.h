@@ -45,10 +45,12 @@ public slots:
 
 	void scary_cert_message(QByteArray peer_id, QString received_cert, QString stored_cert);
 	void notification(QString text, bool is_critical);
+	void update_status(QByteArray peer_id, QString status);
 
 	void trayicon_dclick();
 private:
 	QMap<QByteArray, ChatWindow*> chatwindows;
+	QMap<QByteArray, QString> connstatus;
 	QLinkedList<QByteArray> blinkqueue;
 
 	void create_chatwindow(QByteArray peer_id);

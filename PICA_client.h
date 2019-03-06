@@ -321,7 +321,7 @@ struct PICA_client_callbacks
 	/**
 	 * Client-to-client connection established
 	 */
-	void (*c2c_established_cb)(const unsigned char *peer_id);
+	void (*c2c_established_cb)(const unsigned char *peer_id, const char *ciphersuitename);
 	/**
 	 * Failed to establish client-to-client connection
 	 */

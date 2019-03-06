@@ -44,7 +44,7 @@ class ChatWindow : public QWidget
 {
 	Q_OBJECT
 public:
-	explicit ChatWindow(QByteArray peer_id);
+	explicit ChatWindow(QByteArray peer_id, QString status);
 
 	QByteArray getPeerId()
 	{
@@ -61,6 +61,7 @@ public slots:
 	void msg_delivered();
 	void msg_informational(QString text);//юзер в оффлайне, набирает сообщение, и т.д. серым шрифтом, курсив
 	void set_peer_name();
+	void update_status(QString status);
 
 
 private:
@@ -80,6 +81,7 @@ private:
 	QPushButton *btAddCtNo;
 	QPushButton *btAddCtBlacklist;
 	QLabel *lbAddCtQuestion;
+	QLabel *lbConnStatus;
 
 	bool isEmptyMessage(const QString &msg) const;
 	void put_message(QString msg, QByteArray id, bool is_me);

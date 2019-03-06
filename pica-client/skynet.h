@@ -75,6 +75,7 @@ signals:
 	void OutgoingFileFinished(QByteArray peer_id);
 	void IncomingFileFinished(QByteArray peer_id);
 	void MultiloginMessageReceived(quint64 timestamp, QString node_addr, quint16 node_port);
+	void ConnectionStatusUpdated(QByteArray peer_id, QString status);
 
 	void c2cClosed(QByteArray peer_id);
 
@@ -129,13 +130,14 @@ private:
 	void emit_MultiloginMessageReceived(quint64 timestamp, QString node_addr, quint16 node_port);
 
 	void emit_c2cClosed(QByteArray peer_id);
+	void emit_ConnectionStatusUpdated(QByteArray peer_id, QString status);
 
 	//получение сообщения.
 	static void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type);
 	//получение подтверждения о доставке сообщения
 	static void msgok_cb(const unsigned char *peer_id);
 	//создание канала с собеседником
-	static void c2c_established_cb(const unsigned char *peer_id);
+	static void c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename);
 	//создать канал не удалось
 	static void c2c_failed(const unsigned char *peer_id);
 	//входящий запрос на создание канала от пользователя с номером caller_id
