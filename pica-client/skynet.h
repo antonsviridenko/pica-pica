@@ -173,6 +173,8 @@ private:
 
 	static void multilogin_cb(uint64_t timestamp, void *addr_bin, const char *addr_str, uint16_t port);
 
+	static void direct_c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename);
+
 private slots:
 	void nodelink_activated(PICA_c2n *c2n);
 	void nodelink_closed(PICA_c2n *c2n, int error);

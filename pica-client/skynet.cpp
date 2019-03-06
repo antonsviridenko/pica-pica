@@ -56,7 +56,8 @@ SkyNet::SkyNet()
 		c2n_failed_cb,
 		c2n_closed_cb,
 		listener_error_cb,
-		multilogin_cb
+		multilogin_cb,
+		direct_c2c_established_cb
 	};
 
 	PICA_client_init(&cbs);
@@ -910,7 +911,7 @@ void SkyNet::msgok_cb(const unsigned char *peer_id)
 
 void SkyNet::c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
 {
-	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString("🔐: %1").arg(ciphersuitename));
+	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString("🔐: %1 c2c").arg(ciphersuitename));
 	skynet->flush_queues(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
@@ -1088,4 +1089,9 @@ void SkyNet::listener_error_cb(struct PICA_listener *lst, int errorcode)
 void SkyNet::multilogin_cb(uint64_t timestamp, void *addr_bin, const char *addr_str, uint16_t port)
 {
 	skynet->emit_MultiloginMessageReceived(timestamp, QString(addr_str), port);
+}
+
+void SkyNet::direct_c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
+{
+	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString("🔐: %1 direct c2c").arg(ciphersuitename));
 }

@@ -2428,6 +2428,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 					}
 					else
 					{
+						callbacks.direct_c2c_established_cb(c2c->peer_id, SSL_get_cipher_name(d->ssl));
 						c2c->directc2c_state = PICA_DIRECTC2C_STATE_ACTIVE;
 					}
 
@@ -2541,6 +2542,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 			case PICA_DIRECTC2C_CONNSTATE_ACTIVE:
 				c2c->directc2c_state = PICA_DIRECTC2C_STATE_ACTIVE;
+				callbacks.direct_c2c_established_cb(c2c->peer_id, SSL_get_cipher_name(d->ssl));
 				break;
 
 			}
