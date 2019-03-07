@@ -3557,10 +3557,18 @@ void PICA_node_joinskynet(const char* addrlistfilename, const char *my_addr)
 
 int main(int argc, char** argv)
 {
+	uint32_t pid;
 
 	process_cmdline(argc, argv);
 
 	nodecfg.config_file = (nodecfg.config_file ? nodecfg.config_file : PICA_NODECONFIG_DEF_CONFIG_FILE);
+
+#ifdef WIN32
+	pid = GetCurrentProcessId();
+#else
+	pid = getpid();
+#endif
+	PICA_info("pica-node v%s started. PID: %u, protocol version: %s", PACKAGE_VERSION, pid, PICA_PROTO_VER_STRING);
 
 	if (!PICA_nodeconfig_load(nodecfg.config_file))
 	{
