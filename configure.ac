@@ -127,8 +127,6 @@ AC_CHECK_HEADERS([arpa/inet.h limits.h netdb.h netinet/in.h stdlib.h string.h sy
 AC_TYPE_UINT16_T
 
 # Checks for library functions.
-AC_FUNC_MALLOC
-AC_FUNC_REALLOC
 AC_CHECK_FUNCS([getcwd inet_ntoa memmove memset select socket strchr strstr strtol])
 
 AC_CONFIG_FILES([Makefile])
