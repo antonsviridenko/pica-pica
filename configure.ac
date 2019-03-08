@@ -104,6 +104,10 @@ AS_IF([test "x$SQLITE3" != xyes],  [ AC_MSG_ERROR(["sqlite3 program not found"])
 AS_IF([test "x$PICA_CLIENT_ENABLED" = "xyes"],[
 #AC_PROG_CXX
 PKG_CHECK_MODULES([QT_DEPENDENCIES], [$QT_MODULES])
+AS_CASE([$host],
+	[*-w64-mingw*], [QT_DEPENDENCIES_LIBS="$QT_DEPENDENCIES_LIBS -mwindows"]
+	[]
+)
 AC_SUBST([QT_DEPENDENCIES_CFLAGS])
 AC_SUBST([QT_DEPENDENCIES_LIBS])
 AC_CHECK_PROGS([UIC], [$QT_UIC_NAMES], [notfound])
