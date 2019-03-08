@@ -19,8 +19,8 @@ AS_CASE([$host],
     [*-*-freebsd*],  [LDFLAGS="$LDFLAGS -L/usr/local/lib" CPPFLAGS="$CPPFLAGS -I/usr/local/include"],
     [*-apple-darwin*], [LDFLAGS="$LDFLAGS -headerpad_max_install_names"],
     [*-w64-mingw*], [
-        LIBS="$LIBS -lws2_32"
-	AC_CHECK_LIB([ws2_32], [closesocket], [], [])
+	AC_CHECK_LIB([ws2_32], [main], [LIBS="$LIBS -lws2_32"], [])
+	AC_CHECK_LIB([winmm], [main], [LIBS="$LIBS -lwinmm"], [])
 	],
     []
 )
