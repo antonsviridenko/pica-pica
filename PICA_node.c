@@ -40,6 +40,11 @@
 #endif
 
 #ifdef WIN32
+
+#ifdef __MINGW32__
+#include <stdint.h>
+#endif
+
 typedef u_long in_addr_t;
 typedef u_short in_port_t;
 typedef u_short uint16_t;

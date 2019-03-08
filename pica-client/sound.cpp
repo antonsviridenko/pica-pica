@@ -25,7 +25,7 @@
 
 //link with winmm.lib
 #include <windows.h>
-#include <Mmsystem.h>
+#include <mmsystem.h>
 
 #endif
 

@@ -24,12 +24,22 @@
 
 #ifdef WIN32
 
+#define NOCRYPT
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 
+#if defined(__MINGW32__) || defined(HAVE_STDINT_H)
+#include <stdint.h>
+#else
+typedef unsigned __int8  uint8_t;
+typedef unsigned __int32 uint32_t;
 typedef unsigned __int16 uint16_t;
 typedef unsigned __int64 uint64_t;
+#endif
+
+typedef u_long in_addr_t;
+typedef u_short in_port_t;
 
 #else
 
