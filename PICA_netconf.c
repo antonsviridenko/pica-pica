@@ -90,6 +90,8 @@ in_addr_t PICA_guess_listening_addr_ipv4()
 				found_global = 1;
 		}
 	}
+
+	freeifaddrs(ifaddr);
 #else
 
 #endif
