@@ -93,6 +93,31 @@ in_addr_t PICA_guess_listening_addr_ipv4()
 
 	freeifaddrs(ifaddr);
 #else
+	char databuf[16384];
+	ULONG size = sizeof databuf;
+	ULONG ret;
+	PIP_ADAPTER_ADDRESSES addrs = (PIP_ADAPTER_ADDRESSES)databuf;
+	PIP_ADAPTER_ADDRESSES ap;
+
+	ret = GetAdaptersAddresses(AF_INET,
+		GAA_FLAG_SKIP_ANYCAST
+		| GAA_FLAG_SKIP_MULTICAST
+		| GAA_FLAG_SKIP_DNS_SERVER
+		| GAA_FLAG_SKIP_FRIENDLY_NAME,
+		NULL,
+		addrs, &size);
+
+	if (ret != NO_ERROR)
+		return INADDR_ANY;
+
+	ap = addrs;
+	while(ap)
+	{
+		retaddr = ((struct sockaddr_in*)ap->FirstUnicastAddress->Address.lpSockaddr)->sin_addr.s_addr;
+		if (!PICA_is_reserved_addr_ipv4(retaddr))
+			break;
+		ap = ap->Next;
+	}
 
 #endif
 	return retaddr;

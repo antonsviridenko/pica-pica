@@ -20,6 +20,7 @@ AS_CASE([$host],
     [*-w64-mingw*], [
 	AC_CHECK_LIB([ws2_32], [main], [LIBS="$LIBS -lws2_32"], [])
 	AC_CHECK_LIB([winmm], [main], [LIBS="$LIBS -lwinmm"], [])
+	AC_CHECK_LIB([iphlpapi], [main], [LIBS="$LIBS -liphlpapi"])
 	],
     []
 )
