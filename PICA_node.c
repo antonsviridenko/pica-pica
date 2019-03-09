@@ -1282,7 +1282,7 @@ void cclink_list_delete(struct cclink *l)
 
 	if (l->p1)
 	{
-		if (l->sck_p1)
+		if (l->sck_p1 != -1)
 		{
 			SHUTDOWN(l->sck_p1);
 			CLOSE(l->sck_p1);
@@ -1294,7 +1294,7 @@ void cclink_list_delete(struct cclink *l)
 
 	if (l->p2)
 	{
-		if (l->sck_p2)
+		if (l->sck_p2 != -1)
 		{
 			SHUTDOWN(l->sck_p2);
 			CLOSE(l->sck_p2);
@@ -1391,6 +1391,9 @@ struct cclink* cclink_list_add(struct client *clr, struct client *cle)
 	l->tmst = time(0);
 
 	cclink_list_count++;
+
+	l->sck_p1 = -1;
+	l->sck_p2 = -1;
 
 	return l;
 }
@@ -1725,7 +1728,7 @@ struct newconn* newconn_add(struct newconn *ncs, int *pos)
 	{
 		*pos = 0;
 		min = ncs->tmst;
-		while(*pos < MAX_NEWCONNS && ncs[*pos].sck >= 0)
+		while(*pos < MAX_NEWCONNS && ncs[*pos].sck != -1)
 		{
 			if (ncs[*pos].tmst < min)
 			{
@@ -2279,7 +2282,7 @@ void process_timeouts_newconn()
 
 	for (i = 0; i < MAX_NEWCONNS; i++)
 	{
-		if (newconns[i].sck >= 0)
+		if (newconns[i].sck != -1)
 		{
 			if (newconns[i].tmst < t)
 			{
@@ -2478,7 +2481,7 @@ void newconn_set_fds(fd_set *readfds, int *nfds)
 	int i;
 
 	for (i = 0; i < MAX_NEWCONNS; i++)
-		if (newconns[i].sck >= 0)
+		if (newconns[i].sck != -1)
 			set_select_fd(newconns[i].sck, readfds, nfds);
 }
 
@@ -2534,7 +2537,7 @@ void process_listen_read(fd_set *readfds)
 	{
 		s = accept(listen_comm_sck, (struct sockaddr*)&addr, &addrsize);
 
-		if (s >= 0)
+		if (s != -1)
 		{
 			nc = newconn_add(newconns, &newconns_pos);
 
@@ -2576,7 +2579,7 @@ void process_newconn_write()
 	int i, ret;
 
 	for (i = 0; i < MAX_NEWCONNS; i++)
-		if (newconns[i].sck >= 0)
+		if (newconns[i].sck != -1)
 		{
 
 			switch(newconns[i].state)
@@ -2637,7 +2640,7 @@ void process_newconn_read(fd_set *readfds)
 	int i, ret;
 
 	for (i = 0; i < MAX_NEWCONNS; i++)
-		if (newconns[i].sck >= 0 && FD_ISSET(newconns[i].sck, readfds))
+		if (newconns[i].sck != -1 && FD_ISSET(newconns[i].sck, readfds))
 		{
 
 			switch(newconns[i].state)
@@ -3394,8 +3397,11 @@ int node_loop()
 
 		if (ret < 0)
 		{
-			perror("node_loop-select error ");
-			//ERR_CHECK
+#ifdef WIN32
+			PICA_error("select() error code: %u", WSAGetLastError());
+#else
+			PICA_error("%s", perror("select"));
+#endif
 			return -1;
 		}
 
