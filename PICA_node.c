@@ -1597,13 +1597,13 @@ int PICA_node_init()
 
 	if (listen_comm_sck == -1)
 		PICA_fatal("unable to get socket - %s", strerror(errno));
-
+#ifndef WIN32
 	flag = 1; //enable SO_REUSEADDR
 	if (0 != setsockopt(listen_comm_sck, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)))
 	{
 		PICA_error("failed to set SO_REUSEADDR on socket: %s", strerror(errno));
 	}
-
+#endif
 	memset(&sd, 0, sizeof(sd));
 
 	sd.sin_family = AF_INET;
