@@ -41,6 +41,8 @@
 
 #ifdef WIN32
 
+#include <shlobj.h>
+
 #ifdef __MINGW32__
 #include <stdint.h>
 #endif
@@ -66,6 +68,8 @@ clock_t TMO_CCLINK_WAITACTIVE = 15; //CONF
 char *my_addr;//TEMP CONF FIXME
 
 SOCKET listen_comm_sck;//*
+
+static int stop_node_loop = 0;
 
 SSL_CTX *ctx;
 SSL_CTX *anon_ctx;
@@ -3423,7 +3427,7 @@ int node_loop()
 		process_timeouts();
 		process_nodewait();
 	}
-	while(1);////<<<<<<<<<<
+	while(stop_node_loop == 0);////<<<<<<<<<<
 	return 0;
 }
 
@@ -3566,7 +3570,42 @@ void PICA_node_joinskynet(const char* addrlistfilename, const char *my_addr)
 	PICA_nodeaddr_list_free(addrlist_h);
 }
 
-int main(int argc, char** argv)
+#ifdef WIN32
+static int is_service = 0;
+static SERVICE_STATUS_HANDLE service_status_handle;
+static SERVICE_STATUS service_status;
+static int service_argc;
+static char **service_argv;
+
+void ReportSvcStatus( DWORD dwCurrentState,
+                      DWORD dwWin32ExitCode,
+                      DWORD dwWaitHint)
+{
+	static DWORD dwCheckPoint = 1;
+
+	// Fill in the SERVICE_STATUS structure.
+
+	service_status.dwCurrentState = dwCurrentState;
+	service_status.dwWin32ExitCode = dwWin32ExitCode;
+	service_status.dwWaitHint = dwWaitHint;
+
+	if (dwCurrentState == SERVICE_START_PENDING)
+		service_status.dwControlsAccepted = 0;
+	else
+		service_status.dwControlsAccepted = SERVICE_ACCEPT_STOP;
+
+	if ( (dwCurrentState == SERVICE_RUNNING) ||
+	   (dwCurrentState == SERVICE_STOPPED) )
+		service_status.dwCheckPoint = 0;
+	else
+		service_status.dwCheckPoint = dwCheckPoint++;
+
+	// Report the status of the service to the SCM.
+	SetServiceStatus( service_status_handle, &service_status);
+}
+#endif
+
+int pica_node_main(int argc, char** argv)
 {
 	uint32_t pid;
 
@@ -3594,6 +3633,18 @@ int main(int argc, char** argv)
 
 	if (!PICA_node_init())
 		return -1;
+
+#ifdef WIN32
+	if (is_service)
+	{
+		ReportSvcStatus(SERVICE_RUNNING, NO_ERROR, 0);
+		PICA_info("pica-node started as a Windows service");
+	}
+	else
+	{
+		PICA_info("pica-node started as a normal Windows process.");
+	}
+#endif
 
 	if (strcmp("autoconfigure", nodecfg.announced_addr) == 0)
 	{
@@ -3648,3 +3699,82 @@ int main(int argc, char** argv)
 
 	return node_loop();
 }
+
+#ifdef WIN32
+void WINAPI SvcHandler(DWORD ctl)
+{
+	switch(ctl)
+	{
+	case SERVICE_CONTROL_STOP:
+		ReportSvcStatus(SERVICE_STOP_PENDING, NO_ERROR, 0);
+
+		stop_node_loop = 1;
+
+		ReportSvcStatus(service_status.dwCurrentState, NO_ERROR, 0);
+
+		return;
+
+	case SERVICE_CONTROL_INTERROGATE:
+		break;
+
+	default:
+		break;
+	}
+}
+
+void WINAPI winservice_main(DWORD argc, LPTSTR *argv)
+{
+	char logfilepath[MAX_PATH];
+	int ret;
+	HANDLE logfile;
+
+	service_status_handle = RegisterServiceCtrlHandler("pica-node service", SvcHandler);
+
+	if (!service_status_handle)
+		return;
+
+	service_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+	service_status.dwServiceSpecificExitCode = 0;
+
+	if (S_OK != SHGetFolderPath(NULL, CSIDL_COMMON_APPDATA, NULL, SHGFP_TYPE_CURRENT, logfilepath))
+		return;
+
+	strncat_s(logfilepath, MAX_PATH, "\\pica-node.log", MAX_PATH);
+
+	freopen(logfilepath, "w", stdout);
+	freopen(logfilepath, "w", stderr);
+
+	ReportSvcStatus(SERVICE_START_PENDING, NO_ERROR, 3000);
+
+	is_service = 1;
+
+	ret = pica_node_main(service_argc, service_argv);
+	ReportSvcStatus(SERVICE_STOPPED, ret, 0);
+}
+#endif
+
+int main(int argc, char** argv)
+{
+#ifndef WIN32
+	return pica_node_main(argc, argv);
+#else
+	SERVICE_TABLE_ENTRY DispatchTable[] =
+	{
+		{"pica-node service", winservice_main},
+		{NULL, NULL}
+	};
+
+	service_argc = argc;
+	service_argv = argv;
+	//if process is started as a service,
+	//function will return only after service is stopped
+	if (StartServiceCtrlDispatcher(DispatchTable))
+		return 0;
+	else if (GetLastError() == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT)// not a service
+		return pica_node_main(argc, argv);
+
+	//failed to start service
+	return -1;
+#endif
+}
+
