@@ -3404,7 +3404,7 @@ int node_loop()
 #ifdef WIN32
 			PICA_error("select() error code: %u", WSAGetLastError());
 #else
-			PICA_error("%s", perror("select"));
+			PICA_error("select() error code: %s", strerror(errno));
 #endif
 			return -1;
 		}
