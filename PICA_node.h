@@ -53,6 +53,7 @@
 #include "PICA_nodeaddrlist.h"
 #include "PICA_id.h"
 
+#include <event2/event.h>
 
 #define PICA_COMM_PORT 51914
 //#define PICA_DATA_PORT 51915
@@ -130,6 +131,8 @@ struct client
 
 	time_t tmst;
 	int disconnect_ticking;//on sending message TO client this var is set to 1, on receiving some message FROM client this var is reset to 0
+	struct event *ev_read;
+	struct event *ev_write;
 };
 
 struct cclink //структура, описывающая соединение двух клиентов между собой через сервер
@@ -161,6 +164,10 @@ struct cclink //структура, описывающая соединение 
 	struct cclink *prev;
 
 	int disconnect_ticking;
+	struct event *ev_read_p1;
+	struct event *ev_read_p2;
+	struct event *ev_write_p1;
+	struct event *ev_write_p2;
 };
 
 enum newconn_type
@@ -186,6 +193,7 @@ struct newconn //структура, описывающая новое подк�
 		struct client *cl;
 		struct cclink *cc;
 	} iconn;
+	struct event *ev;
 };
 
 struct nodelink
@@ -210,6 +218,8 @@ struct nodelink
 
 	time_t tmst;
 	int disconnect_ticking;
+	struct event *ev_read;
+	struct event *ev_write;
 };
 
 extern SSL_CTX *anon_ctx;

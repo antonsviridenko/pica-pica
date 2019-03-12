@@ -67,6 +67,7 @@ clock_t TMO_CCLINK_WAITACTIVE = 15; //CONF
 
 char *my_addr;//TEMP CONF FIXME
 
+static struct event_base *pica_event_base;
 SOCKET listen_comm_sck;//*
 
 static int stop_node_loop = 0;
@@ -154,6 +155,17 @@ struct newconn* newconn_add(struct newconn *ncs, int *pos);
 void newconns_init();
 
 void PICA_node_joinskynet(const char* addrlistfilename, const char *my_addr);
+
+void process_listen_read(evutil_socket_t listener, short event, void *arg);
+void process_timeout_event(evutil_socket_t listener, short event, void *arg);
+void process_newconn_read(evutil_socket_t s, short event, void *arg);
+void process_c2n_read(evutil_socket_t s, short event, void *arg);
+void process_c2n_write(evutil_socket_t s, short event, void *arg);
+void process_n2n_read(evutil_socket_t s, short event, void *arg);
+void process_n2n_write(evutil_socket_t s, short event, void *arg);
+void process_c2c_read(evutil_socket_t s, short event, void *arg);
+void process_c2c_write(evutil_socket_t s, short event, void *arg);
+void process_nodewait();
 
 #define MSGINFO_MSGSNUM(arr) (sizeof(arr)/sizeof(struct PICA_msginfo))
 
@@ -1292,6 +1304,18 @@ void cclink_list_delete(struct cclink *l)
 			CLOSE(l->sck_p1);
 			PICA_debug2("closed c2c socket %i", l->sck_p1);
 		}
+
+		if (l->ev_read_p1)
+		{
+			event_del(l->ev_read_p1);
+			event_free(l->ev_read_p1);
+		}
+
+		if (l->ev_write_p1)
+		{
+			event_del(l->ev_write_p1);
+			event_free(l->ev_write_p1);
+		}
 	}//caller_id is stored in p1 structure
 	else
 		free(l->caller_id);//caller_id was allocated by malloc
@@ -1303,6 +1327,18 @@ void cclink_list_delete(struct cclink *l)
 			SHUTDOWN(l->sck_p2);
 			CLOSE(l->sck_p2);
 			PICA_debug2("closed c2c socket %i", l->sck_p2);
+		}
+
+		if (l->ev_read_p2)
+		{
+			event_del(l->ev_read_p2);
+			event_free(l->ev_read_p2);
+		}
+
+		if (l->ev_write_p2)
+		{
+			event_del(l->ev_write_p2);
+			event_free(l->ev_write_p2);
 		}
 	}
 	else
@@ -1560,16 +1596,46 @@ void cclink_activate(struct cclink *ccl)
 		break;
 	case PICA_CCLINK_LOCAL_WAITCONNCLRANONTLSSHUTDOWN:
 		ccl->state = PICA_CCLINK_LOCAL_ACTIVE;
+		ccl->ev_read_p1 = event_new(pica_event_base, ccl->sck_p1, EV_READ | EV_PERSIST, process_c2c_read, ccl);
+		ccl->ev_read_p2 = event_new(pica_event_base, ccl->sck_p2, EV_READ | EV_PERSIST, process_c2c_read, ccl);
+		event_add(ccl->ev_read_p1, NULL);
+		event_add(ccl->ev_read_p2, NULL);
+		ccl->ev_write_p1 = event_new(pica_event_base, ccl->sck_p1, EV_WRITE, process_c2c_write, ccl);
+		ccl->ev_write_p2 = event_new(pica_event_base, ccl->sck_p2, EV_WRITE, process_c2c_write, ccl);
 		break;
 	case PICA_CCLINK_N2NCLR_WAITCONNCLRANONTLSSHUTDOWN:
 		ccl->state = PICA_CCLINK_N2NCLR_ACTIVE;
+		ccl->ev_read_p1 = event_new(pica_event_base, ccl->sck_p1, EV_READ | EV_PERSIST, process_c2c_read, ccl);
+		event_add(ccl->ev_read_p1, NULL);
+		ccl->ev_write_p1 = event_new(pica_event_base, ccl->sck_p1, EV_WRITE, process_c2c_write, ccl);
 		break;
 	case PICA_CCLINK_N2NCLE_WAITCONNCLEANONTLSSHUTDOWN:
 		ccl->state = PICA_CCLINK_N2NCLE_ACTIVE;
+		ccl->ev_read_p2 = event_new(pica_event_base, ccl->sck_p2, EV_READ | EV_PERSIST, process_c2c_read, ccl);
+		event_add(ccl->ev_read_p2, NULL);
+		ccl->ev_write_p2 = event_new(pica_event_base, ccl->sck_p2, EV_WRITE, process_c2c_write, ccl);
 		break;
 	}
 }
 
+static void libevent_log_cb(int severity, const char *msg)
+{
+	switch(severity)
+	{
+	case EVENT_LOG_ERR:
+		PICA_error("libevent error: %s", msg);
+		break;
+
+	case EVENT_LOG_WARN:
+	case EVENT_LOG_MSG:
+		PICA_info("libevent: %s", msg);
+		break;
+
+	case EVENT_LOG_DEBUG:
+		PICA_debug1("libevent: %s", msg);
+		break;
+	}
+}
 
 int PICA_node_init()
 {
@@ -1578,6 +1644,9 @@ int PICA_node_init()
 	int flag;
 	FILE *dh_file;
 	DH *dh = NULL;
+	struct event *listener_event;
+	struct event *timeout_event;
+	struct timeval tv;
 
 	SSL_load_error_strings();
 	SSL_library_init();
@@ -1591,6 +1660,15 @@ int PICA_node_init()
 #ifndef WIN32
 	signal(SIGPIPE, SIG_IGN);
 #endif
+
+	event_set_log_callback(libevent_log_cb);
+
+	pica_event_base = event_base_new();
+
+	if (!pica_event_base)
+		PICA_fatal("failed to initialize libevent");
+
+	PICA_debug1("libevent method: %s", event_base_get_method(pica_event_base));
 
 //CONF -AF_INET6 ????
 	listen_comm_sck = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -1639,6 +1717,21 @@ int PICA_node_init()
 //#ifdef NO_RAND_DEV
 //PICA_rand_seed();
 //#endif
+
+	listener_event = event_new(pica_event_base, listen_comm_sck, EV_READ|EV_PERSIST, process_listen_read, NULL);
+
+	if (!listener_event)
+		PICA_fatal("failed to allocate listener event");
+
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+
+	event_add(listener_event, /*&tv*/ NULL);
+
+	timeout_event = event_new(pica_event_base, -1, EV_TIMEOUT|EV_PERSIST, process_timeout_event, NULL);
+	event_add(timeout_event, &tv);
+
+
 
 	ctx = SSL_CTX_new(TLSv1_2_method());
 	anon_ctx = SSL_CTX_new(TLSv1_2_method());
@@ -1702,6 +1795,13 @@ void newconn_close(struct newconn* nc)
 	}
 
 	nc->type = NEWCONN_UNKNOWN;
+
+	if (nc->ev)
+	{
+		event_del(nc->ev);
+		event_free(nc->ev);
+	}
+	nc->ev = NULL;
 }
 
 void newconns_init()
@@ -1744,10 +1844,9 @@ struct newconn* newconn_add(struct newconn *ncs, int *pos)
 
 		if ( (*pos) == MAX_NEWCONNS)
 		{
+			PICA_error("Too many new connections, closing newconn socket %i", ncs[min_pos].sck);
+			newconn_close(&ncs[min_pos]);
 			*pos = min_pos;
-			SHUTDOWN(ncs[min_pos].sck);
-			CLOSE(ncs[min_pos].sck);
-			PICA_debug2("closed newconn socket %i", ncs[min_pos].sck);
 		}
 	}
 
@@ -1763,6 +1862,9 @@ void newconn_free(struct newconn* nc)
 	nc->sck = -1;
 	nc->iconn.cl = NULL;
 	nc->anonssl = NULL;
+	event_del(nc->ev);
+	event_free(nc->ev);
+	nc->ev = NULL;
 //nc->pos=0; - pos value is being used in processmsgdatastream
 }
 
@@ -1966,6 +2068,9 @@ struct client *client_list_addnew(struct newconn *nc)
 
 	ci->tmst = time(0);
 
+	ci->ev_read = event_new(pica_event_base, ci->sck_comm, EV_READ | EV_PERSIST, process_c2n_read, ci);
+	ci->ev_write = event_new(pica_event_base, ci->sck_comm, EV_WRITE, process_c2n_write, ci);
+
 	return ci;
 }
 
@@ -2056,6 +2161,17 @@ void client_list_delete(struct client* ci)
 	CLOSE(ci->sck_comm);
 	PICA_debug2("closed c2n socket %i", ci->sck_comm);
 
+	if (ci->ev_read)
+	{
+		event_del(ci->ev_read);
+		event_free(ci->ev_read);
+	}
+	if (ci->ev_write)
+	{
+		event_del(ci->ev_write);
+		event_free(ci->ev_write);
+	}
+
 	free(ci);
 }
 
@@ -2086,6 +2202,8 @@ struct PICA_proto_msg* client_wbuf_push
 		else
 			return 0;
 	}
+
+	event_add(c->ev_write, NULL);
 
 	struct PICA_proto_msg *mp = (struct PICA_proto_msg *)(c->w_buf + c->w_pos);
 	mp->head[0] = mp->head[1] = msgid;
@@ -2146,6 +2264,11 @@ struct nodelink *nodelink_list_addnew(struct newconn *nc)
 
 	nl->tmst = time(0);
 
+	nl->ev_read = event_new(pica_event_base, nl->sck, EV_READ | EV_PERSIST, process_n2n_read, nl);
+	nl->ev_write = event_new(pica_event_base, nl->sck, EV_WRITE, process_n2n_write, nl);
+
+	event_add(nl->ev_read, NULL);
+
 	nodelink_list_count++;
 	return nl;
 }
@@ -2179,6 +2302,11 @@ void nodelink_list_delete(struct nodelink *n)
 		nodelink_list_end = n->prev;
 
 	cclink_list_delete_by_nodelink(n);
+
+	event_del(n->ev_read);
+	event_free(n->ev_read);
+	event_del(n->ev_write);
+	event_free(n->ev_write);
 
 	nodelink_list_count--;
 	free(n);
@@ -2248,6 +2376,8 @@ struct PICA_proto_msg* nodelink_wbuf_push
 		else
 			return 0;
 	}
+
+	event_add(nl->ev_write, NULL);
 
 	mp = (struct PICA_proto_msg *)(nl->w_buf + nl->w_pos);
 	mp->head[0] = mp->head[1] = msgid;
@@ -2467,82 +2597,28 @@ int process_timeouts()
 	return 1;
 }
 
-void set_select_fd(SOCKET s, fd_set *readfds, int *nfds)
-{
-	FD_SET(s, readfds);
 
-	if (s > *nfds)
-		*nfds = s;
+void process_timeout_event(evutil_socket_t listener, short event, void *arg)
+{
+	process_timeouts();
+	process_nodewait();
 }
 
-void listen_set_fds(fd_set *readfds, int *nfds)
-{
-	set_select_fd(listen_comm_sck, readfds, nfds);
-}
-
-void newconn_set_fds(fd_set *readfds, int *nfds)
-{
-	int i;
-
-	for (i = 0; i < MAX_NEWCONNS; i++)
-		if (newconns[i].sck != -1)
-			set_select_fd(newconns[i].sck, readfds, nfds);
-}
-
-void c2n_set_fds(fd_set *readfds, int *nfds)
-{
-	struct client *i_ptr;
-
-	i_ptr = client_list_head;
-	while(i_ptr)
-	{
-		set_select_fd(i_ptr->sck_comm, readfds, nfds);
-
-		i_ptr = i_ptr->next;
-	}
-}
-
-void c2c_set_fds(fd_set *readfds, int *nfds)
-{
-	struct cclink *cc;
-
-	cc = cclink_list_head;
-	while(cc)
-	{
-		if ( !cc->jam_p1p2 && (cc->state == PICA_CCLINK_LOCAL_ACTIVE || cc->state == PICA_CCLINK_N2NCLR_ACTIVE) )
-			set_select_fd(cc->sck_p1, readfds, nfds);
-
-		if ( !cc->jam_p2p1 && (cc->state == PICA_CCLINK_LOCAL_ACTIVE || cc->state == PICA_CCLINK_N2NCLE_ACTIVE) )
-			set_select_fd(cc->sck_p2, readfds, nfds);
-
-		cc = cc->next;
-	}
-}
-
-void n2n_set_fds(fd_set *readfds, int *nfds)
-{
-	struct nodelink *nl;
-	nl = nodelink_list_head;
-
-	while(nl)
-	{
-		set_select_fd(nl->sck, readfds, nfds);
-		nl = nl->next;
-	}
-}
-
-void process_listen_read(fd_set *readfds)
+void process_listen_read(evutil_socket_t listener, short event, void *arg)
 {
 	struct newconn *nc;
 	SOCKET s;
 	struct sockaddr_in addr;
 	int addrsize = sizeof(struct sockaddr_in);
-	if (FD_ISSET(listen_comm_sck, readfds))
-	{
-		s = accept(listen_comm_sck, (struct sockaddr*)&addr, &addrsize);
 
-		if (s != -1)
+	if (event & EV_READ)
+	{
+		int i = 0;
+
+		while (i++ < MAX_NEWCONNS / 4 && (s = accept(listen_comm_sck, (struct sockaddr*)&addr, &addrsize)) != -1)
 		{
+			struct event *nc_read, *nc_write;
+
 			nc = newconn_add(newconns, &newconns_pos);
 
 			nc->anonssl = SSL_new(anon_ctx);
@@ -2568,716 +2644,672 @@ void process_listen_read(fd_set *readfds)
 			IOCTLSETNONBLOCKINGSOCKET(s, 1);
 
 			PICA_debug1("accepted connection from %.16s, new socket %i", inet_ntoa(addr.sin_addr), s);//IPv6
+
+			nc->ev = event_new(pica_event_base, s, EV_READ, process_newconn_read, nc);
+			event_add(nc->ev, NULL);
 		}
-		else
+
+		if (s == -1)
 		{
+#ifndef WIN32
+			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+				return;
+
 			PICA_error("unable to accept connection: %s", strerror(errno));
+#else
+			DWORD err = WSAGetLastError();
+
+			if (err != WSAEWOULDBLOCK)
+				PICA_error("unable to accept connection: %u", err);
+#endif
 		}
 	}
 
 //IPv6
 }
 
-void process_newconn_write()
+void process_newconn_write(struct newconn *nc)
 {
-	int i, ret;
-
-	for (i = 0; i < MAX_NEWCONNS; i++)
-		if (newconns[i].sck != -1)
-		{
-
-			switch(newconns[i].state)
-			{
-			case PICA_NEWCONN_SENDINGOK:
-				PICA_debug3("sending OK response to newconn on socket %i...\n", newconns[i].sck);
-				ret = SSL_write(newconns[i].anonssl, msg_INITRESPOK, sizeof msg_INITRESPOK);
-
-				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
-					break;
-
-				if (ret <= 0)
-				{
-					newconn_close(&newconns[i]);
-					break;
-				}
-
-				if (ret == sizeof msg_INITRESPOK)
-				{
-					if (newconns[i].type == NEWCONN_N2N)
-					{
-						if (!nodelink_list_addnew(&newconns[i]))
-						{
-							newconn_close(&newconns[i]);
-						}
-
-						newconn_free(&newconns[i]);
-					}
-					else
-						newconns[i].state = PICA_NEWCONN_WAITANONTLSSHUTDOWN;
-				}
-				break;
-
-			case PICA_NEWCONN_SENDINGREJECT:
-				PICA_debug3("sending reject response to newconn on socket %i...\n", newconns[i].sck);
-				ret = SSL_write(newconns[i].anonssl, msg_VERDIFFER, sizeof msg_VERDIFFER);
-
-				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
-					break;
-
-				if (ret <= 0)
-				{
-					newconn_close(&newconns[i]);
-					break;
-				}
-
-				SSL_shutdown(newconns[i].anonssl);
-				SHUTDOWN(newconns[i].sck);
-				newconn_close(&newconns[i]);
-			}
-
-		}
-
-}
-
-void process_newconn_read(fd_set *readfds)
-{
-	int i, ret;
-
-	for (i = 0; i < MAX_NEWCONNS; i++)
-		if (newconns[i].sck != -1 && FD_ISSET(newconns[i].sck, readfds))
-		{
-
-			switch(newconns[i].state)
-			{
-			case PICA_NEWCONN_WAITANONTLSACCEPT:
-				ret = SSL_accept(newconns[i].anonssl);
-
-				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
-					break;
-
-				if (ret <= 0)
-				{
-					newconn_close(&newconns[i]);
-					break;
-				}
-				else if (ret == 1)
-				{
-					newconns[i].state = PICA_NEWCONN_WAITREQUEST;
-				}
-
-			case PICA_NEWCONN_WAITREQUEST:
-				ret = SSL_read(newconns[i].anonssl, newconns[i].buf + newconns[i].pos, NEWCONN_BUFSIZE - newconns[i].pos);
-
-				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
-					break;
-
-				if (ret <= 0)
-				{
-					newconn_close(&newconns[i]);
-					break;
-				}
-
-				newconns[i].pos += ret;
-
-				if(!PICA_processdatastream(newconns[i].buf, &(newconns[i].pos), newconns + i, _msginfo_newconn, MSGINFO_MSGSNUM(_msginfo_newconn) ))
-				{
-					newconn_close(&newconns[i]);
-				}
-
-				break;
-
-			/*case PICA_NEWCONN_SENDINGOK:
-				PICA_debug3("sending OK response to newconn on socket %i...\n", newconns[i].sck);
-				ret = SSL_write(newconns[i].anonssl, msg_INITRESPOK, sizeof msg_INITRESPOK);
-
-				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
-					break;
-
-				if (ret <= 0)
-				{
-					SSL_free(newconns[i].anonssl);
-					newconn_close(&newconns[i]);
-					break;
-				}
-
-				if (ret == sizeof msg_INITRESPOK)
-				{
-					if (newconns[i].type == NEWCONN_N2N)
-					{
-						if (!nodelink_list_addnew(&newconns[i]))
-						{
-							SSL_free(newconns[i].anonssl);
-							newconn_close(&newconns[i]);
-						}
-
-						newconn_free(&newconns[i]);
-					}
-					else
-						newconns[i].state = PICA_NEWCONN_WAITANONTLSSHUTDOWN;
-				}*/
-
-			case PICA_NEWCONN_WAITANONTLSSHUTDOWN:
-				PICA_debug3("waiting for anon TLS shutdown on socket %i...\n", newconns[i].sck);
-				ret = SSL_shutdown(newconns[i].anonssl);
-
-				if (ret == 0)
-					break;
-
-				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
-					break;
-
-				if (ret < 0)
-				{
-					newconn_close(&newconns[i]);
-					break;
-				}
-
-				//switch state of client or cclink on successful shutdown
-				if (ret == 1)
-				{
-					SSL_free(newconns[i].anonssl);
-
-					if (newconns[i].iconn.cl && newconns[i].type == NEWCONN_C2N)
-					{
-						newconns[i].iconn.cl->state = PICA_CLSTATE_TLSNEGOTIATION;
-						newconn_free(&newconns[i]);
-						break;
-					}
-
-					if (newconns[i].iconn.cc && newconns[i].type == NEWCONN_C2C)
-					{
-						cclink_sendcleconnected(newconns[i].iconn.cc);
-						cclink_activate(newconns[i].iconn.cc);
-
-						newconn_free(&newconns[i]);
-						break;
-					}
-				}
-				break;
-
-			/*case PICA_NEWCONN_SENDINGREJECT:
-				ret = SSL_write(newconns[i].anonssl, msg_VERDIFFER, sizeof msg_VERDIFFER);
-
-				if (ret < 0 && process_async_ssl_readwrite(newconns[i].anonssl, ret))
-					break;
-
-				if (ret <= 0)
-				{
-					SSL_free(newconns[i].anonssl);
-					newconn_close(&newconns[i]);
-					break;
-				}
-
-				SSL_shutdown(newconns[i].anonssl);
-				SHUTDOWN(newconns[i].sck);
-				SSL_free(newconns[i].anonssl);
-				newconn_close(&newconns[i]);*/
-			}
-
-		}
-}
-
-
-
-void process_c2n_read(fd_set *readfds)
-{
-	struct client *i_ptr, *kill_ptr;
 	int ret;
 
-	i_ptr = client_list_head;
-	kill_ptr = 0;
-
-	while (i_ptr)
+	switch(nc->state)
 	{
-		if (FD_ISSET(i_ptr->sck_comm, readfds))
-			switch(i_ptr->state)
+	case PICA_NEWCONN_SENDINGOK:
+		PICA_debug3("sending OK response to newconn on socket %i...\n", nc->sck);
+		ret = SSL_write(nc->anonssl, msg_INITRESPOK, sizeof msg_INITRESPOK);
+
+		if (ret < 0 && process_async_ssl_readwrite(nc->anonssl, ret))
+			break;
+
+		if (ret <= 0)
+		{
+			newconn_close(nc);
+			break;
+		}
+
+		if (ret == sizeof msg_INITRESPOK)
+		{
+			if (nc->type == NEWCONN_N2N)
 			{
-			case PICA_CLSTATE_CONNECTED:
-			case PICA_CLSTATE_MULTILOGIN_SECONDARY:
-				ret = SSL_read(i_ptr->ssl_comm, i_ptr->r_buf + i_ptr->r_pos, i_ptr->buflen_r - i_ptr->r_pos);
-
-				if (!ret)
-					kill_ptr = i_ptr;
-
-				if (ret < 0)
-					switch(SSL_get_error(i_ptr->ssl_comm, ret))
-					{
-					case SSL_ERROR_WANT_WRITE:
-					case SSL_ERROR_WANT_READ:
-						break;
-					default:
-						kill_ptr = i_ptr;
-					}
-
-				if (ret > 0)
+				if (!nodelink_list_addnew(nc))
 				{
-					const struct PICA_msginfo *msgs = _msginfo_comm;
-					unsigned int nmsgs = MSGINFO_MSGSNUM(_msginfo_comm);
-
-					if (i_ptr->state == PICA_CLSTATE_MULTILOGIN_SECONDARY)
-					{
-						msgs = _msginfo_multi;
-						nmsgs = MSGINFO_MSGSNUM(_msginfo_multi);
-					}
-
-					i_ptr->r_pos += ret;
-					if(!PICA_processdatastream(i_ptr->r_buf, &(i_ptr->r_pos), i_ptr, msgs, nmsgs))
-						kill_ptr = i_ptr;
-
-					if (i_ptr->buflen_r == i_ptr->r_pos)
-						if (!client_rbuf_grow(i_ptr))
-							kill_ptr = i_ptr;
-
+					newconn_close(nc);
 				}
-				break;
-			case PICA_CLSTATE_TLSNEGOTIATION:
-				i_ptr->w_pos = 1; //????
-				//-------------- <<<<<<<<<<<<<<<<<<<<<<<<----------------------------------------
-				break;
-			};
 
-		i_ptr = i_ptr->next;
-
-		if (kill_ptr)
-		{
-			client_list_delete(kill_ptr);
-			kill_ptr = 0;
-		}
-	}
-
-}
-
-void process_c2c_read(fd_set *readfds)
-{
-	int i, ret;
-	struct cclink *cc, *kill_ptr;
-
-	cc = cclink_list_head;
-	kill_ptr = 0;
-
-	while(cc)
-	{
-		if ((cc->state == PICA_CCLINK_LOCAL_ACTIVE || cc->state == PICA_CCLINK_N2NCLR_ACTIVE)
-		        && FD_ISSET(cc->sck_p1, readfds) && !cc->jam_p1p2 )
-		{
-			ret = recv(cc->sck_p1, cc->buf_p1p2 + cc->bufpos_p1p2, cc->buflen_p1p2 - cc->bufpos_p1p2, 0);
-			PICA_debug3("process_c2c_read: recv  p1p2: ret=%i", ret);
-			if (ret > 0)
-			{
-				cc->bufpos_p1p2 += ret;
+				newconn_free(nc);
 			}
 			else
-				kill_ptr = cc;
+				nc->state = PICA_NEWCONN_WAITANONTLSSHUTDOWN;
 		}
+		break;
 
-		if ((cc->state == PICA_CCLINK_LOCAL_ACTIVE || cc->state == PICA_CCLINK_N2NCLE_ACTIVE)
-		        && FD_ISSET(cc->sck_p2, readfds)  && !cc->jam_p2p1 )
+	case PICA_NEWCONN_SENDINGREJECT:
+		PICA_debug3("sending reject response to newconn on socket %i...\n", nc->sck);
+		ret = SSL_write(nc->anonssl, msg_VERDIFFER, sizeof msg_VERDIFFER);
+
+		if (ret < 0 && process_async_ssl_readwrite(nc->anonssl, ret))
+			break;
+
+		if (ret <= 0)
 		{
-			ret = recv(cc->sck_p2, cc->buf_p2p1 + cc->bufpos_p2p1, cc->buflen_p2p1 - cc->bufpos_p2p1, 0);
-			PICA_debug3("process_c2c_read: recv  p2p1: ret=%i\n", ret);
-			if (ret > 0)
-			{
-				cc->bufpos_p2p1 += ret;
-			}
-			else
-				kill_ptr = cc;
+			newconn_close(nc);
+			break;
 		}
 
-
-		cc = cc->next;
-
-		if (kill_ptr)
-		{
-			cclink_list_delete(kill_ptr);
-			kill_ptr = 0;
-		}
+		SSL_shutdown(nc->anonssl);
+		SHUTDOWN(nc->sck);
+		newconn_close(nc);
 	}
 }
 
-void process_n2n_read(fd_set *readfds)
+void process_newconn_read(evutil_socket_t s, short event, void *arg)
 {
-	int i, ret;
-	struct nodelink *nl, *kill_ptr;
-
-	nl = nodelink_list_head;
-	kill_ptr = 0;
-
-	while(nl)
-	{
-		if (FD_ISSET(nl->sck, readfds))
-		{
-			ret = SSL_read(nl->anonssl, nl->r_buf + nl->r_pos, nl->buflen_r - nl->r_pos);
-
-			if (ret > 0)
-			{
-				nl->r_pos += ret;
-
-				if(!PICA_processdatastream(nl->r_buf, &(nl->r_pos), nl, _msginfo_node, MSGINFO_MSGSNUM(_msginfo_node) ))
-					kill_ptr = nl;
-
-				if (nl->buflen_r == nl->r_pos)
-					if (!nodelink_rbuf_grow(nl))
-						kill_ptr = nl;
-			}
-			else
-			{
-				if (ret == 0 || process_async_ssl_readwrite(nl->anonssl, ret) == 0)
-				{
-					PICA_debug3("SSL_read() failed in process_n2n_read()");
-					kill_ptr = nl;
-				}
-			}
-		}
-
-		nl = nl->next;
-
-		if (kill_ptr)
-		{
-			nodelink_list_delete(kill_ptr);
-			kill_ptr = 0;
-		}
-	}
-}
-
-void process_c2n_write()
-{
-	struct client *i_ptr, *kill_ptr;
 	int ret;
+	struct newconn *nc = arg;
 
-	i_ptr = client_list_head;
-	kill_ptr = 0;
-
-	while(i_ptr)
+	if (event & EV_READ)
 	{
-		//---------
-		switch(i_ptr->state)
+
+		switch(nc->state)
 		{
-		case PICA_CLSTATE_CONNECTED:
-		case PICA_CLSTATE_MULTILOGIN_SECONDARY:
-			if (!i_ptr->w_pos)
+		case PICA_NEWCONN_WAITANONTLSACCEPT:
+			ret = SSL_accept(nc->anonssl);
+
+			if (ret < 0 && process_async_ssl_readwrite(nc->anonssl, ret))
 				break;
 
-			if (!i_ptr->btw_ssl)
-				i_ptr->btw_ssl = i_ptr->w_pos;
-
-			ret = SSL_write(i_ptr->ssl_comm, i_ptr->w_buf, i_ptr->btw_ssl);
-
-			PICA_debug3("process_c2n_write:  ret of SSL_write()=%i", ret);
-
-			if (ret == i_ptr->btw_ssl)
+			if (ret <= 0)
 			{
-				if (ret < i_ptr->w_pos)
-					memmove(i_ptr->w_buf, i_ptr->w_buf + ret, i_ptr->w_pos - ret); //may be it's better to implement ring buffer here
-
-				i_ptr->w_pos -= i_ptr->btw_ssl;
-				i_ptr->btw_ssl = 0;
+				newconn_close(nc);
+				break;
+			}
+			else if (ret == 1)
+			{
+				nc->state = PICA_NEWCONN_WAITREQUEST;
 			}
 
-			if (!ret)
-				kill_ptr = i_ptr;
+		case PICA_NEWCONN_WAITREQUEST:
+			ret = SSL_read(nc->anonssl, nc->buf + nc->pos, NEWCONN_BUFSIZE - nc->pos);
+
+			if (ret < 0 && process_async_ssl_readwrite(nc->anonssl, ret))
+				break;
+
+			if (ret <= 0)
+			{
+				newconn_close(nc);
+				break;
+			}
+
+			nc->pos += ret;
+
+			if(!PICA_processdatastream(nc->buf, &(nc->pos), nc, _msginfo_newconn, MSGINFO_MSGSNUM(_msginfo_newconn) ))
+			{
+				newconn_close(nc);
+			}
+
+			break;
+
+		case PICA_NEWCONN_WAITANONTLSSHUTDOWN:
+			PICA_debug3("waiting for anon TLS shutdown on socket %i...\n", nc->sck);
+			ret = SSL_shutdown(nc->anonssl);
+
+			if (ret == 0)
+				break;
+
+			if (ret < 0 && process_async_ssl_readwrite(nc->anonssl, ret))
+				break;
 
 			if (ret < 0)
 			{
-				ret = SSL_get_error(i_ptr->ssl_comm, ret);
-				if (ret != SSL_ERROR_WANT_WRITE && ret != SSL_ERROR_WANT_READ)
-					kill_ptr = i_ptr;
+				newconn_close(nc);
+				break;
 			}
-			break;
-		case PICA_CLSTATE_WAITANONTLSSHUTDOWN:
-			// do nothing here, state will be switched by newconn
-			break;
-/*		case PICA_CLSTATE_SENDINGRESP:
-			ret = send(i_ptr->sck_comm, i_ptr->w_buf, i_ptr->w_pos, 0);
-			if (!ret)
-				kill_ptr = i_ptr;
 
-			if (ret == SOCKET_ERROR)
-				;//ERR_CHECK
-
-			if (ret < i_ptr->w_pos)
-				memmove(i_ptr->w_buf, i_ptr->w_buf + ret, i_ptr->w_pos - ret); //ring buffer is better (??)
-
-			i_ptr->w_pos -= ret;
-
-
-			if (!i_ptr->w_pos)
-				i_ptr->state = PICA_CLSTATE_TLSNEGOTIATION;
-
-			break;*/
-		case PICA_CLSTATE_TLSNEGOTIATION:
-			i_ptr->w_pos = 0;
-			ret = SSL_connect(i_ptr->ssl_comm);
-
-			PICA_debug3("process_c2n_write: SSL_connect()=%i", ret);
-
-			if (!ret)
-				kill_ptr = i_ptr;
-
-			if (ret < 0)
-			{
-				int eret;
-				eret = SSL_get_error(i_ptr->ssl_comm, ret);
-				switch(eret)
-				{
-				case SSL_ERROR_WANT_WRITE:
-					i_ptr->w_pos = 1;
-					PICA_debug3("SSL_ERROR_WANT_WRITE");
-					break;
-				case SSL_ERROR_WANT_READ:
-					PICA_debug3("SSL_ERROR_WANT_READ");
-					break;
-				default:
-					PICA_debug3("SSL_get_error() = %i", eret);
-					kill_ptr = i_ptr;
-				}
-			}
+			//switch state of client or cclink on successful shutdown
 			if (ret == 1)
-				//проверить сертификат пользователя
 			{
-				X509* client_cert;
-				struct client *primary;
+				SSL_free(nc->anonssl);
 
-				PICA_info("SSL c2n connection established using %s cipher", SSL_get_cipher(i_ptr->ssl_comm));
-
-				client_cert = SSL_get_peer_certificate (i_ptr->ssl_comm);
-				if (!client_cert)
+				if (nc->iconn.cl && nc->type == NEWCONN_C2N)
 				{
-					//ERR_CHECK //нет сертификата
-					kill_ptr = i_ptr;
+					nc->iconn.cl->state = PICA_CLSTATE_TLSNEGOTIATION;
+					event_add(nc->iconn.cl->ev_read, NULL);
+					event_add(nc->iconn.cl->ev_write, NULL);
+					newconn_free(nc);
+					break;
 				}
 
-				ret = PICA_id_from_X509(client_cert, i_ptr->id);
+				if (nc->iconn.cc && nc->type == NEWCONN_C2C)
+				{
+					cclink_sendcleconnected(nc->iconn.cc);
+					cclink_activate(nc->iconn.cc);
 
-				if (ret == 0)
-				{
-					PICA_error("Unable to get client id from certificate");
-					kill_ptr = i_ptr;
-				}
-
-				X509_free(client_cert);
-
-				//reject all-zeroes ID
-				{
-					static const char zeroID[PICA_ID_SIZE] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-					if (memcmp(zeroID, i_ptr->id, PICA_ID_SIZE) == 0)
-					{
-						PICA_error("Rejecting all-zero Pica ID");
-						kill_ptr = i_ptr;
-					}
-				}
-
-				if (!kill_ptr && (primary = client_tree_search(i_ptr->id)))
-				{
-					//PICA_info("Disconnecting client %p because other user with same ID = %u is already connected", i_ptr, i_ptr->id);
-					//memset(i_ptr->id, 0, PICA_ID_SIZE);//reset id to all zeros to prevent removing existing ID from previous connection from client_tree
-					//ret = 0;//id already exists in tree
-					i_ptr->state = PICA_CLSTATE_MULTILOGIN_SECONDARY;
-					client_attach_multi_secondary(primary, i_ptr);
-					client_tree_print(client_tree_root);
-				}
-				else
-				{
-					ret = client_tree_add(i_ptr);
-					i_ptr->state = PICA_CLSTATE_CONNECTED;
-					client_tree_print(client_tree_root);
-				}
-				if (!ret)
-				{
-					//ERR_CHECK  //не уникальный id
-					kill_ptr = i_ptr;
+					newconn_free(nc);
+					break;
 				}
 			}
 			break;
-		}
-		//---------
 
-		i_ptr = i_ptr->next;
-
-		if (kill_ptr)
-		{
-			client_list_delete(kill_ptr);
-			kill_ptr = 0;
 		}
+
+		if (nc->sck != -1)
+			process_newconn_write(nc);
+
+		if (nc->sck != -1)
+			event_add(nc->ev, NULL);
 	}
 }
 
-void process_c2c_write()
+
+
+void process_c2n_read(evutil_socket_t s, short event, void *arg)
 {
-	int i, ret;
-	struct cclink *cc, *kill_ptr;
+	struct client *i_ptr = (struct client*)arg;
+	struct client *kill_ptr = 0;
+	int ret;
 
-	cc = cclink_list_head;
-	kill_ptr = 0;
-
-	while(cc)
+	switch(i_ptr->state)
 	{
-		if (cc->bufpos_p1p2/* && (cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLE_ACTIVE)*/)
+	case PICA_CLSTATE_CONNECTED:
+	case PICA_CLSTATE_MULTILOGIN_SECONDARY:
+		ret = SSL_read(i_ptr->ssl_comm, i_ptr->r_buf + i_ptr->r_pos, i_ptr->buflen_r - i_ptr->r_pos);
+
+		if (!ret)
+			kill_ptr = i_ptr;
+
+		if (ret < 0)
+			switch(SSL_get_error(i_ptr->ssl_comm, ret))
+			{
+			case SSL_ERROR_WANT_WRITE:
+			case SSL_ERROR_WANT_READ:
+				break;
+			default:
+				kill_ptr = i_ptr;
+			}
+
+		if (ret > 0)
 		{
-			if (cc->state == PICA_CCLINK_N2NCLR_ACTIVE) //receiver is on remote node
+			const struct PICA_msginfo *msgs = _msginfo_comm;
+			unsigned int nmsgs = MSGINFO_MSGSNUM(_msginfo_comm);
+
+			if (i_ptr->state == PICA_CLSTATE_MULTILOGIN_SECONDARY)
 			{
-				int sendlen;
-				struct PICA_proto_msg *mp;
-
-				sendlen = (cc->bufpos_p1p2 > PICA_PROTO_N2NMSG_MAXDATASIZE) ? PICA_PROTO_N2NMSG_MAXDATASIZE : cc->bufpos_p1p2;
-
-				if(mp = nodelink_wbuf_push(cc->callee_node, PICA_PROTO_N2NMSG, sendlen + 4 + 2 * PICA_ID_SIZE))
-				{
-					*((unsigned short*)mp->tail) = 2 * PICA_ID_SIZE + sendlen;
-					memcpy(mp->tail + 2, cc->caller_id, PICA_ID_SIZE);
-					memcpy(mp->tail + 2 + PICA_ID_SIZE, cc->callee_id, PICA_ID_SIZE);
-					memcpy(mp->tail + 2 + 2 * PICA_ID_SIZE, cc->buf_p1p2, sendlen);
-					ret = sendlen;
-				}
-				else
-					ret = 0;
-			}
-			else
-				ret = send(cc->sck_p2, cc->buf_p1p2, cc->bufpos_p1p2, MSG_NOSIGNAL);
-
-			PICA_debug3("process_c2c_write: send  p1p2: ret=%i", ret);
-			if (ret > 0)
-			{
-				if (ret < cc->bufpos_p1p2)
-					memmove(cc->buf_p1p2, cc->buf_p1p2 + ret, cc->bufpos_p1p2 - ret); //may be it's better to implement ring buffer here
-				cc->bufpos_p1p2 -= ret;
-				cc->jam_p1p2 = 0;
+				msgs = _msginfo_multi;
+				nmsgs = MSGINFO_MSGSNUM(_msginfo_multi);
 			}
 
-			if (ret == 0)
-			{
-				kill_ptr = cc;
-			}
-			if (ret == -1)
-			{
-#ifdef WIN32
-				ret = WSAGetLastError();
-				if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
-					cc->jam_p1p2 = 1;
-				else
-				{
-					kill_ptr = cc;
-				}
-#else
-				ret = errno;
-				if (ret == EAGAIN || ret == ENOBUFS)
-					cc->jam_p1p2 = 1;
-				else
-				{
-					kill_ptr = cc;
-				}
-#endif
-			}
+			i_ptr->r_pos += ret;
+			if(!PICA_processdatastream(i_ptr->r_buf, &(i_ptr->r_pos), i_ptr, msgs, nmsgs))
+				kill_ptr = i_ptr;
+
+			if (i_ptr->buflen_r == i_ptr->r_pos)
+				if (!client_rbuf_grow(i_ptr))
+					kill_ptr = i_ptr;
 
 		}
-		if (cc->bufpos_p2p1 /*&& (cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLR_ACTIVE)*/)
-		{
-			if (cc->state == PICA_CCLINK_N2NCLE_ACTIVE) //receiver is on remote node
-			{
-				int sendlen;
-				struct PICA_proto_msg *mp;
+		break;
+	case PICA_CLSTATE_TLSNEGOTIATION:
+		i_ptr->w_pos = 1; //????
+		//-------------- <<<<<<<<<<<<<<<<<<<<<<<<----------------------------------------
+		break;
+	};
 
-				sendlen = (cc->bufpos_p2p1 > PICA_PROTO_N2NMSG_MAXDATASIZE) ? PICA_PROTO_N2NMSG_MAXDATASIZE : cc->bufpos_p2p1;
-
-				if(mp = nodelink_wbuf_push(cc->caller_node, PICA_PROTO_N2NMSG, sendlen + 4 + 2 * PICA_ID_SIZE))
-				{
-					*((unsigned short*)mp->tail) = 2 * PICA_ID_SIZE + sendlen;
-					memcpy(mp->tail + 2, cc->callee_id, PICA_ID_SIZE);
-					memcpy(mp->tail + 2 + PICA_ID_SIZE, cc->caller_id, PICA_ID_SIZE);
-					memcpy(mp->tail + 2 + 2 * PICA_ID_SIZE, cc->buf_p2p1, sendlen);
-					ret = sendlen;
-				}
-				else
-					ret = 0;
-			}
-			else
-				ret = send(cc->sck_p1, cc->buf_p2p1, cc->bufpos_p2p1, MSG_NOSIGNAL);
-
-			PICA_debug3("process_c2c_write: send  p2p1: ret=%i", ret);
-			if (ret > 0)
-			{
-				if (ret < cc->bufpos_p2p1)
-					memmove(cc->buf_p2p1, cc->buf_p2p1 + ret, cc->bufpos_p2p1 - ret); //may be it's better to implement ring buffer here
-				cc->bufpos_p2p1 -= ret;
-				cc->jam_p2p1 = 0;
-			}
-
-			if (ret == 0)
-			{
-				kill_ptr = cc;
-			}
-			if (ret == -1)
-			{
-#ifdef WIN32
-				ret = WSAGetLastError();
-				if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
-					cc->jam_p2p1 = 1;
-				else
-				{
-					kill_ptr = cc;
-				}
-#else
-				ret = errno;
-				if (ret == EAGAIN || ret == ENOBUFS)
-					cc->jam_p2p1 = 1;
-				else
-				{
-					kill_ptr = cc;
-				}
-#endif
-
-			}
-
-		}
-
-		cc = cc->next;
-
-		if (kill_ptr)
-		{
-			cclink_list_delete(kill_ptr);
-			kill_ptr = 0;
-		}
+	if (kill_ptr)
+	{
+		client_list_delete(kill_ptr);
+		kill_ptr = 0;
+	}
+	else if (i_ptr->w_pos)
+	{
+		process_c2n_write(s, event, arg);
 	}
 }
 
-void process_n2n_write()
+void process_c2c_read(evutil_socket_t s, short event, void *arg)
 {
 	int ret;
-	struct nodelink *nl, *kill_ptr;
+	struct cclink *cc = (struct cclink*)arg;
+	struct cclink *kill_ptr = 0;
 
-	nl = nodelink_list_head;
-	kill_ptr = 0;
 
-	while(nl)
+	if ((cc->state == PICA_CCLINK_LOCAL_ACTIVE || cc->state == PICA_CCLINK_N2NCLR_ACTIVE)
+		&& cc->sck_p1 == s && !cc->jam_p1p2 )
 	{
-		if (nl->w_pos > 0)
+		ret = recv(cc->sck_p1, cc->buf_p1p2 + cc->bufpos_p1p2, cc->buflen_p1p2 - cc->bufpos_p1p2, 0);
+		PICA_debug3("process_c2c_read: recv  p1p2: ret=%i", ret);
+		if (ret > 0)
 		{
-			if (!nl->btw_ssl)
-				nl->btw_ssl = nl->w_pos;
+			cc->bufpos_p1p2 += ret;
 
-			ret = SSL_write(nl->anonssl, nl->w_buf, nl->btw_ssl);
-
-			if (ret == nl->btw_ssl)
+			if (cc->buflen_p1p2 == cc->bufpos_p1p2)
 			{
-				if (ret < nl->w_pos)
-					memmove(nl->w_buf, nl->w_buf + ret, nl->w_pos - ret); //may be it's better to implement ring buffer here
-				nl->w_pos -= nl->btw_ssl;
-				nl->btw_ssl = 0;
+				event_del(cc->ev_read_p1);
+				cc->jam_p1p2 = 1;
 			}
 
-			if (ret == 0 || ret < 0 && process_async_ssl_readwrite(nl->anonssl, ret) == 0)
+			if (cc->state == PICA_CCLINK_LOCAL_ACTIVE)
+				event_add(cc->ev_write_p2, NULL);
+			else
+				process_c2c_write(-1, event, cc);
+		}
+		else
+			kill_ptr = cc;
+	}
+
+	if ((cc->state == PICA_CCLINK_LOCAL_ACTIVE || cc->state == PICA_CCLINK_N2NCLE_ACTIVE)
+		&& cc->sck_p2 == s  && !cc->jam_p2p1 )
+	{
+		ret = recv(cc->sck_p2, cc->buf_p2p1 + cc->bufpos_p2p1, cc->buflen_p2p1 - cc->bufpos_p2p1, 0);
+		PICA_debug3("process_c2c_read: recv  p2p1: ret=%i\n", ret);
+		if (ret > 0)
+		{
+			cc->bufpos_p2p1 += ret;
+
+			if (cc->buflen_p2p1 == cc->bufpos_p2p1)
 			{
+				event_del(cc->ev_read_p2);
+				cc->jam_p2p1 = 1;
+			}
+
+			if (cc->state == PICA_CCLINK_LOCAL_ACTIVE)
+				event_add(cc->ev_write_p1, NULL);
+			else
+				process_c2c_write(-1, event, cc);
+		}
+		else
+			kill_ptr = cc;
+	}
+
+
+	if (kill_ptr)
+	{
+		cclink_list_delete(kill_ptr);
+		kill_ptr = 0;
+	}
+
+}
+
+void process_n2n_read(evutil_socket_t s, short event, void *arg)
+{
+	int ret;
+	struct nodelink *nl = (struct nodelink*)arg;
+	struct nodelink *kill_ptr = 0;
+
+	ret = SSL_read(nl->anonssl, nl->r_buf + nl->r_pos, nl->buflen_r - nl->r_pos);
+
+	if (ret > 0)
+	{
+		nl->r_pos += ret;
+
+		if(!PICA_processdatastream(nl->r_buf, &(nl->r_pos), nl, _msginfo_node, MSGINFO_MSGSNUM(_msginfo_node) ))
+			kill_ptr = nl;
+
+		if (nl->buflen_r == nl->r_pos)
+			if (!nodelink_rbuf_grow(nl))
 				kill_ptr = nl;
+	}
+	else
+	{
+		if (ret == 0 || process_async_ssl_readwrite(nl->anonssl, ret) == 0)
+		{
+			PICA_debug3("SSL_read() failed in process_n2n_read()");
+			kill_ptr = nl;
+		}
+	}
+
+
+	if (kill_ptr)
+	{
+		nodelink_list_delete(kill_ptr);
+		kill_ptr = 0;
+	}
+}
+
+void process_c2n_write(evutil_socket_t s, short event, void *arg)
+{
+	struct client *i_ptr = (struct client*)arg;
+	struct client *kill_ptr = 0;
+	int ret;
+
+	switch(i_ptr->state)
+	{
+	case PICA_CLSTATE_CONNECTED:
+	case PICA_CLSTATE_MULTILOGIN_SECONDARY:
+		if (!i_ptr->w_pos)
+			break;
+
+		if (!i_ptr->btw_ssl)
+			i_ptr->btw_ssl = i_ptr->w_pos;
+
+		ret = SSL_write(i_ptr->ssl_comm, i_ptr->w_buf, i_ptr->btw_ssl);
+
+		PICA_debug3("process_c2n_write:  ret of SSL_write()=%i", ret);
+
+		if (ret == i_ptr->btw_ssl)
+		{
+			if (ret < i_ptr->w_pos)
+				memmove(i_ptr->w_buf, i_ptr->w_buf + ret, i_ptr->w_pos - ret); //may be it's better to implement ring buffer here
+
+			i_ptr->w_pos -= i_ptr->btw_ssl;
+			i_ptr->btw_ssl = 0;
+		}
+
+		if (!ret)
+			kill_ptr = i_ptr;
+
+		if (ret < 0)
+		{
+			ret = SSL_get_error(i_ptr->ssl_comm, ret);
+			if (ret != SSL_ERROR_WANT_WRITE && ret != SSL_ERROR_WANT_READ)
+				kill_ptr = i_ptr;
+		}
+		break;
+
+	case PICA_CLSTATE_WAITANONTLSSHUTDOWN:
+		// do nothing here, state will be switched by newconn
+		break;
+
+	case PICA_CLSTATE_TLSNEGOTIATION:
+		i_ptr->w_pos = 0;
+		ret = SSL_connect(i_ptr->ssl_comm);
+
+		PICA_debug3("process_c2n_write: SSL_connect()=%i", ret);
+
+		if (!ret)
+			kill_ptr = i_ptr;
+
+		if (ret < 0)
+		{
+			int eret;
+			eret = SSL_get_error(i_ptr->ssl_comm, ret);
+			switch(eret)
+			{
+			case SSL_ERROR_WANT_WRITE:
+				i_ptr->w_pos = 1;
+				PICA_debug3("SSL_ERROR_WANT_WRITE");
+				break;
+			case SSL_ERROR_WANT_READ:
+				PICA_debug3("SSL_ERROR_WANT_READ");
+				break;
+			default:
+				PICA_debug3("SSL_get_error() = %i", eret);
+				kill_ptr = i_ptr;
+			}
+		}
+		if (ret == 1)
+			//проверить сертификат пользователя
+		{
+			X509* client_cert;
+			struct client *primary;
+
+			PICA_info("SSL c2n connection established using %s cipher", SSL_get_cipher(i_ptr->ssl_comm));
+
+			client_cert = SSL_get_peer_certificate (i_ptr->ssl_comm);
+			if (!client_cert)
+			{
+				//ERR_CHECK //нет сертификата
+				kill_ptr = i_ptr;
 			}
 
+			ret = PICA_id_from_X509(client_cert, i_ptr->id);
+
+			if (ret == 0)
+			{
+				PICA_error("Unable to get client id from certificate");
+				kill_ptr = i_ptr;
+			}
+
+			X509_free(client_cert);
+
+			//reject all-zeroes ID
+			{
+				static const char zeroID[PICA_ID_SIZE] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+				if (memcmp(zeroID, i_ptr->id, PICA_ID_SIZE) == 0)
+				{
+					PICA_error("Rejecting all-zero Pica ID");
+					kill_ptr = i_ptr;
+				}
+			}
+
+			if (!kill_ptr && (primary = client_tree_search(i_ptr->id)))
+			{
+				//PICA_info("Disconnecting client %p because other user with same ID = %u is already connected", i_ptr, i_ptr->id);
+				//memset(i_ptr->id, 0, PICA_ID_SIZE);//reset id to all zeros to prevent removing existing ID from previous connection from client_tree
+				//ret = 0;//id already exists in tree
+				i_ptr->state = PICA_CLSTATE_MULTILOGIN_SECONDARY;
+				client_attach_multi_secondary(primary, i_ptr);
+				client_tree_print(client_tree_root);
+			}
+			else
+			{
+				ret = client_tree_add(i_ptr);
+				i_ptr->state = PICA_CLSTATE_CONNECTED;
+				client_tree_print(client_tree_root);
+			}
+			if (!ret)
+			{
+				//ERR_CHECK  //не уникальный id
+				kill_ptr = i_ptr;
+			}
 		}
+		break;
+	}
 
-		nl = nl->next;
 
-		if (kill_ptr)
+	if (kill_ptr)
+	{
+		client_list_delete(kill_ptr);
+		kill_ptr = 0;
+	}
+	else if(i_ptr->w_pos)
+	{
+		event_add(i_ptr->ev_write, NULL);
+	}
+}
+
+void process_c2c_write(evutil_socket_t s, short event, void *arg)
+{
+	int ret;
+	struct cclink *cc = (struct cclink*)arg;
+	struct cclink *kill_ptr = 0;
+
+
+	if (cc->bufpos_p1p2)
+	{
+		if (cc->state == PICA_CCLINK_N2NCLR_ACTIVE) //receiver is on remote node
 		{
-			nodelink_list_delete(kill_ptr);
-			kill_ptr = 0;
+			int sendlen;
+			struct PICA_proto_msg *mp;
+
+			sendlen = (cc->bufpos_p1p2 > PICA_PROTO_N2NMSG_MAXDATASIZE) ? PICA_PROTO_N2NMSG_MAXDATASIZE : cc->bufpos_p1p2;
+
+			if(mp = nodelink_wbuf_push(cc->callee_node, PICA_PROTO_N2NMSG, sendlen + 4 + 2 * PICA_ID_SIZE))
+			{
+				*((unsigned short*)mp->tail) = 2 * PICA_ID_SIZE + sendlen;
+				memcpy(mp->tail + 2, cc->caller_id, PICA_ID_SIZE);
+				memcpy(mp->tail + 2 + PICA_ID_SIZE, cc->callee_id, PICA_ID_SIZE);
+				memcpy(mp->tail + 2 + 2 * PICA_ID_SIZE, cc->buf_p1p2, sendlen);
+				ret = sendlen;
+			}
+			else
+				ret = 0;
 		}
+		else if (s == cc->sck_p2)
+			ret = send(cc->sck_p2, cc->buf_p1p2, cc->bufpos_p1p2, MSG_NOSIGNAL);
+
+		PICA_debug3("process_c2c_write: send  p1p2: ret=%i", ret);
+		if (ret > 0)
+		{
+			if (ret < cc->bufpos_p1p2)
+				memmove(cc->buf_p1p2, cc->buf_p1p2 + ret, cc->bufpos_p1p2 - ret); //may be it's better to implement ring buffer here
+			cc->bufpos_p1p2 -= ret;
+
+			if (cc->bufpos_p1p2 == 0 && cc->sck_p1 != -1)
+				event_add(cc->ev_read_p1, NULL);
+
+			cc->jam_p1p2 = 0;
+		}
+
+		if (ret == 0)
+		{
+			kill_ptr = cc;
+		}
+		if (ret == -1)
+		{
+#ifdef WIN32
+			ret = WSAGetLastError();
+			if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
+				cc->jam_p1p2 = 1;
+			else
+			{
+				kill_ptr = cc;
+			}
+#else
+			ret = errno;
+			if (ret == EAGAIN || ret == ENOBUFS)
+				cc->jam_p1p2 = 1;
+			else
+			{
+				kill_ptr = cc;
+			}
+#endif
+		}
+
+		if (!kill_ptr && cc->bufpos_p1p2 && s != -1)
+			event_add(cc->ev_write_p2, NULL);
+
+	}
+	if (cc->bufpos_p2p1 /*&& (cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLR_ACTIVE)*/)
+	{
+		if (cc->state == PICA_CCLINK_N2NCLE_ACTIVE) //receiver is on remote node
+		{
+			int sendlen;
+			struct PICA_proto_msg *mp;
+
+			sendlen = (cc->bufpos_p2p1 > PICA_PROTO_N2NMSG_MAXDATASIZE) ? PICA_PROTO_N2NMSG_MAXDATASIZE : cc->bufpos_p2p1;
+
+			if(mp = nodelink_wbuf_push(cc->caller_node, PICA_PROTO_N2NMSG, sendlen + 4 + 2 * PICA_ID_SIZE))
+			{
+				*((unsigned short*)mp->tail) = 2 * PICA_ID_SIZE + sendlen;
+				memcpy(mp->tail + 2, cc->callee_id, PICA_ID_SIZE);
+				memcpy(mp->tail + 2 + PICA_ID_SIZE, cc->caller_id, PICA_ID_SIZE);
+				memcpy(mp->tail + 2 + 2 * PICA_ID_SIZE, cc->buf_p2p1, sendlen);
+				ret = sendlen;
+			}
+			else
+				ret = 0;
+		}
+		else if (s == cc->sck_p1)
+			ret = send(cc->sck_p1, cc->buf_p2p1, cc->bufpos_p2p1, MSG_NOSIGNAL);
+
+		PICA_debug3("process_c2c_write: send  p2p1: ret=%i", ret);
+		if (ret > 0)
+		{
+			if (ret < cc->bufpos_p2p1)
+				memmove(cc->buf_p2p1, cc->buf_p2p1 + ret, cc->bufpos_p2p1 - ret); //may be it's better to implement ring buffer here
+			cc->bufpos_p2p1 -= ret;
+
+			if (cc->bufpos_p2p1 == 0 && cc->sck_p2 != -1)
+				event_add(cc->ev_read_p2, NULL);
+
+			cc->jam_p2p1 = 0;
+		}
+
+		if (ret == 0)
+		{
+			kill_ptr = cc;
+		}
+		if (ret == -1)
+		{
+#ifdef WIN32
+			ret = WSAGetLastError();
+			if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
+				cc->jam_p2p1 = 1;
+			else
+			{
+				kill_ptr = cc;
+			}
+#else
+			ret = errno;
+			if (ret == EAGAIN || ret == ENOBUFS)
+				cc->jam_p2p1 = 1;
+			else
+			{
+				kill_ptr = cc;
+			}
+#endif
+
+		}
+
+		if (!kill_ptr && cc->bufpos_p2p1 && s != -1)
+			event_add(cc->ev_write_p1, NULL);
+
+	}
+
+	if (kill_ptr)
+	{
+		cclink_list_delete(kill_ptr);
+		kill_ptr = 0;
+	}
+}
+
+void process_n2n_write(evutil_socket_t s, short event, void *arg)
+{
+	int ret;
+	struct nodelink *nl = (struct nodelink*)arg;
+
+	struct nodelink *kill_ptr = 0;
+
+	if (nl->w_pos > 0)
+	{
+		if (!nl->btw_ssl)
+			nl->btw_ssl = nl->w_pos;
+
+		ret = SSL_write(nl->anonssl, nl->w_buf, nl->btw_ssl);
+
+		if (ret == nl->btw_ssl)
+		{
+			if (ret < nl->w_pos)
+				memmove(nl->w_buf, nl->w_buf + ret, nl->w_pos - ret); //may be it's better to implement ring buffer here
+			nl->w_pos -= nl->btw_ssl;
+			nl->btw_ssl = 0;
+		}
+
+		if (ret == 0 || ret < 0 && process_async_ssl_readwrite(nl->anonssl, ret) == 0)
+		{
+			kill_ptr = nl;
+		}
+
+	}
+
+	if (kill_ptr)
+	{
+		nodelink_list_delete(kill_ptr);
+		kill_ptr = 0;
+	}
+	else if (nl->w_pos > 0)
+	{
+		event_add(nl->ev_write, NULL);
 	}
 }
 
@@ -3379,56 +3411,14 @@ void process_nodewait()
 
 int node_loop()
 {
-	fd_set fds;
-	struct timeval tv;
-	int nfds, ret;
+	int ret;
 
 	do
 	{
-		nfds = 0;
-
-		FD_ZERO(&fds);
-		tv.tv_sec = SELECT_TIMEOUT;
-		tv.tv_usec = 0;
-
-		listen_set_fds(&fds, &nfds);
-		newconn_set_fds(&fds, &nfds);
-		c2n_set_fds(&fds, &nfds);
-		c2c_set_fds(&fds, &nfds);
-		n2n_set_fds(&fds, &nfds);
-
-		ret = select(nfds + 1, &fds, 0, 0, &tv);
-
-		if (ret < 0)
-		{
-#ifdef WIN32
-			PICA_error("select() error code: %u", WSAGetLastError());
-#else
-			PICA_error("select() error code: %s", strerror(errno));
-#endif
-			return -1;
-		}
-
-		if (ret > 0)
-		{
-			process_c2n_read(&fds);
-			process_c2c_read(&fds);
-			process_n2n_read(&fds);
-			process_newconn_read(&fds);
-			process_listen_read(&fds);
-		}
-
-
-		process_c2n_write();
-		process_c2c_write();
-		process_n2n_write();
-		process_newconn_write();
-
-		process_timeouts();
-		process_nodewait();
+		ret = event_base_loop(pica_event_base, EVLOOP_ONCE);
 	}
 	while(stop_node_loop == 0);////<<<<<<<<<<
-	return 0;
+	return ret;
 }
 
 void print_usage()
