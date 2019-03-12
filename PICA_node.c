@@ -668,10 +668,10 @@ unsigned int procmsg_MULTILOGIN_node(unsigned char* buf, unsigned int size, void
 	struct client *c = client_list_head;
 	uint64_t timestamp;
 	void *sigdatas[4];
-	int sigdatalengths[4];
+	size_t sigdatalengths[4];
 	uint16_t payload_len = *(uint16_t*)(buf + 2);
 	int ret;
-	int siglen;
+	size_t siglen;
 	unsigned char *sig;
 
 	PICA_debug3("MULTILOGIN n2n");
