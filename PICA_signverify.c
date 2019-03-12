@@ -19,7 +19,7 @@
 
 #include <openssl/evp.h>
 
-int PICA_signverify(EVP_PKEY *pubkey, void **datapointers, int *datalengths, unsigned char *sig, int siglen)
+int PICA_signverify(EVP_PKEY *pubkey, void **datapointers, size_t *datalengths, unsigned char *sig, size_t siglen)
 {
 	EVP_MD_CTX *mdctx = NULL;
 	int ret = 0;
@@ -55,7 +55,7 @@ signverify_exit:
 	return ret;
 }
 
-int PICA_do_signature(EVP_PKEY *privkey, void **datapointers, int *datalengths, unsigned char **sig, int *siglen)
+int PICA_do_signature(EVP_PKEY *privkey, void **datapointers, size_t *datalengths, unsigned char **sig, size_t *siglen)
 {
 	int ret = 0;
 	EVP_MD_CTX *mdctx = NULL;

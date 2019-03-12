@@ -1632,7 +1632,7 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 {
 	struct PICA_c2n *c2n = (struct PICA_c2n *) p;
 	void *sigdatas[4];
-	int sigdatalengths[4];
+	size_t sigdatalengths[4];
 	uint64_t timestamp;
 	FILE *f;
 	EVP_PKEY *pubkey;
@@ -1726,10 +1726,10 @@ static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
 {
 	struct PICA_proto_msg *mp;
 	void *sigdatas[4];
-	int sigdatalengths[4];
+	size_t sigdatalengths[4];
 	uint64_t timestamp;
 	unsigned char node_addr[PICA_PROTO_NODELIST_ITEM_IPV4_SIZE];
-	int siglen;
+	size_t siglen;
 	unsigned char *sig = NULL;
 	EVP_PKEY *pkey = NULL;
 	RSA *rsa = NULL;
