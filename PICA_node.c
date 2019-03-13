@@ -1298,13 +1298,6 @@ void cclink_list_delete(struct cclink *l)
 
 	if (l->p1)
 	{
-		if (l->sck_p1 != -1)
-		{
-			SHUTDOWN(l->sck_p1);
-			CLOSE(l->sck_p1);
-			PICA_debug2("closed c2c socket %i", l->sck_p1);
-		}
-
 		if (l->ev_read_p1)
 		{
 			event_del(l->ev_read_p1);
@@ -1316,19 +1309,20 @@ void cclink_list_delete(struct cclink *l)
 			event_del(l->ev_write_p1);
 			event_free(l->ev_write_p1);
 		}
+
+		if (l->sck_p1 != -1)
+		{
+			SHUTDOWN(l->sck_p1);
+			CLOSE(l->sck_p1);
+			PICA_debug2("closed c2c socket %i", l->sck_p1);
+		}
+
 	}//caller_id is stored in p1 structure
 	else
 		free(l->caller_id);//caller_id was allocated by malloc
 
 	if (l->p2)
 	{
-		if (l->sck_p2 != -1)
-		{
-			SHUTDOWN(l->sck_p2);
-			CLOSE(l->sck_p2);
-			PICA_debug2("closed c2c socket %i", l->sck_p2);
-		}
-
 		if (l->ev_read_p2)
 		{
 			event_del(l->ev_read_p2);
@@ -1339,6 +1333,13 @@ void cclink_list_delete(struct cclink *l)
 		{
 			event_del(l->ev_write_p2);
 			event_free(l->ev_write_p2);
+		}
+
+		if (l->sck_p2 != -1)
+		{
+			SHUTDOWN(l->sck_p2);
+			CLOSE(l->sck_p2);
+			PICA_debug2("closed c2c socket %i", l->sck_p2);
 		}
 	}
 	else
