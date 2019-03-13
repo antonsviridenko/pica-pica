@@ -1,6 +1,6 @@
 Pica Pica  Node and Pica Pica Messenger
 ========================
-(c) Copyright  2012 - 2018 Anton Sviridenko
+(c) Copyright  2012 - 2019 Anton Sviridenko
 anton@picapica.im
 
  
@@ -21,7 +21,7 @@ in order to create configure script and install other required files. Autoconf a
 should be installed on your system in this case.
 
 Dependencies:
-	1) pica-node - OpenSSL libraries (libssl and libcrypto) >= 1.0.1, 
+	1) pica-node - OpenSSL libraries (libssl and libcrypto) >= 1.0.1, libevent >= 2.1,
 SQLite3 library (libsqlite3) and sqlite3 command line client
 
 	2) pica-client - OpenSSL libraries (libssl and libcrypto) >=1.0.1 and openssl command line tool,
