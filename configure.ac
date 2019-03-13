@@ -94,8 +94,8 @@ AM_CONDITIONAL([PICA_CLIENT], [test "x$PICA_CLIENT_ENABLED" = "xyes"])
 #pica-node tests
 AS_IF([test "x$PICA_NODE_ENABLED" = "xyes"],[
 AC_CHECK_LIB([sqlite3], [sqlite3_open], [], [AC_MSG_ERROR(["libsqlite3 library not found"])])
-AC_CHECK_LIB([event], [event_get_version], [], [AC_MSG_ERROR(["libevent not found"])])
-
+AC_CHECK_LIB([event], [event_get_version], [PICA_NODE_LIBS="-levent"], [AC_MSG_ERROR(["libevent not found"])])
+AC_SUBST([PICA_NODE_LIBS])
 AC_CHECK_PROG([SQLITE3], [sqlite3], [yes], [no])
 
 AS_IF([test "x$SQLITE3" != xyes],  [ AC_MSG_ERROR(["sqlite3 program not found"])])
