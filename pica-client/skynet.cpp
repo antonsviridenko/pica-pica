@@ -174,6 +174,7 @@ void SkyNet::nodelink_closed(PICA_c2n *c2n, int error)
 	if (self_aware && c2n == active_nodelink)
 	{
 		active_nodelink = NULL;
+		self_aware = false;
 		emit LostSelfAwareness();
 	}
 	else
@@ -220,7 +221,10 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 		}
 	}
 	if (connecting_nodes.empty())
+	{
+		self_aware = false;
 		emit LostSelfAwareness();
+	}
 }
 
 void SkyNet::multilogin_event(quint64 timestamp, QString node_addr, quint16 node_port)
