@@ -47,6 +47,10 @@ public:
 	{
 		return settingsAct;
 	};
+	QAction *NodesAct()
+	{
+		return nodesAct;
+	};
 
 private:
 	QAction *aboutAct;
@@ -54,6 +58,7 @@ private:
 	QAction *showmyidAct;
 	QAction *muteSoundsAct;
 	QAction *settingsAct;
+	QAction *nodesAct;
 
 signals:
 
@@ -64,6 +69,7 @@ private slots:
 	void showmyid();
 	void muteSounds(bool yes);
 	void showsettings();
+	void shownodes();
 };
 
 #endif // PICAACTIONCENTER_H

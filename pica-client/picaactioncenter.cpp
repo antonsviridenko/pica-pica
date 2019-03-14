@@ -25,6 +25,7 @@
 #include "dialogs/showpicaiddialog.h"
 #include "sound.h"
 #include "dialogs/settingsdialog.h"
+#include "dialogs/nodesdialog.h"
 
 #include <QMessageBox>
 
@@ -48,6 +49,9 @@ PicaActionCenter::PicaActionCenter(QObject *parent) :
 
 	settingsAct = new QAction(tr("&Configure Messenger..."), this);
 	connect(settingsAct, SIGNAL(triggered(bool)), this, SLOT(showsettings()));
+
+	nodesAct = new QAction(tr("Show &Nodes..."), this);
+	connect(nodesAct, SIGNAL(triggered()), this, SLOT(shownodes()));
 }
 
 void PicaActionCenter::about()
@@ -94,6 +98,12 @@ void PicaActionCenter::showsettings()
 {
 	SettingsDialog sd;
 	sd.exec();
+}
+
+void PicaActionCenter::shownodes()
+{
+	NodesDialog nd;
+	nd.exec();
 }
 
 void PicaActionCenter::showmyid()

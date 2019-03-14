@@ -127,6 +127,7 @@ void MainWindow::createMenus()
 	accountMenu->addAction(action_center->ShowMyIDAct());
 
 	nodesMenu = menuBar()->addMenu(tr("&Nodes"));
+	nodesMenu->addAction(action_center->NodesAct());
 
 	settingsMenu = menuBar()->addMenu(tr("&Settings"));
 	settingsMenu->addAction(action_center->SettingsAct());

@@ -107,6 +107,8 @@ pica-client/dialogs/filetransferdialog.cpp \
 pica-client/dialogs/filetransferdialog.h \
 pica-client/dialogs/settingsdialog.cpp \
 pica-client/dialogs/settingsdialog.h \
+pica-client/dialogs/nodesdialog.cpp \
+pica-client/dialogs/nodesdialog.h \
 PICA_client.c \
 PICA_client.h \
 PICA_msgproc.c \
@@ -136,6 +138,7 @@ moc_viewcertdialog.cpp \
 moc_showpicaiddialog.cpp \
 moc_dhparam.cpp \
 moc_filetransfercontroller.cpp \
+moc_nodesdialog.cpp \
 ui_mainwindow.h
 
 moc_%.cpp: pica-client/%.h
