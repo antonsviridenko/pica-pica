@@ -135,7 +135,12 @@ int PICA_upnp_autoconfigure_ipv4(int public_port, int local_port, char *public_i
 	char lpstr[8];
 	int ret;
 
+#if MINIUPNPC_API_VERSION < 14
+	devlist = upnpDiscover(2000, 0, 0, 0, 0, &error);
+#else
 	devlist = upnpDiscover(2000, 0, 0, 0, 0, 2, &error);
+#endif
+
 
 	ret = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr));
 
