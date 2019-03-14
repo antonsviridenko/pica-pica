@@ -222,6 +222,7 @@ void nodewait_start_resolve(struct PICA_nodeaddr *a)
 		PICA_error("pthread_attr_init() call failed.");
 
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	pthread_attr_setstacksize(&attr, 65536);
 
 	if (0 != pthread_create(&thr, &attr, nodewait_resolve_thread, (void*)nw))
 		PICA_error("unable to create thread: %s", strerror(errno));
