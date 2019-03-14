@@ -65,11 +65,11 @@ void PicaActionCenter::about()
 	mbx.setWindowIcon(picapica_ico_sit);
 	mbx.setIconPixmap(picapica_ico_sit.pixmap(32));
 	mbx.setTextFormat(Qt::RichText);
-	mbx.setText(tr("<b>Pica Pica Messenger "VERSION_STRING"<br>Copyright (c) 2012 - 2019 Anton Sviridenko</b><br>\
+	mbx.setText(tr("<b>Pica Pica Messenger "VERSION_STRING"<br>Copyright (c) 2012 - 2019 Anton Sviridenko</b><br><br>\
 <a href=https://picapica.im>https://picapica.im</a><br><br>\
-<a href=\"https://picapica.im/?page_id=192&lang=en\">User Manual</a><br>\
+<a href=\"https://picapica.im/?page_id=192&lang=en\">User Manual</a><br><br>\
 protocol version " PICA_PROTO_VER_STRING "<br>"
-"client protocol version " PICA_PROTO_CLIENT_VER_STRING "<br><br>"
+"client protocol version " PICA_PROTO_CLIENT_VER_STRING "<br>"
 "<pre>"
 "This program is free software: you can redistribute it and/or modify" "<br>"
 "it under the terms of the GNU General Public License as published by" "<br>"
