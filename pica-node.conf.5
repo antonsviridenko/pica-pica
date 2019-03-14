@@ -20,7 +20,10 @@ Can be specified in form of DNS name or IP  adress (Right now only IPv4
 address format is supported. IPv6 and domain name support will be added in 
 future releases). If the computer running pica-node is behind the NAT, external 
  public address of NAT machine must be specified and port forwarding must be 
- configured.
+ configured. Default value is "autoconfigure" which makes pica-node try to guess
+ its external IP address. If pica-node is build with miniupnpc support, it will
+ try to employ UPnP protocol to get external IP from the router and enable port
+ forwarding.
 .TP
 .I listen_port
 Specifies the port number that 
@@ -42,9 +45,9 @@ Disables usage of reserved IP ranges (127.0.0.0/8, 10.0.0.0/8, 192.168.0.0/16 an
 If such address is received from other node or is set as "announced_addr" value, it will be 
 rejected. This option can be set to "yes" or "no". Default is "yes".
 .SH AUTHOR
-Anton Sviridenko (anton (at) picapica.im, anton (at) picapica.ge)
+Anton Sviridenko (anton (at) picapica.im)
 .SH SEE ALSO
 .BR pica-node (8)
 
-.BR http://picapica.im
+.BR https://picapica.im
  

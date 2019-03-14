@@ -6,9 +6,8 @@ pica-node \- start the node for Pica Pica Messenger distributed network
 .B pica-node
 [\-f configuration file] [\-v | \-vv | \-vvv] 
 .SH DESCRIPTION
-Pica Pica node serves Pica Pica distributed network. It authenticates users,
-provides info about other existing nodes and online users, routes encrypted
-connections between users.
+Pica Pica node serves Pica Pica distributed network. It provides info about other existing n
+odes and online users, routes encrypted connections between users.
 .PP
 .B pica-node
 listens for TCP connections from clients and other nodes. On startup it loads
@@ -39,10 +38,10 @@ for details
 .I /var/lib/pica-node/nodelist.db
 Nodelist database. This is SQLite 3 database file.
 .TP
-.I /usr/share/pica-node/CA.pem
-Certificate Authority X509 certificate in .pem format
+.I /usr/share/pica-node/dhparam4096.pem 
+Diffie-Hellman parameters, requred for TLS connections.
 .SH AUTHOR
-Anton Sviridenko (anton (at) picapica.im, anton (at) picapica.ge)
+Anton Sviridenko (anton (at) picapica.im)
 .SH SEE ALSO
 .BR pica-node.conf(5)
 
