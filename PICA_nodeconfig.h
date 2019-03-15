@@ -33,9 +33,20 @@
 
 #define PICA_NODECONFIG_DEF_ANNOUNCED_ADDR "autoconfigure"
 #define PICA_NODECONFIG_DEF_LISTEN_PORT "2299"
+
+#ifndef WIN32
+
 #define PICA_NODECONFIG_DEF_NODES_DB_FILE PICA_LOCALSTATEDIR"/pica-node/nodelist.db"
 #define PICA_NODECONFIG_DEF_CONFIG_FILE PICA_SYSCONFDIR"/pica-node.conf"
 #define PICA_NODECONFIG_DEF_DH_PARAM_FILE PICA_INSTALLPREFIX"/share/pica-node/dhparam4096.pem"
+
+#else
+
+#define PICA_NODECONFIG_DEF_NODES_DB_FILE "nodelist.db"
+#define PICA_NODECONFIG_DEF_CONFIG_FILE "pica-node.conf"
+#define PICA_NODECONFIG_DEF_DH_PARAM_FILE "share\\dhparam4096.pem"
+
+#endif
 
 struct nodeconfig
 {

@@ -3727,7 +3727,7 @@ void WINAPI SvcHandler(DWORD ctl)
 
 void WINAPI winservice_main(DWORD argc, LPTSTR *argv)
 {
-	char logfilepath[MAX_PATH];
+	char filepath[MAX_PATH];
 	int ret;
 	HANDLE logfile;
 
@@ -3739,13 +3739,19 @@ void WINAPI winservice_main(DWORD argc, LPTSTR *argv)
 	service_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
 	service_status.dwServiceSpecificExitCode = 0;
 
-	if (S_OK != SHGetFolderPath(NULL, CSIDL_COMMON_APPDATA, NULL, SHGFP_TYPE_CURRENT, logfilepath))
+	if (S_OK != SHGetFolderPath(NULL, CSIDL_COMMON_APPDATA, NULL, SHGFP_TYPE_CURRENT, filepath))
 		return;
 
-	strncat_s(logfilepath, MAX_PATH, "\\pica-node.log", MAX_PATH);
+	strncat_s(filepath, MAX_PATH, "\\pica-node.log", MAX_PATH);
 
-	freopen(logfilepath, "w", stdout);
-	freopen(logfilepath, "w", stderr);
+	freopen(filepath, "w", stdout);
+	freopen(filepath, "w", stderr);
+
+	//set current directory to executable location directory
+	GetModuleFileName(GetModuleHandle(NULL), filepath, MAX_PATH);
+	//strip exe filename part
+	*(strrchr(filepath, '\\') + 1) = 0;
+	SetCurrentDirectory(filepath);
 
 	ReportSvcStatus(SERVICE_START_PENDING, NO_ERROR, 3000);
 
