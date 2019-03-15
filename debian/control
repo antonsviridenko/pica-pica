@@ -2,7 +2,7 @@ Source: pica-pica
 Section: net
 Priority: optional
 Maintainer: Anton Sviridenko <anton@picapica.im>
-Build-Depends: debhelper (>= 8.0.0), autotools-dev, libssl-dev, qtbase5-dev, libminiupnpc-dev, libevent-dev
+Build-Depends: debhelper (>= 8.0.0), autotools-dev, libssl-dev, qtbase5-dev, libminiupnpc-dev, libevent-dev, libsqlite3-dev
 Standards-Version: 3.9.2
 Homepage: http://picapica.im
 
