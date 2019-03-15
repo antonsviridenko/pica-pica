@@ -1945,11 +1945,11 @@ void client_tree_print(struct client *c)
 	char id_buf[2 * PICA_ID_SIZE];
 	if (!c)
 	{
-		puts("NULL");
+		PICA_debug2("client_tree: NULL");
 		return;
 	}
 
-	printf("%p: %s state: %u\nUP: %p\nnext_multi: %p\nLEFT: %p, RIGHT: %p\n\n",
+	PICA_debug2("client_tree %p: %s state: %u\nUP: %p\nnext_multi: %p\nLEFT: %p, RIGHT: %p\n\n",
 			(void*)c, PICA_id_to_base64(c->id, id_buf), c->state,
 			(void*)c->up, (void*)c->next_multi,
 			(void*)c->left, (void*)c->right);
