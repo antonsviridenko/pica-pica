@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.68])
-AC_INIT([Pica Pica Messenger], [0.6dev], [http://picapica.im/bugzilla/], [pica-pica], [http://picapica.im])
+AC_INIT([Pica Pica Messenger], [0.7.0], [http://picapica.im/bugzilla/], [pica-pica], [http://picapica.im])
 AM_INIT_AUTOMAKE([-Wall  foreign subdir-objects])
 AC_CONFIG_SRCDIR([PICA_node.c])
 
