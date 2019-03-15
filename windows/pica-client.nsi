@@ -23,23 +23,31 @@ Section "" ;No components page, name is not important
   ; Put file there
   File "pica-client.exe"
   File "openssl.exe"
-  File "QtCore4.dll"
-  File "QtGui4.dll"
-  File "QtNetwork4.dll"
-  File "QtSql4.dll"
   File "picapica-icon-sit.ico"
   File "COPYING"
-  File "OPENSSL.LICENSE"
-  File "Qt4.LICENSE"
+  File "OPENSSL.LICENSE.txt"
+  File "README"
   File "openssl.cnf"
+  File "libeay32.dll"
+  File "ssleay32.dll"
+  File "libgcc_s_sjlj-1.dll"
+  File "libstdc++-6.dll"
+  File "miniupnpc.dll"
+  File "Qt5Core.dll"
+  File "Qt5Gui.dll"
+  File "Qt5Network.dll"
+  File "Qt5Sql.dll"
+  File "Qt5Widgets.dll"
   SetOutPath "$INSTDIR\share"
-  File  "share\CA.pem"
   File  "share\picapica-icon-fly.png"
   File  "share\picapica-icon-sit.png"
   File  "share\picapica-snd-newmessage.wav"
   File  "share\dhparam4096.pem"
   SetOutPath "$INSTDIR\sqldrivers"
-  File  "sqldrivers\qsqlite4.dll"
+  File  "sqldrivers\qsqlite.dll"
+  SetOutPath "$INSTDIR\platforms"
+  File "platforms\qwindows.dll"
+
   
   WriteUninstaller "uninstall.exe"
   
@@ -61,26 +69,23 @@ SectionEnd
 
 Section "Uninstall"
   Delete $INSTDIR\uninstall.exe 
-  Delete $INSTDIR\pica-client.exe
   Delete "$INSTDIR\pica-client.exe"
   Delete "$INSTDIR\openssl.exe"
-  Delete "$INSTDIR\QtCore4.dll"
-  Delete "$INSTDIR\QtGui4.dll"
-  Delete "$INSTDIR\QtNetwork4.dll"
-  Delete "$INSTDIR\QtSql4.dll"
+  Delete "$INSTDIR\*.dll"
   Delete "$INSTDIR\picapica-icon-sit.ico"
   Delete "$INSTDIR\COPYING"
-  Delete "$INSTDIR\OPENSSL.LICENSE"
-  Delete "$INSTDIR\Qt4.LICENSE"
+  Delete "$INSTDIR\README"
+  Delete "$INSTDIR\OPENSSL.LICENSE.txt"
   Delete "$INSTDIR\openssl.cnf"
-  Delete "$INSTDIR\share\CA.pem"
   Delete "$INSTDIR\share\picapica-icon-fly.png"
   Delete "$INSTDIR\share\picapica-icon-sit.png"
   Delete "$INSTDIR\share\picapica-snd-newmessage.wav"
   Delete "$INSTDIR\share\dhparam4096.pem"
-  Delete "$INSTDIR\sqldrivers\qsqlite4.dll"
+  Delete "$INSTDIR\platforms\*.dll"
+  Delete "$INSTDIR\sqldrivers\*.dll"
   RMDir $INSTDIR\share
   RMDir $INSTDIR\sqldrivers
+  RMDir $INSTDIR\platforms
   RMDir $INSTDIR
   
   Delete "$SMPROGRAMS\Pica Pica Messenger\*.*"
