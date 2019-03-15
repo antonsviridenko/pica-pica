@@ -129,6 +129,8 @@ void SkyNet::nodelink_activated(PICA_c2n *c2n)
 		self_aware = true;
 		active_nodelink = c2n;
 
+		nodes.MakeClean();
+
 		emit BecameSelfAware();
 		//
 		//restore old peer connections, if any
@@ -165,8 +167,6 @@ void SkyNet::nodelink_activated(PICA_c2n *c2n)
 		retry_timer_id = startTimer(10000);
 		//
 	}
-
-
 }
 
 void SkyNet::nodelink_closed(PICA_c2n *c2n, int error)

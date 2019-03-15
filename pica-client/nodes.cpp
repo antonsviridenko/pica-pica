@@ -68,7 +68,38 @@ QList<Nodes::NodeRecord> Nodes::GetNodes()
 
 void Nodes::MakeClean()
 {
+	QSqlQuery query;
+	quint32 count = 0;
 
+	query.exec("select count(*) from nodes");
+
+	if (lasterr.isValid())
+		return;
+
+	if (query.next())
+	{
+		count = query.value(0).toUInt();
+	}
+
+	if (count > 32)
+	{
+		quint32 delcnt;
+
+		query.prepare("select inactive_count from nodes order by inactive_count asc limit 1 offset :halfcount");
+		query.bindValue(":halfcount", count / 2);
+		query.exec();
+
+		if (lasterr.isValid())
+		return;
+
+		if (query.next())
+		{
+			delcnt = query.value(0).toUInt();
+			query.prepare("delete from nodes where inactive_count >= :delcnt");
+			query.bindValue(":delcnt", delcnt);
+			query.exec();
+		}
+	}
 }
 
 void Nodes::UpdateStatus(NodeRecord &n, bool alive)
