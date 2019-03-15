@@ -70,8 +70,7 @@ struct PICA_nodeaddr
 int PICA_nodeaddr_list_load(const char* dbfilename, struct PICA_nodeaddr **list_head);
 int PICA_nodeaddr_save(const char* dbfilename, struct PICA_nodeaddr *naddr);
 int PICA_nodeaddr_update(const char* dbfilename, struct PICA_nodeaddr *naddr, int is_alive);
-int PICA_nodeaddr_list_add();//
-int PICA_nodeaddr_list_remove();//
+int PICA_nodeaddr_cleanold(const char* dbfilename, int treshold);
 void PICA_nodeaddr_list_free(struct PICA_nodeaddr *list_head);
 
 #endif

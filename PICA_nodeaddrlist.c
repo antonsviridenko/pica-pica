@@ -156,6 +156,58 @@ int PICA_nodeaddr_update(const char* dbfilename, struct PICA_nodeaddr *naddr, in
 	return 1;
 }
 
+int PICA_nodeaddr_cleanold(const char* dbfilename, int treshold)
+{
+	sqlite3 *db;
+	sqlite3_stmt *stmt;
+	int ret;
+	const char query[] = "delete from nodes where inactive_count > :treshold";
+
+	ret = sqlite3_open(dbfilename, &db);
+
+	if (ret != SQLITE_OK)
+	{
+		PICA_error("Can't open nodelist database: %s\n", sqlite3_errmsg(db));
+		sqlite3_close(db);
+		return -1;
+	}
+
+	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+
+	if (ret != SQLITE_OK)
+	{
+		PICA_error("Can't prepare SQLite statement: %s\n", sqlite3_errmsg(db));
+		sqlite3_close(db);
+		return -1;
+	}
+
+	ret = sqlite3_bind_int(stmt, 1, treshold);
+
+	if (ret != SQLITE_OK)
+	{
+		PICA_error("Can't bind treshold value: %s\n", sqlite3_errmsg(db));
+		sqlite3_finalize(stmt);
+		sqlite3_close(db);
+		return -1;
+	}
+
+	ret = sqlite3_step(stmt);
+
+	if (ret != SQLITE_DONE)
+	{
+		PICA_error( "Can't execute query: %s\n", sqlite3_errmsg(db));
+		sqlite3_finalize(stmt);
+		sqlite3_close(db);
+		return -1;
+	}
+
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+
+	return 1;
+
+}
+
 int PICA_nodeaddr_save(const char* dbfilename, struct PICA_nodeaddr *naddr)
 {
 	sqlite3 *db;

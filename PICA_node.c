@@ -2592,7 +2592,19 @@ int process_timeouts()
 
 	if (time(0) - skynet_refresh_tmst > SKYNET_REFRESH_TIMEOUT && !nodewait_list)
 	{
+		int clean_treshold = 100 - nodelink_list_count - cclink_list_count;
+
+		if (clean_treshold <= 0)
+			clean_treshold = 3;
+
 		PICA_debug3("refreshing nodelist database");
+
+		if (nodelink_list_count > 0)
+		{
+			PICA_debug3("trying to clean nodes unreachable after more than %i attempts", clean_treshold);
+			PICA_nodeaddr_cleanold(nodecfg.nodes_db_file, clean_treshold);
+		}
+
 		PICA_node_joinskynet(nodecfg.nodes_db_file, nodecfg.announced_addr);
 	}
 	return 1;
