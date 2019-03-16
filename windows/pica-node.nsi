@@ -46,7 +46,8 @@ Section "" ;No components page, name is not important
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pica Pica Node" "NoRepair" 1
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pica Pica Node" "HelpLink" "https://picapica.im"
 
-  Exec 'sc create PicaNodeService binPath= $\"$INSTDIR\pica-node.exe$\" start= auto'
+  Exec 'sc create PicaNodeService binPath= $\"$INSTDIR\pica-node.exe$\" start= auto obj= $\"NT AUTHORITY\LocalService$\"'
+  Exec 'sc start PicaNodeService'
 SectionEnd ; end the section
 
 
