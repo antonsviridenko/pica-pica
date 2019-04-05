@@ -177,6 +177,7 @@ deploy: pica-client/pica-client
 	mkdir -p PicaPicaMessenger.app/Contents/MacOS
 	mkdir -p PicaPicaMessenger.app/Contents/PlugIns/sqldrivers
 	cp apple/Info.plist PicaPicaMessenger.app/Contents/
+	cp apple/picapica.icns PicaPicaMessenger.app/Contents/Resources
 	cp pica-client/pica-client PicaPicaMessenger.app/Contents/MacOS/PicaPicaMessenger
 	cp pica-client/picapica-icon-fly.png PicaPicaMessenger.app/Contents/Resources
 	cp pica-client/picapica-icon-sit.png PicaPicaMessenger.app/Contents/Resources

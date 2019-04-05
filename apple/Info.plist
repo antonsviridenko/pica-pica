@@ -10,7 +10,7 @@
   <string>Pica Pica Messenger</string>
 
   <key>CFBundleIconFile</key>
-  <string>picapica-icon-fly.png</string>
+  <string>picapica.icns</string>
 
   <key>CFBundlePackageType</key>
   <string>APPL</string>
