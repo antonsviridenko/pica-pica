@@ -1775,6 +1775,13 @@ int PICA_node_init()
 
 void newconn_close(struct newconn* nc)
 {
+	if (nc->ev)
+	{
+		event_del(nc->ev);
+		event_free(nc->ev);
+	}
+	nc->ev = NULL;
+
 	CLOSE(nc->sck);
 	PICA_debug3("newconn_close(): nc = %p closed socket %i", nc, nc->sck);
 
@@ -1796,13 +1803,6 @@ void newconn_close(struct newconn* nc)
 	}
 
 	nc->type = NEWCONN_UNKNOWN;
-
-	if (nc->ev)
-	{
-		event_del(nc->ev);
-		event_free(nc->ev);
-	}
-	nc->ev = NULL;
 }
 
 void newconns_init()
@@ -2159,9 +2159,6 @@ void client_list_delete(struct client* ci)
 	if (ci->w_buf)
 		free(ci->w_buf);
 
-	CLOSE(ci->sck_comm);
-	PICA_debug2("closed c2n socket %i", ci->sck_comm);
-
 	if (ci->ev_read)
 	{
 		event_del(ci->ev_read);
@@ -2172,6 +2169,9 @@ void client_list_delete(struct client* ci)
 		event_del(ci->ev_write);
 		event_free(ci->ev_write);
 	}
+
+	CLOSE(ci->sck_comm);
+	PICA_debug2("closed c2n socket %i", ci->sck_comm);
 
 	free(ci);
 }
@@ -2289,6 +2289,11 @@ void nodelink_list_delete(struct nodelink *n)
 
 	SSL_free(n->anonssl);
 
+	event_del(n->ev_read);
+	event_free(n->ev_read);
+	event_del(n->ev_write);
+	event_free(n->ev_write);
+
 	CLOSE(n->sck);
 	PICA_debug2("closed n2n socket %i", n->sck);
 
@@ -2303,11 +2308,6 @@ void nodelink_list_delete(struct nodelink *n)
 		nodelink_list_end = n->prev;
 
 	cclink_list_delete_by_nodelink(n);
-
-	event_del(n->ev_read);
-	event_free(n->ev_read);
-	event_del(n->ev_write);
-	event_free(n->ev_write);
 
 	nodelink_list_count--;
 	free(n);
