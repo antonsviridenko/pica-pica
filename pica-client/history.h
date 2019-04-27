@@ -40,6 +40,7 @@ public:
 	void Add(QByteArray peer_id, QString message, bool is_me);//is_me - true - message from me to peer, false - from peer to me
 	void SetDelivered(QByteArray peer_id); //mark first undelivered message from me to peer as delivered
 	QList<HistoryRecord> GetMessages(QByteArray peer_id, quint32 start_timestamp, quint32 end_timestamp);
+	QList<HistoryRecord> GetMessages(QByteArray peer_id, QString keyword);
 	QMap<QByteArray, QList<QString> > GetUndeliveredMessages();
 	bool isOK();
 	QString GetLastError();

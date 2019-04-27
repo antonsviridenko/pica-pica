@@ -74,6 +74,7 @@ private:
 	QAction *hist24h;
 	QAction *hist1week;
 	QAction *histAll;
+	QAction *histSearch;
 	QString peer_name_;
 	QString my_name_;
 	bool addcontactquestion;
@@ -96,6 +97,7 @@ private slots:
 	void show_history24h();
 	void show_history1w();
 	void show_historyAll();
+	void show_historySearch();
 
 	void addct_yes();
 	void addct_no();

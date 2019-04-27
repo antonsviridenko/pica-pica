@@ -83,6 +83,41 @@ void History::SetDelivered(QByteArray peer_id)
 	lasterr = query.lastError();
 }
 
+QList<History::HistoryRecord> History::GetMessages(QByteArray peer_id, QString keyword)
+{
+	QList<HistoryRecord> L;
+	HistoryRecord r;
+	QSqlQuery query;
+
+	query.setForwardOnly(true);
+	query.prepare("select contact_id, is_me, is_delivered, timestamp, message from history \
+               where contact_id=:peer_id and account_id=:me and message like :keyword order by id"
+	             );
+
+	query.bindValue(":peer_id", peer_id);
+	query.bindValue(":me", me_);
+	query.bindValue(":keyword", QString("%%1%").arg(keyword));
+	query.exec();
+
+	lasterr = query.lastError();
+
+	if (lasterr.isValid())
+		return L;
+
+	while(query.next())
+	{
+		r.peer_id =      query.value(0).toByteArray();
+		r.is_me =        query.value(1).toBool();
+		r.is_delivered = query.value(2).toBool();
+		r.timestamp =    query.value(3).toUInt();
+		r.message =      query.value(4).toString();
+
+		L << r;
+	}
+
+	return L;
+}
+
 QList<History::HistoryRecord> History::GetMessages(QByteArray peer_id, quint32 start_timestamp, quint32 end_timestamp)
 {
 	QList<HistoryRecord> L;

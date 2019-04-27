@@ -26,6 +26,7 @@
 #include <QMessageBox>
 #include <QDateTime>
 #include <QMessageBox>
+#include <QInputDialog>
 
 
 ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
@@ -115,6 +116,7 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 	hist24h = new QAction(tr("Last 24 &Hours"), this);
 	hist1week = new QAction(tr("Last &Week"), this);
 	histAll = new QAction(tr("&All"), this);
+	histSearch = new QAction(tr("&Search History..."), this);
 
 	{
 		QMenu *m;
@@ -123,12 +125,14 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 		m->addAction(hist24h);
 		m->addAction(hist1week);
 		m->addAction(histAll);
+		m->addAction(histSearch);
 	}
 	layout->insertSpacing(0, menu->size().height());
 
 	connect(hist24h, SIGNAL(triggered()), this, SLOT(show_history24h()));
 	connect(hist1week, SIGNAL(triggered()), this, SLOT(show_history1w()));
 	connect(histAll, SIGNAL(triggered()), this, SLOT(show_historyAll()));
+	connect(histSearch, SIGNAL(triggered()), this, SLOT(show_historySearch()));
 
 }
 
@@ -357,6 +361,17 @@ void ChatWindow::show_history1w()
 void ChatWindow::show_historyAll()
 {
 	print_history(hist.GetMessages(peer_id_, 0, QDateTime::currentDateTime().toTime_t()));
+}
+
+void ChatWindow::show_historySearch()
+{
+	bool ok;
+	QString keyword = QInputDialog::getText(this, tr("Search in message history"),
+	                                     tr("Find:"), QLineEdit::Normal,
+	                                     QString(), &ok);
+
+	if (ok)
+		print_history(hist.GetMessages(peer_id_, keyword));
 }
 
 void ChatWindow::addct_yes()
