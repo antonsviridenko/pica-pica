@@ -120,6 +120,7 @@ void MainWindow::createMenus()
 {
 	contactsMenu = menuBar()->addMenu(tr("&Contacts"));
 	contactsMenu->addAction(contact_list->addcontactAct);
+	contactsMenu->addAction(contact_list->showblacklistAct);
 	contactsMenu->addSeparator();
 	contactsMenu->addAction(action_center->ExitAct());
 

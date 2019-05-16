@@ -52,6 +52,7 @@ public:
 	QString GetContactName(QByteArray id);
 	void SetContactCert(QByteArray id, QString &cert_pem);
 	void SetContactName(QByteArray id, QString name);
+	void SetContactType(QByteArray id, ContactType type);
 	QString GetLastError();
 	bool isOK();
 

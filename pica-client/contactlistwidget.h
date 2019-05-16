@@ -37,11 +37,14 @@ public:
 	QAction *viewcertAct;
 	QAction *showidAct;
 	QAction *sendfileAct;
+	QAction *showblacklistAct;
+	QAction *movetoblacklistAct;
+	QAction *removefromblacklistAct;
 protected:
 	void contextMenuEvent(QContextMenuEvent *event);
 
 private:
-	void setContactsStorage(Contacts *ct);
+	void setContactsStorage(Contacts *ct, bool show_blacklisted = false);
 	Contacts* storage;
 	QList<Contacts::ContactRecord> contact_records;
 	QMap<QListWidgetItem*, Contacts::ContactRecord*> wgitem_to_recs;
@@ -60,6 +63,9 @@ private slots:
 	void view_cert();
 	void show_id();
 	void send_file();
+	void show_blacklist(bool checked);
+	void move_to_blacklist();
+	void remove_from_blacklist();
 
 	//void debug_onmsginput(QString msg, ChatWindow *sender_window);//debug remove after debug
 };

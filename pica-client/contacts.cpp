@@ -126,6 +126,7 @@ QList<Contacts::ContactRecord> Contacts::GetContacts(ContactType type)
 	{
 		r.id = query.value(0).toByteArray();
 		r.name = query.value(1).toString();
+		r.type = type;
 		//CSTRL.append(" ("+query.value(0).toString()+") "+query.value(1).toString());
 		L << r;
 	}
@@ -191,6 +192,19 @@ void Contacts::SetContactName(QByteArray id, QString name)
 
 	query.prepare("update contacts set name=:name where id=:id and account_id=:account_id");
 	query.bindValue(":name", name);
+	query.bindValue(":id", id);
+	query.bindValue(":account_id", account_id_);
+	query.exec();
+
+	lasterr = query.lastError();
+}
+
+void Contacts::SetContactType(QByteArray id, ContactType type)
+{
+	QSqlQuery query;
+
+	query.prepare("update contacts set type=:type where id=:id and account_id=:account_id");
+	query.bindValue(":type", type);
 	query.bindValue(":id", id);
 	query.bindValue(":account_id", account_id_);
 	query.exec();

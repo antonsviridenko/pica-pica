@@ -52,6 +52,16 @@ ContactListWidget::ContactListWidget(QWidget *parent) :
 	sendfileAct = new QAction(tr("Send &File"), this);
 	connect(sendfileAct, SIGNAL(triggered()), this, SLOT(send_file()));
 
+	showblacklistAct = new QAction(tr("Show &Blacklisted Contacts"), this);
+	showblacklistAct->setCheckable(true);
+	connect(showblacklistAct, SIGNAL(triggered(bool)), this, SLOT(show_blacklist(bool)));
+
+	movetoblacklistAct = new QAction(tr("&Move to Blacklist"), this);
+	connect(movetoblacklistAct, SIGNAL(triggered()), this, SLOT(move_to_blacklist()));
+
+	removefromblacklistAct = new QAction(tr("&Remove From Blacklist"), this);
+	connect(removefromblacklistAct, SIGNAL(triggered()), this, SLOT(remove_from_blacklist()));
+
 	connect(this, SIGNAL(itemDoubleClicked(QListWidgetItem*)), this, SLOT(start_chat()));
 
 	setContactsStorage(new Contacts(config_dbname, Accounts::GetCurrentAccount().id));
@@ -67,24 +77,34 @@ void ContactListWidget::contextMenuEvent(QContextMenuEvent *event)
 {
 	QMenu menu(this);
 
-	if (this->itemAt(event->pos()))
+	if (this->itemAt(event->pos()) && wgitem_to_recs.contains(this->itemAt(event->pos())))
 		menu.addAction(delcontactAct);
 
 	menu.addAction(addcontactAct);
 
-	if (this->itemAt(event->pos()))
+	if (this->itemAt(event->pos()) && wgitem_to_recs.contains(this->itemAt(event->pos())))
 	{
 		menu.addAction(startchatAct);
 		menu.addAction(viewcertAct);
 		menu.addAction(showidAct);
 		menu.addAction(sendfileAct);
+
+		if (wgitem_to_recs[this->itemAt(event->pos())]->type == Contacts::blacklisted)
+		{
+			menu.addAction(removefromblacklistAct);
+		}
+		else
+		{
+			menu.addAction(movetoblacklistAct);
+		}
 	}
 	menu.exec(event->globalPos());
 }
 
-void ContactListWidget::setContactsStorage(Contacts *ct)
+void ContactListWidget::setContactsStorage(Contacts *ct, bool show_blacklisted)
 {
 	clear();
+	wgitem_to_recs.clear();
 	// this->addItems(ct->GetContacts());
 	storage = ct;
 	contact_records = ct->GetContacts();
@@ -95,6 +115,27 @@ void ContactListWidget::setContactsStorage(Contacts *ct)
 		wgitem_to_recs[this->item(i)] = &contact_records[i];
 		this->item(i)->setStatusTip(contact_records[i].id.toBase64());
 		this->item(i)->setToolTip(contact_records[i].id.toBase64().constData());
+	}
+
+	if (show_blacklisted)
+	{
+		QList<Contacts::ContactRecord> bl = ct->GetContacts(Contacts::blacklisted);
+		int offset = contact_records.size();
+
+		if(!bl.empty())
+		{
+			addItem(QString("--Blacklisted Contacts--"));
+			offset++;
+			contact_records.append(bl);
+		}
+
+		for (int i = 0; i < bl.size(); i++)
+		{
+			addItem(QString("(%1...) %2").arg(bl[i].id.toBase64().left(8).constData()).arg(bl[i].name));
+			wgitem_to_recs[this->item(i + offset)] = &contact_records[i + offset - 1];
+			this->item(i + offset)->setStatusTip(bl[i].id.toBase64());
+			this->item(i + offset)->setToolTip(bl[i].id.toBase64().constData());
+		}
 	}
 }
 
@@ -223,6 +264,23 @@ void ContactListWidget::show_id()
 void ContactListWidget::Reload()
 {
 	setContactsStorage(storage);
+}
+
+void ContactListWidget::show_blacklist(bool checked)
+{
+	setContactsStorage(storage, checked);
+}
+
+void ContactListWidget::move_to_blacklist()
+{
+	storage->SetContactType(wgitem_to_recs[currentItem()]->id, Contacts::blacklisted);
+	setContactsStorage(storage, showblacklistAct->isChecked());
+}
+
+void ContactListWidget::remove_from_blacklist()
+{
+	storage->SetContactType(wgitem_to_recs[currentItem()]->id, Contacts::regular);
+	setContactsStorage(storage, showblacklistAct->isChecked());
 }
 
 void ContactListWidget::send_file()
