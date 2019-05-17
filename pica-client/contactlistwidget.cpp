@@ -143,7 +143,7 @@ void ContactListWidget::add_contact()
 {
 	bool ok;
 	QString input = QInputDialog::getText(this, tr("Add New Contact"),
-			tr("<b>It is very important to make sure this ID actually belongs to person you want to talk to.</b><br>Pica Pica ID: "), QLineEdit::Normal, NULL, &ok);
+			tr("<b>It is very important to make sure this ID actually belongs to the person you want to talk to.</b><br>Pica Pica ID: "), QLineEdit::Normal, NULL, &ok);
 
 	if (ok && !input.isEmpty())
 	{
