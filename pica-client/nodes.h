@@ -34,6 +34,7 @@ public:
 
 	Nodes(QString storage);
 	void Add(NodeRecord &n);
+	void Delete(NodeRecord &n);
 	QList<NodeRecord> GetNodes();
 	void MakeClean();//remove old inactive node records
 	void UpdateStatus(NodeRecord &n, bool alive);

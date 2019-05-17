@@ -34,10 +34,14 @@ signals:
 public slots:
 private slots:
 	void OK();
+	void Delete();
+	void Add();
 
 private:
 	QListWidget *lwNodes;
 	QPushButton *pbOk;
+	QPushButton *pbDelete;
+	QPushButton *pbAdd;
 };
 
 #endif // NODESDIALOG_H

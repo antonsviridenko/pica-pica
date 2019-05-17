@@ -42,6 +42,18 @@ void Nodes::Add(NodeRecord &n)
 	lasterr = query.lastError();
 }
 
+void Nodes::Delete(NodeRecord &n)
+{
+	QSqlQuery query;
+
+	query.prepare("delete from nodes where address = :addr and port = :port");
+	query.bindValue(":addr", n.address);
+	query.bindValue(":port", n.port);
+	query.exec();
+
+	lasterr = query.lastError();
+}
+
 QList<Nodes::NodeRecord> Nodes::GetNodes()
 {
 	QList<NodeRecord> L;

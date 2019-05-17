@@ -25,6 +25,9 @@
 #include <QHBoxLayout>
 #include <QListWidget>
 #include <QMenu>
+#include <QRegExp>
+#include <QMessageBox>
+#include <QInputDialog>
 
 NodesDialog::NodesDialog(QWidget *parent) :
 	QDialog(parent)
@@ -32,12 +35,17 @@ NodesDialog::NodesDialog(QWidget *parent) :
 	Nodes nodes(config_dbname);
 	lwNodes = new QListWidget(this);
 	pbOk = new QPushButton(tr("OK"), this);
+	pbAdd = new QPushButton(tr("Add"), this);
+	pbDelete = new QPushButton(tr("Delete"), this);
 
 	QHBoxLayout *lh = new QHBoxLayout(this);
 	QVBoxLayout *lv = new QVBoxLayout();
 
 	lh->addWidget(lwNodes, 4, Qt::AlignLeft);
+	lv->addWidget(pbAdd, 0, Qt::AlignTop);
+	lv->addWidget(pbDelete, 0, Qt::AlignTop);
 	lv->addWidget(pbOk, 0, Qt::AlignTop);
+	lv->addStretch();
 	lh->addLayout(lv, 0);
 
 	setLayout(lh);
@@ -51,6 +59,8 @@ NodesDialog::NodesDialog(QWidget *parent) :
 	}
 
 	connect(pbOk, SIGNAL(clicked()), this, SLOT(OK()));
+	connect(pbDelete, SIGNAL(clicked()), this, SLOT(Delete()));
+	connect(pbAdd, SIGNAL(clicked()), this, SLOT(Add()));
 
 	setWindowTitle(tr("Known nodes"));
 }
@@ -58,4 +68,42 @@ NodesDialog::NodesDialog(QWidget *parent) :
 void NodesDialog::OK()
 {
 	done(0);
+}
+
+void NodesDialog::Add()
+{
+	QRegExp rx("(.+):(\\d{1,5})");
+	bool ok;
+	QString input = QInputDialog::getText(this, tr("Add New Node"),
+			tr("hostname:port (ex. picanode.example:com:2299 1.2.3.4:1234)"), QLineEdit::Normal, NULL, &ok);
+
+	if (ok && rx.exactMatch(input))
+	{
+		Nodes nodes(config_dbname);
+		Nodes::NodeRecord nr;
+
+		nr.address = rx.cap(1);
+		nr.port = rx.cap(2).toUInt();
+
+		nodes.Add(nr);
+		new QListWidgetItem(nr.address.append(':').append(QString::number(nr.port)), lwNodes);
+	}
+}
+
+void NodesDialog::Delete()
+{
+	if (lwNodes->currentItem())
+	{
+		Nodes nodes(config_dbname);
+		Nodes::NodeRecord nr;
+		QRegExp rx("(.+):(\\d{1,5})");
+
+		if (rx.exactMatch(lwNodes->currentItem()->text()))
+		{
+			nr.address = rx.cap(1);
+			nr.port = rx.cap(2).toUInt();
+			nodes.Delete(nr);
+			delete lwNodes->takeItem(lwNodes->currentRow());
+		}
+	}
 }
