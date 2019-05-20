@@ -92,12 +92,17 @@ private:
 
 	QMap<QByteArray, QList<QString> > msgqueues;
 	QMap<QByteArray, QList<QString> > sndfilequeues;
-	int retry_timer_id;
+	QMap<QByteArray, quint32> c2c_reconnect_timeouts;
+	int nodelink_reconnect_timer_id;
 	int event_loop_timer_id;
 	int file_transfer_timer_id;
+	int c2c_reconnect_timer_id;
 
 	void timerEvent(QTimerEvent * e);
 
+	void reconnect_c2c();
+	void update_c2c_reconnect_timeout(QByteArray peer_id);
+	void reset_c2c_reconnect_timeout(QByteArray peer_id);
 	void flush_queues(QByteArray to);
 	struct PICA_c2c *find_active_chan(QByteArray peer_id);
 	QList<QByteArray> filter_existing_chans(QList<QByteArray> peer_ids);

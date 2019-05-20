@@ -29,6 +29,7 @@
 #include "askpassword.h"
 #include "settings.h"
 #include "../PICA_netconf.h"
+#include <time.h>
 
 SkyNet::SkyNet()
 	: nodes(config_dbname), QObject(0), active_filetransfers(0)
@@ -70,6 +71,7 @@ SkyNet::SkyNet()
 	connect(this, SIGNAL(MultiloginMessageReceived(quint64,QString,quint16)), this, SLOT(multilogin_event(quint64,QString,quint16)), Qt::QueuedConnection);
 
 	event_loop_timer_id = startTimer(100);
+	c2c_reconnect_timer_id = startTimer(1000);
 	file_transfer_timer_id = 0;
 
 }
@@ -132,9 +134,6 @@ void SkyNet::nodelink_activated(PICA_c2n *c2n)
 		nodes.MakeClean();
 
 		emit BecameSelfAware();
-		//
-		//restore old peer connections, if any
-		QList<QByteArray> c2c_peer_ids;
 
 		//load undelivered messages from history
 		if (msgqueues.isEmpty())
@@ -146,26 +145,8 @@ void SkyNet::nodelink_activated(PICA_c2n *c2n)
 
 		//load file transfers to be completed
 		// sndfilequeues = ...
-
-		QMap<QByteArray, QList<QString> > queues = msgqueues;
-
-		queues.unite(sndfilequeues);
-
-		c2c_peer_ids = queues.uniqueKeys();
-
-		for (int i = 0; i < c2c_peer_ids.size(); i++)
-		{
-			int ret;
-			struct PICA_c2c *chan = NULL;
-
-			ret = PICA_new_c2c(active_nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
-
-			qDebug() << "restoring c2c to " << c2c_peer_ids[i] << " ret =" << ret << "\n";
-		}
-
-		//start timer
-		retry_timer_id = startTimer(10000);
-		//
+		c2c_reconnect_timeouts.clear();
+		reconnect_c2c();
 	}
 }
 
@@ -176,6 +157,7 @@ void SkyNet::nodelink_closed(PICA_c2n *c2n, int error)
 		active_nodelink = NULL;
 		self_aware = false;
 		emit LostSelfAwareness();
+		nodelink_reconnect_timer_id = startTimer(10000);
 	}
 	else
 	{
@@ -224,6 +206,7 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 	{
 		self_aware = false;
 		emit LostSelfAwareness();
+		nodelink_reconnect_timer_id = startTimer(10000);
 	}
 }
 
@@ -304,6 +287,57 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 	}
 }
 
+void SkyNet::update_c2c_reconnect_timeout(QByteArray peer_id)
+{
+	if (c2c_reconnect_timeouts.contains(QByteArray((const char*)peer_id, PICA_ID_SIZE)))
+		c2c_reconnect_timeouts[QByteArray((const char*)peer_id, PICA_ID_SIZE)] *= 2;
+	else
+		c2c_reconnect_timeouts[QByteArray((const char*)peer_id, PICA_ID_SIZE)] = 1;
+
+	if (c2c_reconnect_timeouts[QByteArray((const char*)peer_id, PICA_ID_SIZE)] >= 64)
+		c2c_reconnect_timeouts[QByteArray((const char*)peer_id, PICA_ID_SIZE)] = 64;
+}
+
+void SkyNet::reset_c2c_reconnect_timeout(QByteArray peer_id)
+{
+	c2c_reconnect_timeouts.remove(peer_id);
+}
+
+void SkyNet::reconnect_c2c()
+{
+	if (msgqueues.empty() && sndfilequeues.empty())
+		return;
+
+	if (self_aware)
+	{
+		QMap<QByteArray, QList<QString> > queues = msgqueues;
+		queues.unite(sndfilequeues);
+		time_t t = time(NULL);
+
+		QList<QByteArray> c2c_peer_ids = queues.uniqueKeys();
+
+		c2c_peer_ids = filter_existing_chans(c2c_peer_ids);
+
+		for (int i = 0; i < c2c_peer_ids.size(); i++)
+		{
+			int ret;
+
+			struct PICA_c2c *chan = NULL;
+
+			if (c2c_reconnect_timeouts.contains(c2c_peer_ids[i]))
+			{
+				if (t % c2c_reconnect_timeouts[c2c_peer_ids[i]] != 0)
+					continue;
+			}
+
+			ret = PICA_new_c2c(active_nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
+
+			qDebug() << "restoring c2c to " << c2c_peer_ids[i].toBase64() << " ret =" << ret << " in timer event\n";
+
+		}
+	}
+}
+
 void SkyNet::timerEvent(QTimerEvent *e)
 {
 	if (e->timerId() == file_transfer_timer_id || e->timerId() == event_loop_timer_id)
@@ -337,32 +371,12 @@ void SkyNet::timerEvent(QTimerEvent *e)
 		return;
 	}
 
+	if (self_aware && e->timerId() == c2c_reconnect_timer_id)
+		reconnect_c2c();
 
-	if (self_aware)
+	if (!self_aware && e->timerId() == nodelink_reconnect_timer_id)
 	{
-		QMap<QByteArray, QList<QString> > queues = msgqueues;
-		queues.unite(sndfilequeues);
-
-		QList<QByteArray> c2c_peer_ids = queues.uniqueKeys();
-
-		c2c_peer_ids = filter_existing_chans(c2c_peer_ids);
-
-		for (int i = 0; i < c2c_peer_ids.size(); i++)
-		{
-			int ret;
-
-			struct PICA_c2c *chan = NULL;
-
-			ret = PICA_new_c2c(active_nodelink, (const unsigned char*)c2c_peer_ids[i].constData(), NULL, &chan);
-
-			qDebug() << "restoring c2c to " << c2c_peer_ids[i].toBase64() << " ret =" << ret << " in timer event\n";
-
-		}
-
-	}
-	else
-	{
-		killTimer(e->timerId());
+		killTimer(nodelink_reconnect_timer_id);
 		Accounts::AccountRecord acc = this->CurrentAccount();
 		Join(acc);
 	}
@@ -508,7 +522,6 @@ void SkyNet::Exit()
 	self_aware = false;
 
 	active_filetransfers_reset();
-	killTimer(retry_timer_id);
 
 	msgqueues.clear();
 
@@ -915,12 +928,14 @@ void SkyNet::msgok_cb(const unsigned char *peer_id)
 
 void SkyNet::c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
 {
+	skynet->reset_c2c_reconnect_timeout(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString("🔐: %1 c2c").arg(ciphersuitename));
 	skynet->flush_queues(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
 void SkyNet::c2c_failed(const unsigned char *peer_id)
 {
+	skynet->update_c2c_reconnect_timeout(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 	qDebug() << "c2c failed (" << QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64() << ")\n";
 	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString(tr("Failed to connect")));
 }
@@ -932,6 +947,7 @@ int SkyNet::accept_cb(const unsigned char *caller_id)
 
 void SkyNet::notfound_cb(const unsigned char *callee_id)
 {
+	skynet->update_c2c_reconnect_timeout(QByteArray((const char*)callee_id, PICA_ID_SIZE));
 	qDebug() << "not found (" << QByteArray((const char*)callee_id, PICA_ID_SIZE).toBase64() << ")\n";
 
 	/*
