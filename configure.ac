@@ -63,7 +63,7 @@ AS_IF([test "x$qt_version" = xqt5],
 # Checks for common libraries, required by both pica-node and pica-client
 AC_SEARCH_LIBS([dlopen], [dl])
 AC_CHECK_LIB([crypto], [RAND_add],[],[AC_MSG_ERROR(["libcrypto from OpenSSL package not found"])],[ -lz ])
-AC_CHECK_LIB([ssl], [SSL_library_init],[],[AC_MSG_ERROR(["libssl from OpenSSL package not found"])])
+AC_CHECK_LIB([ssl], [SSL_new],[],[AC_MSG_ERROR(["libssl from OpenSSL package not found"])])
 AC_CHECK_LIB([pthread], [pthread_create])
 
 #checking if pica-node is disabled

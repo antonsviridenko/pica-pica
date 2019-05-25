@@ -196,19 +196,6 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 		       X509_verify_cert_error_string(err), depth, buf);
 	}
 
-
-	/*
-	 * At this point, err contains the last verification error. We can use
-	 * it for something special
-	 */
-	if (!preverify_ok && (err == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT))
-	{
-		X509_NAME_oneline(X509_get_issuer_name(ctx->current_cert), buf, 256);
-		printf("issuer= %s\n", buf);
-	}
-
-
-
 	return preverify_ok;
 }
 
@@ -382,8 +369,11 @@ static int verify_peer_cert_common(X509 **peer_cert, SSL *ssl, const unsigned ch
 		return PICA_ERRNOPEERCERT;
 
 	rsa = EVP_PKEY_get1_RSA(pubkey);
-
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	if (!rsa || !rsa->n || BN_num_bits(rsa->n) < PICA_RSA_MINKEYSIZE)
+#else
+	if (!rsa || RSA_bits(rsa) < PICA_RSA_MINKEYSIZE)
+#endif
 		return PICA_ERRNOPEERCERT;
 
 	RSA_free(rsa);
