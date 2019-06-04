@@ -1500,7 +1500,11 @@ int PICA_open_acc(const char *cert_file,
 	ret = SSL_CTX_set_cipher_list(a->ctx, PICA_TLS_CIPHERLIST);
 
 	if (ret == 1)
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 		ret = SSL_CTX_set_cipher_list(a->anon_ctx, PICA_TLS_ANONDHCIPHERLIST);
+#else
+		ret = SSL_CTX_set_cipher_list(a->anon_ctx, PICA_TLS_ANONDHCIPHERLIST "@SECLEVEL=0");
+#endif
 
 	if (ret != 1)
 	{

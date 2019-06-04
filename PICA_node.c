@@ -1762,7 +1762,11 @@ int PICA_node_init()
 	if (ret != 1)
 		PICA_fatal("Failed to set DH parameters");
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	ret = SSL_CTX_set_cipher_list(anon_ctx, PICA_TLS_ANONDHCIPHERLIST);
+#else
+	ret = SSL_CTX_set_cipher_list(anon_ctx, PICA_TLS_ANONDHCIPHERLIST "@SECLEVEL=0");
+#endif
 
 	if (!ret)
 		PICA_fatal("failed to set cipher list " PICA_TLS_ANONDHCIPHERLIST);
