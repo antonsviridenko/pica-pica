@@ -10,7 +10,7 @@ LicenseData "COPYING"
 
 InstallDir "$PROGRAMFILES\Pica Pica Messenger"
 
-Icon "picapica-icon-sit.ico"
+Icon "picapica.ico"
 
 RequestExecutionLevel admin
 
@@ -23,7 +23,7 @@ Section "" ;No components page, name is not important
   ; Put file there
   File "pica-client.exe"
   File "openssl.exe"
-  File "picapica-icon-sit.ico"
+  File "picapica.ico"
   File "COPYING"
   File "OPENSSL.LICENSE.txt"
   File "README"
@@ -63,7 +63,7 @@ Section "Start Menu Shortcuts"
 
   CreateDirectory "$SMPROGRAMS\Pica Pica Messenger"
   SetOutPath $INSTDIR
-  CreateShortCut "$SMPROGRAMS\Pica Pica Messenger\Pica Pica Messenger.lnk" "$INSTDIR\pica-client.exe" "" "$INSTDIR\picapica-icon-sit.ico" 
+  CreateShortCut "$SMPROGRAMS\Pica Pica Messenger\Pica Pica Messenger.lnk" "$INSTDIR\pica-client.exe" "" "$INSTDIR\picapica.ico" 
   
 SectionEnd
 
@@ -72,7 +72,7 @@ Section "Uninstall"
   Delete "$INSTDIR\pica-client.exe"
   Delete "$INSTDIR\openssl.exe"
   Delete "$INSTDIR\*.dll"
-  Delete "$INSTDIR\picapica-icon-sit.ico"
+  Delete "$INSTDIR\picapica.ico"
   Delete "$INSTDIR\COPYING"
   Delete "$INSTDIR\README"
   Delete "$INSTDIR\OPENSSL.LICENSE.txt"

@@ -20,10 +20,10 @@ set -e
 
 case "$1" in
     configure)
-
-        xdg-icon-resource install --size 32 "/usr/share/pica-client/picapica-icon-sit.png" pica-client
-	xdg-icon-resource install --size 22 "/usr/share/pica-client/picapica-icon-sit.png" pica-client
-	xdg-icon-resource install --size 64 "/usr/share/pica-client/picapica-icon-sit.png" pica-client
+	xdg-icon-resource install --size 16 "/usr/share/pica-client/icons/icon_16x16.png" pica-client
+        xdg-icon-resource install --size 32 "/usr/share/pica-client/icons/icon_32x32.png" pica-client
+	xdg-icon-resource install --size 48 "/usr/share/pica-client/icons/icon_48x48.png" pica-client
+	xdg-icon-resource install --size 256 "/usr/share/pica-client/picapica-icon-fly.png" pica-client
 
     ;;
 

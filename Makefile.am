@@ -8,7 +8,8 @@ EXTRA_DIST = 	iniparser/LICENSE \
 			debian \
 			gentoo \
 			windows \
-			apple/Info.plist
+			apple \
+			pica-client/icons
 
 #####################################
 if PICA_NODE

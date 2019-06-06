@@ -10,7 +10,7 @@ LicenseData "COPYING"
 
 InstallDir "$PROGRAMFILES\Pica Pica Node"
 
-Icon "picapica-icon-sit.ico"
+Icon "picapica.ico"
 
 RequestExecutionLevel admin
 
