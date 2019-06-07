@@ -1,3 +1,15 @@
+pica-pica (0.7.1-1) unstable; urgency=low
+
+  * Release 0.7.1
+  * New icons
+  * Add/Remove nodes is now supported in Nodes dialog
+  * Managing black list
+  * Search in message history
+  * Support building with OpenSSL 1.1.0 branch
+  * Fixed removing libevent events in pica-node when connection is closed
+
+ -- Anton Sviridenko <anton@picapica.im>  Fri, 07 Jun 2019 21:20:00 +0400
+
 pica-pica (0.7.0-1) unstable; urgency=low
 
   * Release 0.7.0
