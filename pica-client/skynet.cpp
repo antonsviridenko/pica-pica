@@ -974,7 +974,7 @@ void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
 
 void SkyNet::nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port)
 {
-	Nodes::NodeRecord nr = {addr_str, port};
+	Nodes::NodeRecord nr = {addr_str, static_cast<quint16>(port)};
 	skynet->nodes.Add(nr);
 }
 
