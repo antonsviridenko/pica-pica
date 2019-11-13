@@ -49,7 +49,7 @@ pica-client.pro in Qt Creator IDE or use QMake to generate Makefile
 
 LICENSE
 =========================
-GPL-3.0-or-later
+GPL-3.0-only
 
 See COPYING file
 
