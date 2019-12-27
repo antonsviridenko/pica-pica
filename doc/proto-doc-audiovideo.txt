@@ -1,0 +1,34 @@
+Audio and Video Calls.
+
+Call request (ring)
+[0x70 0x70]
+
+Call answer (pick up)
+[0x71 0x71]
+
+Call reject 
+[0x72 0x72]
+
+Call hang up (finished)
+[0x73 0x73]
+
+Audio stream parameters
+[0x74 0x74]
+[codec - 20 octet string, left-aligned, padded with zeroes,
+"opus", "adpcm_g722", "pcm_alaw" named as in ffmpeg]
+[sample rate, uint16_t little-endian]
+
+Video stream parameters
+[0x75 0x75]
+[codec - 20 octet string, left-aligned, padded with zeroes, e.g.
+"hevc", "h264", "mjpeg", "vp9", named as in ffmpeg]
+[width, uint16_t, little-endian]
+[height, uint16_t, little-endian]
+
+Voice (audio) packet
+[0x76 0x76][length 2 octets][PTS][data]
+
+Video packet
+[0x77 0x77][length 2 octets][PTS][data]
+
+
