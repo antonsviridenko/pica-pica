@@ -997,6 +997,25 @@ int PICA_accept_file(struct PICA_c2c *chan, char *filename, unsigned int filenam
 	return PICA_OK;
 }
 
+static int validate_file_name(const char *buf, unsigned int len)
+{
+	int ret = PICA_OK;
+	char *str = malloc(len + 1);
+	memcpy(str, buf, len);
+	str[len] = '\0';
+
+	/* TODO Unicode canonicalization */
+
+	if (strchr(str, '*') != NULL
+		|| strchr(str, ':') != NULL
+		|| strchr(str, '/') != NULL
+		|| strstr(str, "..") != NULL)
+		ret = PICA_ERRINVARG;
+	free(str);
+
+	return ret;
+}
+
 static unsigned int procmsg_SENDFILEREQUEST(unsigned char* buf, unsigned int nb, void* p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
@@ -1007,6 +1026,9 @@ static unsigned int procmsg_SENDFILEREQUEST(unsigned char* buf, unsigned int nb,
 	unsigned int filenamesize = *(uint16_t*)(buf + 2) - 8;
 
 	if (chan->recvfilestate != PICA_CHANRECVFILESTATE_IDLE)
+		return 0;
+
+	if (validate_file_name(filename, filenamesize) != PICA_OK)
 		return 0;
 
 	chan->recvfilestate  = PICA_CHANRECVFILESTATE_WAITACCEPT;
@@ -1638,17 +1660,26 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 	PICA_TRACEFUNC
 	//TODO report invalid MULTILOGIN messages
 	if (payload_len <= sizeof timestamp + PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
+	{
+		fprintf(stderr, "Invalid payload size of MULTILOGIN message: %u\n", payload_len);
 		return 1;
+	}
 
 	timestamp = *(uint64_t*)(buf + 4);
 
 	if (timestamp <= c2n->multilogin_last_timestamp)
+	{
+		fprintf(stderr, "timestamp: received %lu last %lu\n", timestamp, c2n->multilogin_last_timestamp);
 		return 1;
+	}
 
 	f = fopen(c2n->acc->cert_file, "r");
 
 	if (!f)
+	{
+		fprintf(stderr, "Failed to open certificate file %s\n", c2n->acc->cert_file);
 		return 1;
+	}
 
 	x = PEM_read_X509(f, 0, 0, 0);
 	fclose(f);
@@ -1693,7 +1724,10 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 	ret = PICA_signverify(pubkey, sigdatas, sigdatalengths, sig, siglen);
 
 	if (ret != 1)
+	{
+		fprintf(stderr, "signature verification failed\n");
 		goto multilogin_err2;
+	}
 
 	{
 		char ipaddr_string[INET6_ADDRSTRLEN];
@@ -1738,6 +1772,8 @@ static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
 
 	sigdatas[1] = &timestamp;
 	sigdatalengths[1] = sizeof timestamp;
+
+	fprintf(stderr, "timestamp = %lu\n", timestamp);
 
 	//nodeaddr buf, IPv4 for now
 	// TODO IPv6, DNS
@@ -1794,6 +1830,7 @@ static int c2n_optstage7_multilogin(struct PICA_c2n *c2n)
 	{
 		*((uint16_t*)mp->tail) = sizeof timestamp + sigdatalengths[2] + siglen;
 		memcpy(mp->tail + 2, &timestamp, sizeof timestamp);
+		fprintf(stderr, "timestamp = %lu\n", timestamp);
 		memcpy(mp->tail + 2 + sizeof timestamp, sigdatas[2], sigdatalengths[2]);
 		memcpy(mp->tail + 2 + sizeof timestamp + sigdatalengths[2], sig, siglen);
 		ret = PICA_OK;
@@ -3609,7 +3646,11 @@ int PICA_recvfile_open_write(struct PICA_c2c *chn, const char *filename_utf8, un
 
 	}
 #else
-	chn->recvfile_stream = fopen(filename_utf8, "wb");
+	char *filename = malloc(filenamesize + 1);
+	memcpy(filename, filename_utf8, filenamesize);
+	filename[filenamesize] = '\0';
+	chn->recvfile_stream = fopen(filename, "wb");
+	free(filename);
 
 	if (chn->recvfile_stream == NULL)
 		return PICA_ERRFILEOPEN;
