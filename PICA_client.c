@@ -997,6 +997,25 @@ int PICA_accept_file(struct PICA_c2c *chan, char *filename, unsigned int filenam
 	return PICA_OK;
 }
 
+static int validate_file_name(const char *buf, unsigned int len)
+{
+	int ret = PICA_OK;
+	char *str = malloc(len + 1);
+	memcpy(str, buf, len);
+	str[len] = '\0';
+
+	/* TODO Unicode canonicalization */
+
+	if (strchr(str, '*') != NULL
+		|| strchr(str, ':') != NULL
+		|| strchr(str, '/') != NULL
+		|| strstr(str, "..") != NULL)
+		ret = PICA_ERRINVARG;
+	free(str);
+
+	return ret;
+}
+
 static unsigned int procmsg_SENDFILEREQUEST(unsigned char* buf, unsigned int nb, void* p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
@@ -1007,6 +1026,9 @@ static unsigned int procmsg_SENDFILEREQUEST(unsigned char* buf, unsigned int nb,
 	unsigned int filenamesize = *(uint16_t*)(buf + 2) - 8;
 
 	if (chan->recvfilestate != PICA_CHANRECVFILESTATE_IDLE)
+		return 0;
+
+	if (validate_file_name(filename, filenamesize) != PICA_OK)
 		return 0;
 
 	chan->recvfilestate  = PICA_CHANRECVFILESTATE_WAITACCEPT;
@@ -3609,7 +3631,11 @@ int PICA_recvfile_open_write(struct PICA_c2c *chn, const char *filename_utf8, un
 
 	}
 #else
-	chn->recvfile_stream = fopen(filename_utf8, "wb");
+	char *filename = malloc(filenamesize + 1);
+	memcpy(filename, filename_utf8, filenamesize);
+	filename[filenamesize] = '\0';
+	chn->recvfile_stream = fopen(filename, "wb");
+	free(filename);
 
 	if (chn->recvfile_stream == NULL)
 		return PICA_ERRFILEOPEN;
