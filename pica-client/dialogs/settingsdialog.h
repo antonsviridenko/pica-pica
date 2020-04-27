@@ -52,6 +52,12 @@ private:
 	QRadioButton *rbMLPReplace;
 	QRadioButton *rbMLPAllowMultiple;
 
+	QComboBox *audioCaptureDev;
+	QComboBox *audioPlaybackDev;
+	QComboBox *videoDev;
+
+	QPushButton *btAudioTest;
+
 	QPushButton *btOk;
 	QPushButton *btCancel;
 

@@ -39,9 +39,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	QWidget* directc2ctab = new QWidget(0);
 	QWidget* soundstab = new QWidget(0);
 	QWidget* multilogintab = new QWidget(0);
+	QWidget* audiodevtab = new QWidget(0);
+	QWidget* videodevtab = new QWidget(0);
 
 	QVBoxLayout *directc2cLayout = new QVBoxLayout();
 	QVBoxLayout *multiloginlayout = new QVBoxLayout();
+	QVBoxLayout *audiodevlayout = new QVBoxLayout();
+	QVBoxLayout *videodevLayout = new QVBoxLayout();
 
 //Direct connections
 	rbDisableDirectConns = new QRadioButton(tr("Disable direct connections"), this);
@@ -113,8 +117,39 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	multilogintab->setLayout(multiloginlayout);
 
+// Audio Devices
+	QLabel *lbAudioCaptureDev = new QLabel(tr("Microphone Device"));
+	QLabel *lbAudioPlaybackDev = new QLabel(tr("Playback device"));
+
+	audioCaptureDev = new QComboBox(this);
+	audioCaptureDev->addItem(QString("default"));
+
+	audioPlaybackDev = new QComboBox(this);
+	audioPlaybackDev->addItem(QString("default"));
+
+	btAudioTest = new QPushButton(tr("Test"), this);
+
+	audiodevlayout->addWidget(lbAudioCaptureDev);
+	audiodevlayout->addWidget(audioCaptureDev);
+	audiodevlayout->addWidget(lbAudioPlaybackDev);
+	audiodevlayout->addWidget(audioPlaybackDev);
+	audiodevlayout->addWidget(btAudioTest);
+	audiodevlayout->addStretch(1);
+
+	audiodevtab->setLayout(audiodevlayout);
+
+//Video Devices
+	videoDev = new QComboBox(this);
+
+	videodevLayout->addWidget(videoDev);
+	videodevLayout->addStretch(1);
+
+	videodevtab->setLayout(videodevLayout);
+
 	tabW->addTab(directc2ctab, tr("Direct Connections"));
 	tabW->addTab(multilogintab, tr("Multiple logins"));
+	tabW->addTab(audiodevtab, tr("Audio Devices"));
+	tabW->addTab(videodevtab, tr("Video Devices"));
 	tabW->addTab(soundstab, tr("Sounds"));
 	settingsLayout->addWidget(tabW);
 
