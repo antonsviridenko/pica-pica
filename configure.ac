@@ -122,6 +122,11 @@ AS_IF([test "x$MOC" = xnotfound],[AC_MSG_ERROR(["moc program not found. Please i
 
 AC_CHECK_PROG([OPENSSL_TOOL], [openssl], [yes], [no])
 AS_IF([test "x$OPENSSL_TOOL" != xyes],[AC_MSG_WARN(["openssl command line tool not found. This is a runtime dependency for pica-client!"])])
+
+#check for FFmpeg libraries
+PKG_CHECK_MODULES([FFMPEG],["libavcodec libavdevice libavformat libavutil libswresample libswscale"])
+AC_SUBST([FFMPEG_CFLAGS])
+AC_SUBST([FFMPEG_LIBS])
 ])
 
 
