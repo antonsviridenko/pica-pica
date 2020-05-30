@@ -17,6 +17,8 @@
 #include "settingsdialog.h"
 #include "../settings.h"
 #include "../globals.h"
+#include "../audiodevice.h"
+#include "../videodevice.h"
 #include "../../PICA_netconf.h"
 #include "../../PICA_proto.h"
 
@@ -140,7 +142,19 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 //Video Devices
 	videoDev = new QComboBox(this);
-
+	//videoDev->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+	//videoDev->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+	videoDev->setMinimumHeight(videoDev->height() * 2);
+	{
+		QList<MediaDeviceInfo> vd = VideoDevice().Enumerate();
+		for (int i = 0; i < vd.size(); i++)
+		{
+			QString item = QString(QLatin1String("%2\n(%1)"))
+									.arg(vd.at(i).device)
+									.arg(vd.at(i).humanReadable);
+			videoDev->addItem(item, vd.at(i).device);
+		}
+	}
 	videodevLayout->addWidget(videoDev);
 	videodevLayout->addStretch(1);
 
