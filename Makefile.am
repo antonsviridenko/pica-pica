@@ -93,6 +93,12 @@ pica-client/sound.cpp \
 pica-client/sound.h \
 pica-client/settings.cpp \
 pica-client/settings.h \
+pica-client/mediadevice.cpp \
+pica-client/mediadevice.h \
+pica-client/audiodevice.cpp \
+pica-client/audiodevice.h \
+pica-client/videodevice.cpp \
+pica-client/videodevice.h \
  \
 pica-client/dialogs/addaccountdialog.cpp \
 pica-client/dialogs/addaccountdialog.h \

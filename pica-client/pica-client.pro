@@ -11,12 +11,14 @@ TEMPLATE = app
 
 
 SOURCES += main.cpp\
+    audiodevice.cpp \
         mainwindow.cpp \
     chatwindow.cpp \
     contacts.cpp \
     ../PICA_client.c \
     ../PICA_msgproc.c \
     contactlistwidget.cpp \
+    mediadevice.cpp \
     skynet.cpp \
     nodes.cpp \
     accountswindow.cpp \
@@ -41,15 +43,18 @@ SOURCES += main.cpp\
     settings.cpp \
     ../PICA_netconf.c \
     ../PICA_signverify.c \
-    dialogs/nodesdialog.cpp
+    dialogs/nodesdialog.cpp \
+    videodevice.cpp
 
 HEADERS  += mainwindow.h \
+    audiodevice.h \
     chatwindow.h \
     contacts.h \
     globals.h \
     ../PICA_client.h \
     ../PICA_msgproc.h \
     contactlistwidget.h \
+    mediadevice.h \
     skynet.h \
     nodes.h \
     accountswindow.h \
@@ -77,7 +82,8 @@ HEADERS  += mainwindow.h \
     ../PICA_netconf.h \
     ../PICA_security.h \
     ../PICA_signverify.h \
-    dialogs/nodesdialog.h
+    dialogs/nodesdialog.h \
+    videodevice.h
 
 
 DEFINES = PICA_MULTITHREADED
