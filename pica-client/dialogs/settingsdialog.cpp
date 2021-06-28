@@ -145,17 +145,11 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	//videoDev->setSizeAdjustPolicy(QComboBox::AdjustToContents);
 	//videoDev->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
 	videoDev->setMinimumHeight(videoDev->height() * 2);
-	{
-		QList<MediaDeviceInfo> vd = VideoDevice().Enumerate();
-		for (int i = 0; i < vd.size(); i++)
-		{
-			QString item = QString(QLatin1String("%2\n(%1)"))
-									.arg(vd.at(i).device)
-									.arg(vd.at(i).humanReadable);
-			videoDev->addItem(item, vd.at(i).device);
-		}
-	}
+	fillVideoDevices();
+	videoDevRefresh = new QPushButton(tr("Refresh 🔄"), this);
+	connect(videoDevRefresh, SIGNAL(clicked()), this, SLOT(fillVideoDevices()));
 	videodevLayout->addWidget(videoDev);
+	videodevLayout->addWidget(videoDevRefresh);
 	videodevLayout->addStretch(1);
 
 	videodevtab->setLayout(videodevLayout);
@@ -186,6 +180,19 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	loadSettings();
 
 	setWindowTitle(tr("Pica Pica Messenger Settings"));
+}
+
+void SettingsDialog::fillVideoDevices()
+{
+		videoDev->clear();
+		QList<MediaDeviceInfo> vd = VideoDevice().Enumerate();
+		for (int i = 0; i < vd.size(); i++)
+		{
+			QString item = QString(QLatin1String("%2\n(%1)"))
+									.arg(vd.at(i).device)
+									.arg(vd.at(i).humanReadable);
+			videoDev->addItem(item, vd.at(i).device);
+		}
 }
 
 void SettingsDialog::toggleIncomingConnections(bool checked)

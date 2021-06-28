@@ -55,6 +55,7 @@ private:
 	QComboBox *audioCaptureDev;
 	QComboBox *audioPlaybackDev;
 	QComboBox *videoDev;
+	QPushButton *videoDevRefresh;
 
 	QPushButton *btAudioTest;
 
@@ -69,6 +70,7 @@ private slots:
 	void Cancel();
 	void toggleIncomingConnections(bool checked);
 	void toggleMultipleLogins(bool checked);
+	void fillVideoDevices();
 
 };
 
