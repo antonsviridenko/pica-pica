@@ -11,6 +11,18 @@ VideoDevice::~VideoDevice()
 
 }
 
+void VideoDevice::Capture()
+{
+}
+
+void VideoDevice::Play()
+{
+}
+
+void VideoDevice::Close()
+{
+}
+
 QList<MediaDeviceInfo> VideoDevice::Enumerate()
 {
 	QList<MediaDeviceInfo> result;

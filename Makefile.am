@@ -61,6 +61,10 @@ pica-client/askpassword.cpp \
 pica-client/askpassword.h \
 pica-client/chatwindow.cpp \
 pica-client/chatwindow.h \
+pica-client/callwindow.cpp \
+pica-client/callwindow.h \
+pica-client/audiovideocallcontroller.cpp \
+pica-client/audiovideocallcontroller.h \
 pica-client/contactlistwidget.cpp \
 pica-client/contactlistwidget.h \
 pica-client/contacts.cpp \
@@ -131,6 +135,7 @@ moc_accountswindow.cpp \
 moc_addaccountdialog.cpp \
 moc_askpassword.cpp \
 moc_chatwindow.cpp \
+moc_callwindow.cpp \
 moc_contactlistwidget.cpp \
 moc_forgedcertdialog.cpp \
 moc_mainwindow.cpp \
@@ -139,6 +144,7 @@ moc_picaactioncenter.cpp \
 moc_picasystray.cpp \
 moc_registeraccountdialog.cpp \
 moc_filetransferdialog.cpp \
+moc_audiovideocallcontroller.cpp \
 moc_skynet.cpp \
 moc_settingsdialog.cpp \
 moc_viewcertdialog.cpp \

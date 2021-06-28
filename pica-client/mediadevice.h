@@ -17,6 +17,9 @@ public:
 	MediaDevice();
 	virtual ~MediaDevice();
 	virtual QList<MediaDeviceInfo> Enumerate() = 0;
+	virtual void Capture() = 0;
+	virtual void Play() = 0;
+	virtual void Close() = 0;
 };
 
 #endif // MEDIADEVICE_H

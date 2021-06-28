@@ -120,8 +120,8 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	multilogintab->setLayout(multiloginlayout);
 
 // Audio Devices
-	QLabel *lbAudioCaptureDev = new QLabel(tr("Microphone Device"));
-	QLabel *lbAudioPlaybackDev = new QLabel(tr("Playback device"));
+	QLabel *lbAudioCaptureDev = new QLabel(tr("Microphone Device 🎙️"));
+	QLabel *lbAudioPlaybackDev = new QLabel(tr("Playback device 🎧"));
 
 	audioCaptureDev = new QComboBox(this);
 	audioCaptureDev->addItem(QString("default"));

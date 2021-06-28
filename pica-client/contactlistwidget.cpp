@@ -21,6 +21,7 @@
 #include "dialogs/filetransferdialog.h"
 #include "msguirouter.h"
 #include "filetransfercontroller.h"
+#include "audiovideocallcontroller.h"
 #include <QMenu>
 #include <QMessageBox>
 #include <QContextMenuEvent>
@@ -41,6 +42,9 @@ ContactListWidget::ContactListWidget(QWidget *parent) :
 
 	startchatAct = new QAction(tr("Start &Chat"), this);
 	connect(startchatAct, SIGNAL(triggered()), this, SLOT(start_chat()));
+
+	startcallAct = new QAction(tr("Start Ca&ll 📞"), this);
+	connect(startcallAct, SIGNAL(triggered()), this, SLOT(start_call()));
 
 	viewcertAct = new QAction(tr("&View Certificate"), this);
 	connect(viewcertAct, SIGNAL(triggered()), this, SLOT(view_cert()));
@@ -84,6 +88,7 @@ void ContactListWidget::contextMenuEvent(QContextMenuEvent *event)
 	if (this->itemAt(event->pos()) && wgitem_to_recs.contains(this->itemAt(event->pos())))
 	{
 		menu.addAction(startchatAct);
+		menu.addAction(startcallAct);
 		menu.addAction(viewcertAct);
 		menu.addAction(showidAct);
 		menu.addAction(sendfileAct);
@@ -225,6 +230,11 @@ void ContactListWidget::del_contact()
 void ContactListWidget::start_chat()
 {
 	msguirouter->start_chat(wgitem_to_recs[currentItem()]->id);
+}
+
+void ContactListWidget::start_call()
+{
+	avctrl->start_call(wgitem_to_recs[currentItem()]->id);
 }
 
 void ContactListWidget::view_cert()

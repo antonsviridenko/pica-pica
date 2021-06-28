@@ -24,6 +24,7 @@
 #include "skynet.h"
 #include "msguirouter.h"
 #include "filetransfercontroller.h"
+#include "audiovideocallcontroller.h"
 #include "picaactioncenter.h"
 #include "picasystray.h"
 #include <QDir>
@@ -51,6 +52,7 @@ QIcon picapica_ico_fly;
 class PicaActionCenter *action_center;
 class PicaSysTray *systray;
 class FileTransferController *ftctrl;
+class AudioVideoCallController *avctrl;
 class AccountsWindow *accwindow;
 
 QString config_defaultDHParam;
@@ -543,6 +545,9 @@ int main(int argc, char *argv[])
 
 	FileTransferController ftc;
 	ftctrl = &ftc;
+
+	AudioVideoCallController avc;
+	avctrl = &avc;
 
 	aw.show();
 

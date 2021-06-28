@@ -12,8 +12,10 @@ TEMPLATE = app
 
 SOURCES += main.cpp\
     audiodevice.cpp \
+	audiovideocallcontroller.cpp \
         mainwindow.cpp \
     chatwindow.cpp \
+    callwindow.cpp \
     contacts.cpp \
     ../PICA_client.c \
     ../PICA_msgproc.c \
@@ -48,7 +50,9 @@ SOURCES += main.cpp\
 
 HEADERS  += mainwindow.h \
     audiodevice.h \
+    audiovideocallcontroller.h \
     chatwindow.h \
+    callwindow.h \
     contacts.h \
     globals.h \
     ../PICA_client.h \

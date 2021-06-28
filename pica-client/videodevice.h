@@ -9,6 +9,9 @@ public:
 	VideoDevice();
 	~VideoDevice();
 	virtual QList<MediaDeviceInfo> Enumerate();
+	void Capture();
+	void Play();
+	void Close();
 };
 
 #endif // VIDEODEVICE_H
