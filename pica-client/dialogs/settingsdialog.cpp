@@ -305,6 +305,10 @@ void SettingsDialog::loadSettings()
 		break;
 	}
 
+	QString videoCapDev = st.loadValue("video.capture_device", QString()).toString();
+	int videoDevItem = videoDev->findData(videoCapDev);
+	if (videoDevItem >= 0)
+		videoDev->setCurrentIndex(videoDevItem);
 }
 
 void SettingsDialog::storeSettings()
@@ -342,4 +346,7 @@ void SettingsDialog::storeSettings()
 		mlpstate = PICA_MULTILOGIN_ALLOW;
 
 	st.storeValue("multiple_logins.state", QString::number(mlpstate));
+
+	QString videoCapDev;
+	st.storeValue("video.capture_device", videoDev->itemData(videoDev->currentIndex()).toString());
 }
