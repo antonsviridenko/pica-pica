@@ -1,6 +1,15 @@
 #include "videodevice.h"
 #include <QFile>
 
+#ifdef Q_OS_LINUX
+#include <linux/videodev2.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#endif
+
 VideoDevice::VideoDevice()
 {
 
@@ -42,6 +51,23 @@ QList<MediaDeviceInfo> VideoDevice::Enumerate()
 				d.humanReadable = QString(v4l2_name.readLine()).trimmed();
 				v4l2_name.close();
 			}
+			/* Skip metadata device nodes introduced in latest kernels
+			 * See:
+			 * https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=088ead25524583e2200aa99111bea2f66a86545a
+			 * https://bugzilla.kernel.org/show_bug.cgi?id=199575
+			 * Add only devices having V4L2_CAP_VIDEO_CAPTURE capability.
+			*/
+			int fd = ::open(d.device.toLatin1().constData(), O_RDWR | O_NONBLOCK);
+			if (fd < 0)
+				continue;
+			struct v4l2_capability cap;
+			memset(&cap, 0, sizeof cap);
+			int ret  = ::ioctl(fd, VIDIOC_QUERYCAP, &cap);
+			::close(fd);
+			if (ret == -1)
+				continue;
+			if (!(cap.device_caps & V4L2_CAP_VIDEO_CAPTURE))
+				continue;
 			d.index = index++;
 
 			result << d;
