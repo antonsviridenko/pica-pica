@@ -4,6 +4,12 @@
 #include <QString>
 #include <QList>
 
+enum MediaDeviceStreamDirection
+{
+	CAPTURE,
+	PLAYBACK
+};
+
 struct MediaDeviceInfo
 {
 	QString device;
@@ -16,7 +22,7 @@ class MediaDevice
 public:
 	MediaDevice();
 	virtual ~MediaDevice();
-	virtual QList<MediaDeviceInfo> Enumerate() = 0;
+	virtual QList<MediaDeviceInfo> Enumerate(enum MediaDeviceStreamDirection) = 0;
 	virtual void Capture() = 0;
 	virtual void Play() = 0;
 	virtual void Close() = 0;

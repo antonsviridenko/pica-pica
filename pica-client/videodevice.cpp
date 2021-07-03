@@ -32,10 +32,13 @@ void VideoDevice::Close()
 {
 }
 
-QList<MediaDeviceInfo> VideoDevice::Enumerate()
+QList<MediaDeviceInfo> VideoDevice::Enumerate(enum MediaDeviceStreamDirection dir)
 {
 	QList<MediaDeviceInfo> result;
 	int index = 0;
+
+	if (dir == PLAYBACK)
+		return result;
 #ifdef Q_OS_LINUX
 	for (int i = 0; i < 64; i++)
 	{

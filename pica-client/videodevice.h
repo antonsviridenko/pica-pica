@@ -8,7 +8,7 @@ class VideoDevice : public MediaDevice
 public:
 	VideoDevice();
 	~VideoDevice();
-	virtual QList<MediaDeviceInfo> Enumerate();
+	virtual QList<MediaDeviceInfo> Enumerate(enum MediaDeviceStreamDirection dir);
 	void Capture();
 	void Play();
 	void Close();

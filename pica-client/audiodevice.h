@@ -8,7 +8,10 @@ class AudioDevice : public MediaDevice
 public:
 	AudioDevice();
 	~AudioDevice();
-	virtual QList<MediaDeviceInfo> Enumerate();
+	virtual void Capture();
+	virtual void Play();
+	virtual void Close();
+	virtual QList<MediaDeviceInfo> Enumerate(enum MediaDeviceStreamDirection dir);
 };
 
 #endif // AUDIODEVICE_H

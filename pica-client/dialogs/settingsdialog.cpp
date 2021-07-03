@@ -122,12 +122,19 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 // Audio Devices
 	QLabel *lbAudioCaptureDev = new QLabel(tr("Microphone Device 🎙️"));
 	QLabel *lbAudioPlaybackDev = new QLabel(tr("Playback device 🎧"));
+	QLabel *lbAudioRingDev = new QLabel(tr("Ring device 🔔☎️"));
 
 	audioCaptureDev = new QComboBox(this);
-	audioCaptureDev->addItem(QString("default"));
+	audioCaptureDev->setMinimumHeight(audioCaptureDev->height() * 2);
+	fillAudioCaptureDevices();
 
 	audioPlaybackDev = new QComboBox(this);
-	audioPlaybackDev->addItem(QString("default"));
+	audioPlaybackDev->setMinimumHeight(audioPlaybackDev->height() * 2);
+	fillAudioPlaybackDevices();
+
+	audioRingDev = new QComboBox(this);
+	audioRingDev->setMinimumHeight(audioRingDev->height() * 2);
+	fillAudioRingDevices();
 
 	btAudioTest = new QPushButton(tr("Test"), this);
 
@@ -135,6 +142,8 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	audiodevlayout->addWidget(audioCaptureDev);
 	audiodevlayout->addWidget(lbAudioPlaybackDev);
 	audiodevlayout->addWidget(audioPlaybackDev);
+	audiodevlayout->addWidget(lbAudioRingDev);
+	audiodevlayout->addWidget(audioRingDev);
 	audiodevlayout->addWidget(btAudioTest);
 	audiodevlayout->addStretch(1);
 
@@ -142,8 +151,6 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 //Video Devices
 	videoDev = new QComboBox(this);
-	//videoDev->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-	//videoDev->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
 	videoDev->setMinimumHeight(videoDev->height() * 2);
 	fillVideoDevices();
 	videoDevRefresh = new QPushButton(tr("Refresh 🔄"), this);
@@ -182,17 +189,41 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	setWindowTitle(tr("Pica Pica Messenger Settings"));
 }
 
-void SettingsDialog::fillVideoDevices()
+void SettingsDialog::fillDevicesComboBox(QComboBox *cb, MediaDevice *dev, enum MediaDeviceStreamDirection dir)
 {
-		videoDev->clear();
-		QList<MediaDeviceInfo> vd = VideoDevice().Enumerate();
-		for (int i = 0; i < vd.size(); i++)
+		cb->clear();
+		QList<MediaDeviceInfo> md = dev->Enumerate(dir);
+		for (int i = 0; i < md.size(); i++)
 		{
 			QString item = QString(QLatin1String("%2\n(%1)"))
-									.arg(vd.at(i).device)
-									.arg(vd.at(i).humanReadable);
-			videoDev->addItem(item, vd.at(i).device);
+									.arg(md.at(i).device)
+									.arg(md.at(i).humanReadable);
+			cb->addItem(item, md.at(i).device);
 		}
+}
+
+void SettingsDialog::fillVideoDevices()
+{
+		VideoDevice vd;
+		fillDevicesComboBox(videoDev, &vd, CAPTURE);
+}
+
+void SettingsDialog::fillAudioCaptureDevices()
+{
+	AudioDevice acd;
+	fillDevicesComboBox(audioCaptureDev, &acd, CAPTURE);
+}
+
+void SettingsDialog::fillAudioPlaybackDevices()
+{
+	AudioDevice apd;
+	fillDevicesComboBox(audioPlaybackDev, &apd, PLAYBACK);
+}
+
+void SettingsDialog::fillAudioRingDevices()
+{
+	AudioDevice ard;
+	fillDevicesComboBox(audioRingDev, &ard, PLAYBACK);
 }
 
 void SettingsDialog::toggleIncomingConnections(bool checked)
@@ -305,10 +336,25 @@ void SettingsDialog::loadSettings()
 		break;
 	}
 
-	QString videoCapDev = st.loadValue("video.capture_device", QString()).toString();
-	int videoDevItem = videoDev->findData(videoCapDev);
+	QString videoCapDevVal = st.loadValue("video.capture_device", QString()).toString();
+	int videoDevItem = videoDev->findData(videoCapDevVal);
 	if (videoDevItem >= 0)
 		videoDev->setCurrentIndex(videoDevItem);
+
+	QString audioCapDevVal = st.loadValue("audio.capture_device", "default").toString();
+	int audioCapDevItem = audioCaptureDev->findData(audioCapDevVal);
+	if (audioCapDevItem >= 0)
+		audioCaptureDev->setCurrentIndex(audioCapDevItem);
+
+	QString audioPlaybackDevVal = st.loadValue("audio.playback_device", "default").toString();
+	int audioPlaybackDevItem = audioPlaybackDev->findData(audioPlaybackDevVal);
+	if (audioPlaybackDevItem >= 0)
+		audioPlaybackDev->setCurrentIndex(audioPlaybackDevItem);
+
+	QString audioRingDevVal = st.loadValue("audio.ring_device", "default").toString();
+	int audioRingDevItem = audioRingDev->findData(audioRingDevVal);
+	if (audioRingDevItem >= 0)
+		audioRingDev->setCurrentIndex(audioRingDevItem);
 }
 
 void SettingsDialog::storeSettings()
@@ -347,6 +393,8 @@ void SettingsDialog::storeSettings()
 
 	st.storeValue("multiple_logins.state", QString::number(mlpstate));
 
-	QString videoCapDev;
 	st.storeValue("video.capture_device", videoDev->itemData(videoDev->currentIndex()).toString());
+	st.storeValue("audio.capture_device", audioCaptureDev->itemData(audioCaptureDev->currentIndex()).toString());
+	st.storeValue("audio.playback_device", audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString());
+	st.storeValue("audio.ring_device", audioRingDev->itemData(audioRingDev->currentIndex()).toString());
 }

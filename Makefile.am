@@ -169,8 +169,8 @@ ui_%.h: pica-client/%.ui
 	$(UIC)  $< -o $@
 
  
-pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) $(FFMPEG_CFLAGS) 
-pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS) $(FFMPEG_LIBS)
+pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) $(FFMPEG_CFLAGS) $(PLATFORM_DEPS_CFLAGS)
+pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS) $(FFMPEG_LIBS) $(PLATFORM_DEPS_LIBS)
 
 pkgpicaclientdir = ${datarootdir}/pica-client
 dist_pkgpicaclient_DATA =  \

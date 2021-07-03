@@ -24,6 +24,7 @@
 #include <QRadioButton>
 #include <QComboBox>
 #include <QCheckBox>
+#include "../mediadevice.h"
 
 class SettingsDialog : public QDialog
 {
@@ -54,6 +55,7 @@ private:
 
 	QComboBox *audioCaptureDev;
 	QComboBox *audioPlaybackDev;
+	QComboBox *audioRingDev;
 	QComboBox *videoDev;
 	QPushButton *videoDevRefresh;
 
@@ -65,12 +67,17 @@ private:
 	void loadSettings();
 	void storeSettings();
 
+	void fillDevicesComboBox(QComboBox *cb, MediaDevice *dev, enum MediaDeviceStreamDirection dir);
+
 private slots:
 	void OK();
 	void Cancel();
 	void toggleIncomingConnections(bool checked);
 	void toggleMultipleLogins(bool checked);
 	void fillVideoDevices();
+	void fillAudioCaptureDevices();
+	void fillAudioPlaybackDevices();
+	void fillAudioRingDevices();
 
 };
 
