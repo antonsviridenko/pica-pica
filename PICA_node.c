@@ -486,12 +486,11 @@ unsigned int procmsg_CONNREQOUTG(unsigned char* buf, unsigned int size, void* pt
 	struct PICA_proto_msg *mp;
 
 	i = (struct client *)ptr;
+	callee_id = buf + 2;
 
 	char caller_id_buf[2 * PICA_ID_SIZE], callee_id_buf[2 * PICA_ID_SIZE];
 	PICA_debug1("received CONNREQOUTG from %s\n  searching for %s", PICA_id_to_base64(i->id, caller_id_buf),
 			PICA_id_to_base64(callee_id, callee_id_buf));
-
-	callee_id = buf + 2;
 
 	if ((o = client_tree_search(callee_id)))
 	{
