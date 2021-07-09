@@ -69,6 +69,7 @@ char *PICA_id_to_base64(const unsigned char *id, char *buf)
 	static char localbuf[PICA_ID_SIZE * 2];
 
 	char *sourcebuf, *outputbuf = buf;
+	char *newlinepos;
 	long b64len;
 
 	b64 = BIO_new(BIO_f_base64());
@@ -84,8 +85,9 @@ char *PICA_id_to_base64(const unsigned char *id, char *buf)
 
 	memcpy(outputbuf, sourcebuf, b64len);
 
-	*strchr(outputbuf, '\n') = '\0';
 	outputbuf[b64len] = '\0';
+	if ((newlinepos = strchr(outputbuf, '\n')))
+		*newlinepos = '\0';
 
 	BIO_free_all(biomem);
 
