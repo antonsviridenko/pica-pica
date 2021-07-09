@@ -487,7 +487,9 @@ unsigned int procmsg_CONNREQOUTG(unsigned char* buf, unsigned int size, void* pt
 
 	i = (struct client *)ptr;
 
-	PICA_debug1("received CONNREQOUTG from %s", PICA_id_to_base64(i->id, NULL));
+	char caller_id_buf[2 * PICA_ID_SIZE], callee_id_buf[2 * PICA_ID_SIZE];
+	PICA_debug1("received CONNREQOUTG from %s\n  searching for %s", PICA_id_to_base64(i->id, caller_id_buf),
+			PICA_id_to_base64(callee_id, callee_id_buf));
 
 	callee_id = buf + 2;
 
@@ -1939,7 +1941,7 @@ struct client* client_tree_search(const unsigned char *id)
 			i_ptr = i_ptr->right;
 	}
 
-	PICA_debug1("client_tree_search- id not found");
+	PICA_debug1("client_tree_search: id %s  not found", PICA_id_to_base64(id, NULL));
 	return 0;
 }
 
@@ -2520,7 +2522,7 @@ void process_timeouts_c2n()
 
 		if (kill_ptr)
 		{
-			PICA_info("Disconnecting user %u due to noreply timeout", kill_ptr -> id);
+			PICA_info("Disconnecting user %s due to noreply timeout", PICA_id_to_base64(kill_ptr -> id, NULL));
 			client_list_delete(kill_ptr);
 			kill_ptr = 0;
 		}
