@@ -112,9 +112,9 @@ static bool create_database()
                     inactive_count int not null,\
                     constraint pk primary key (address,port) on conflict replace \
                  );");
-	query.exec("insert into nodes values(\"picapica.im\", 2233, 0, 0);");
-	query.exec("insert into nodes values(\"picapica.im\", 2299, 0, 0);");
-	query.exec("insert into nodes values(\"picapica.ge\", 2299, 0, 0);");
+	query.exec("insert into nodes values('picapica.im', 2233, 0, 0);");
+	query.exec("insert into nodes values('picapica.im', 2299, 0, 0);");
+	query.exec("insert into nodes values('picapica.ge', 2299, 0, 0);");
 
 	if (query.lastError().isValid())
 		goto showerror;
@@ -187,7 +187,7 @@ static bool update_database()
 	QSqlQuery query;
 
 	//checking if table schema_version exists. If not, then database belongs to pica-client before 0.5.3 version
-	query.exec("select count(*) from sqlite_master where name=\"schema_version\"");
+	query.exec("select count(*) from sqlite_master where name='schema_version'");
 	query.next();
 
 	if (query.lastError().isValid())

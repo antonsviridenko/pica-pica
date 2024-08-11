@@ -22,6 +22,6 @@ create table if not exists nodes
                         inactive_count int not null,
                         constraint pk primary key (address,port) on conflict replace 
                      );
-insert into nodes values("picapica.im", 2233, 0, 0);
-insert into nodes values("picapica.im", 2299, 0, 0);  
-insert into nodes values("picapica.ge", 2299, 0, 0);
+insert into nodes values('picapica.im', 2233, 0, 0);
+insert into nodes values('picapica.im', 2299, 0, 0);
+insert into nodes values('picapica.ge', 2299, 0, 0);
