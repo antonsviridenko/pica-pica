@@ -3403,6 +3403,85 @@ int PICA_send_file_fragment(struct PICA_c2c *chn)
 
 	return PICA_OK;
 }
+
+int PICA_start_call(struct PICA_c2c *chn)
+{
+	struct PICA_proto_msg *mp;
+
+	if (chn->call_state != PICA_CALL_STATE_IDLE)
+		return PICA_ERRCALLINPROGRESS;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALLREQ, PICA_PROTO_CALLREQ_SIZE)))
+	{
+		RAND_pseudo_bytes(mp->tail, 2);
+	}
+	else
+	{
+		return PICA_ERRNOMEM;
+	}
+
+	return PICA_OK;
+}
+
+int PICA_pickup_call(struct PICA_c2c *chn)
+{
+	struct PICA_proto_msg *mp;
+
+	if (chn->call_state != PICA_CALL_STATE_INCOMINGCALL)
+		return PICA_ERRCALLNOTINPROGRESS;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALLANS, PICA_PROTO_CALLANS_SIZE)))
+	{
+		RAND_pseudo_bytes(mp->tail, 2);
+	}
+	else
+	{
+		return PICA_ERRNOMEM;
+	}
+
+	return PICA_OK;
+}
+
+int PICA_reject_call(struct PICA_c2c *chn)
+{
+	struct PICA_proto_msg *mp;
+
+	if (chn->call_state != PICA_CALL_STATE_INCOMINGCALL)
+		return PICA_ERRCALLNOTINPROGRESS;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALLREJ, PICA_PROTO_CALLREJ_SIZE)))
+	{
+		RAND_pseudo_bytes(mp->tail, 2);
+	}
+	else
+	{
+		return PICA_ERRNOMEM;
+	}
+
+	return PICA_OK;
+}
+
+int PICA_hangup_call(struct PICA_c2c *chn)
+{
+	struct PICA_proto_msg *mp;
+
+	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
+		return PICA_ERRCALLNOTINPROGRESS;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALLFIN, PICA_PROTO_CALLFIN_SIZE)))
+	{
+		RAND_pseudo_bytes(mp->tail, 2);
+	}
+	else
+	{
+		return PICA_ERRNOMEM;
+	}
+
+	// release call resources??
+	// handle incoming last stream packets?
+	return PICA_OK;
+}
+
 void PICA_close_directc2c(struct PICA_directc2c *d)
 {
 	PICA_TRACEFUNC

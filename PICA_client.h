@@ -118,6 +118,9 @@ typedef u_short in_port_t;
 #define PICA_ERRINVPKEYFILE -23
 #define PICA_ERRTIMEDOUT -24
 
+#define PICA_ERRCALLINPROGRESS -25
+#define PICA_ERRCALLNOTINPROGRESS -26
+
 //#define PICA_CHNMSGBUFLEN 104
 
 #define PICA_CHANREADBUFSIZE 65536
@@ -239,6 +242,14 @@ enum PICA_directc2c_connection_state
 	PICA_DIRECTC2C_CONNSTATE_FAILED
 };
 
+enum PICA_call_state
+{
+	PICA_CALL_STATE_IDLE = 0,
+	PICA_CALL_STATE_CALLING,
+	PICA_CALL_STATE_INCOMINGCALL,
+	PICA_CALL_STATE_ACTIVE
+};
+
 struct PICA_directc2c
 {
 	int is_outgoing;
@@ -301,6 +312,8 @@ struct PICA_c2c
 	int want_write;
 	unsigned int directc2c_write_barrier_pos;
 	unsigned int directc2c_write_before_barrier_pos;
+
+	enum PICA_call_state call_state;
 };
 
 struct PICA_listener
@@ -396,6 +409,22 @@ struct PICA_client_callbacks
 	void (*multilogin_cb)(uint64_t timestamp, void *addr_bin, const char *addr_str, uint16_t port);
 
 	void (*direct_c2c_established_cb)(const unsigned char *peer_id, const char *ciphersuitename);
+
+	void (*incoming_call_cb)(const unsigned char *peer_id);
+
+	void (*call_picked_up_cb)(const unsigned char *peer_id);
+
+	void (*call_rejected_cb)(const unsigned char *peer_id);
+
+	void (*call_hangup_cb)(const unsigned char *peer_id);
+
+	void (*call_audio_params_cb)(const unsigned char *peer_id, const char *codec, uint16_t sample_rate);
+
+	void (*call_video_params_cb)(const unsigned char *peer_id, const char *codec, uint16_t width, uint16_t height);
+
+	void (*call_audio_packet_cb)(const unsigned char *peer_id, uint16_t size, const char *pkt_data);
+
+	void (*call_video_packet_cb)(const unsigned char *peer_id, uint16_t size, const char *pkt_data);
 };
 
 
@@ -454,6 +483,11 @@ int PICA_deny_file(struct PICA_c2c *chan);
 int PICA_pause_file(struct PICA_c2c *chan, int sending);
 int PICA_resume_file(struct PICA_c2c *chan, int sending);
 int PICA_cancel_file(struct PICA_c2c *chan, int sending);
+
+int PICA_start_call(struct PICA_c2c *chn);
+int PICA_pickup_call(struct PICA_c2c *chn);
+int PICA_reject_call(struct PICA_c2c *chn);
+int PICA_hangup_call(struct PICA_c2c *chn);
 
 void PICA_close_c2c(struct PICA_c2c *chn);
 void PICA_close_c2n(struct PICA_c2n *cid);

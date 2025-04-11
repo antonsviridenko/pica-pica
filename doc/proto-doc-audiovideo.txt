@@ -2,15 +2,19 @@ Audio and Video Calls.
 
 Call request (ring)
 [0x70 0x70]
+[2 pseudo-random octets]
 
 Call answer (pick up)
 [0x71 0x71]
+[2 pseudo-random octets]
 
 Call reject 
 [0x72 0x72]
+[2 pseudo-random octets]
 
 Call hang up (finished)
 [0x73 0x73]
+[2 pseudo-random octets]
 
 Audio stream parameters
 [0x74 0x74]
@@ -26,9 +30,9 @@ Video stream parameters
 [height, uint16_t, little-endian]
 
 Voice (audio) packet
-[0x76 0x76][length 2 octets][PTS][data]
+[0x76 0x76][length 2 octets][data]
 
 Video packet
-[0x77 0x77][length 2 octets][PTS][data]
+[0x77 0x77][length 2 octets][data]
 
 
