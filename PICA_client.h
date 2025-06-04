@@ -292,8 +292,8 @@ struct PICA_c2c
 	uint64_t recvfile_pos;
 	FILE *recvfile_stream;
 
-	/** this flag should be set when connection
-	*  must be closed after sending last pushed packet
+	/** this flag should be set when the connection
+	*  must be closed after sending the last pushed packet
 	*/
 	int disconnect_on_empty_write_buf;
 	int switched_to_directc2c_write;
