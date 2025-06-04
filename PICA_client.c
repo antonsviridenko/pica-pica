@@ -2356,13 +2356,13 @@ static int process_c2c(struct PICA_c2c *c2c, fd_set *rfds, fd_set *wfds)
 		if (FD_ISSET(c2c->sck_data, wfds)
 		        || c2c->directc2c_state == PICA_DIRECTC2C_STATE_ACTIVE && FD_ISSET(c2c->direct->sck, wfds))
 		{
+			if (c2c->sendfilestate == PICA_CHANSENDFILESTATE_SENDING && c2c->write_pos == 0)
+			{
+				ret = PICA_send_file_fragment(c2c);
+			}
 			if (c2c->write_pos > 0)
 			{
 				ret = PICA_write_c2c(c2c);
-			}
-			else if (c2c->sendfilestate == PICA_CHANSENDFILESTATE_SENDING)
-			{
-				ret = PICA_send_file_fragment(c2c);
 			}
 		}
 
@@ -3361,7 +3361,7 @@ int PICA_send_file_fragment(struct PICA_c2c *chn)
 	if (chn->sendfilestate != PICA_CHANSENDFILESTATE_SENDING)
 		return PICA_ERRFILETRANSFERNOTINPROGRESS;
 
-	fragment_size = fread(buf, 1, PICA_FILEFRAGMENTSIZE, chn->sendfile_stream);
+	fragment_size = fread(buf, 1, PICA_FILEFRAGMENTSIZE - 4, chn->sendfile_stream);
 
 	if (fragment_size == 0)
 	{
