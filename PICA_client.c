@@ -76,7 +76,14 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char*, unsign
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_MULTILOGIN(unsigned char*, unsigned int, void*);
-
+static unsigned int procmsg_CALLREQ(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_CALLANS(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_CALLREJ(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_CALLFIN(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_CALL_AUDIOPARAM(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_CALL_VIDEOPARAM(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_CALL_AUDIO_PACKET(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_CALL_VIDEO_PACKET(unsigned char*, unsigned int, void*);
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size);
@@ -109,6 +116,14 @@ const struct PICA_msginfo  c2c_messages[] =
 {
 	{PICA_PROTO_MSGUTF8, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MSGUTF8},
 	{PICA_PROTO_MSGOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_MSGOK_SIZE, procmsg_MSGOK},
+	{PICA_PROTO_CALLREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLREQ_SIZE, procmsg_CALLREQ},
+	{PICA_PROTO_CALLANS, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLANS_SIZE, procmsg_CALLANS},
+	{PICA_PROTO_CALLREJ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLREJ_SIZE, procmsg_CALLREJ},
+	{PICA_PROTO_CALLFIN, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLFIN_SIZE, procmsg_CALLFIN},
+	{PICA_PROTO_CALL_AUDIOPARAM, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALL_AUDIOPARAM_SIZE, procmsg_CALL_AUDIOPARAM},
+	{PICA_PROTO_CALL_VIDEOPARAM, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALL_VIDEOPARAM_SIZE, procmsg_CALL_VIDEOPARAM},
+	{PICA_PROTO_CALL_AUDIO_PACKET, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CALL_AUDIO_PACKET},
+	{PICA_PROTO_CALL_VIDEO_PACKET, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CALL_VIDEO_PACKET},
 	{PICA_PROTO_SENDFILEREQUEST, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_SENDFILEREQUEST},
 	{PICA_PROTO_ACCEPTEDFILE, PICA_MSG_FIXED_SIZE, PICA_PROTO_ACCEPTEDFILE_SIZE, procmsg_ACCEPTEDFILE},
 	{PICA_PROTO_DENIEDFILE, PICA_MSG_FIXED_SIZE, PICA_PROTO_DENIEDFILE_SIZE, procmsg_DENIEDFILE},
@@ -1746,6 +1761,187 @@ multilogin_err2:
 	EVP_PKEY_free(pubkey);
 multilogin_err1:
 	X509_free(x);
+	return 1;
+}
+
+static unsigned int procmsg_CALLREQ(unsigned char*, unsigned int, void *p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+
+	if (chan->call_state != PICA_CALL_STATE_IDLE)
+	// busy, send reject
+	{
+		struct PICA_proto_msg *mp;
+		mp = c2c_writebuf_push( chan, PICA_PROTO_CALLREJ, PICA_PROTO_CALLREJ_SIZE);
+
+		if (mp)
+		{
+			RAND_pseudo_bytes( mp->tail, 2);
+		}
+		else
+			return 0;
+
+		return 1;
+	}
+
+	chan->call_state = PICA_CALL_STATE_INCOMINGCALL;
+	callbacks.incoming_call_cb(chan->peer_id);
+
+	return 1;
+}
+
+static unsigned int procmsg_CALLANS(unsigned char*, unsigned int, void *p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+
+	if (chan->call_state != PICA_CALL_STATE_CALLING)
+	{
+		fprintf(stderr, "unexpected CALLANS, we did not initiate a call");
+		return 0;
+	}
+
+	chan->call_state = PICA_CALL_STATE_ACTIVE;
+	callbacks.call_picked_up_cb(chan->peer_id);
+
+	return 1;
+}
+
+static unsigned int procmsg_CALLREJ(unsigned char*, unsigned int, void *p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+
+	if (chan->call_state != PICA_CALL_STATE_CALLING)
+	{
+		fprintf(stderr, "unexpected CALLREJ, we did not initiate a call");
+		return 0;
+	}
+
+	chan->call_state = PICA_CALL_STATE_IDLE;
+
+	callbacks.call_rejected_cb(chan->peer_id);
+
+	return 1;
+}
+
+static unsigned int procmsg_CALLFIN(unsigned char*, unsigned int, void *p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+
+	if (chan->call_state == PICA_CALL_STATE_IDLE)
+	{
+		fprintf(stderr, "unexpected CALLFIN, no call in progress");
+		return 0;
+	}
+
+	chan->call_state = PICA_CALL_STATE_IDLE;
+
+	callbacks.call_hangup_cb(chan->peer_id);
+
+	return 1;
+}
+
+static unsigned int procmsg_CALL_AUDIOPARAM(unsigned char* buf, unsigned int nb, void *p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+	char codecnamebuf[24];
+	uint16_t sample_rate;
+
+	if (chan->call_state != PICA_CALL_STATE_ACTIVE)
+	{
+		fprintf(stderr, "unexpected AUDIOPARAM, no call in progress");
+		return 0;
+	}
+
+	chan->call_audio_params_are_set = 1;
+
+	codecnamebuf[0] = '\0';
+	strncat(codecnamebuf, buf + 2, PICA_PROTO_CALL_CODECNAMESIZE);
+
+	sample_rate = *(uint16_t*)(buf + 2 + PICA_PROTO_CALL_CODECNAMESIZE);
+	callbacks.call_audio_params_cb(chan->peer_id, codecnamebuf, sample_rate);
+
+	return 1;
+}
+
+static unsigned int procmsg_CALL_VIDEOPARAM(unsigned char* buf, unsigned int nb, void *p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+	char codecnamebuf[24];
+	uint16_t width, height;
+
+	if (chan->call_state != PICA_CALL_STATE_ACTIVE)
+	{
+		fprintf(stderr, "unexpected VIDEOPARAM, no call in progress");
+		return 0;
+	}
+
+	chan->call_video_params_are_set = 1;
+
+	codecnamebuf[0] = '\0';
+	strncat(codecnamebuf, buf + 2, PICA_PROTO_CALL_CODECNAMESIZE);
+
+	width = *(uint16_t*)(buf + 2 + PICA_PROTO_CALL_CODECNAMESIZE);
+	height = *(uint16_t*)(buf + 2 + PICA_PROTO_CALL_CODECNAMESIZE + 2);
+	callbacks.call_video_params_cb(chan->peer_id, codecnamebuf, width, height);
+
+	return 1;
+}
+
+static unsigned int procmsg_CALL_AUDIO_PACKET(unsigned char *buf, unsigned int nb, void* p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+
+	if (chan->call_state != PICA_CALL_STATE_ACTIVE)
+	{
+		fprintf(stderr, "unexpected CALL_AUDIO_PACKET, no call in progress");
+		return 0;
+	}
+
+	if (!chan->call_audio_params_are_set)
+	{
+		fprintf(stderr, "no AUDIOPARAM was set, can't process AUDIO_PACKET");
+		return 0;
+	}
+
+
+	if (*(uint16_t*)(buf + 2) != (nb - 4))
+	{
+		return 0;
+	}
+
+	uint16_t pkt_size = *(uint16_t*)(buf + 2);
+
+	callbacks.call_audio_packet_cb(chan->peer_id, pkt_size, buf + 4);
+
+	return 1;
+}
+
+static unsigned int procmsg_CALL_VIDEO_PACKET(unsigned char *buf, unsigned int nb, void *p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+
+	if (chan->call_state != PICA_CALL_STATE_ACTIVE)
+	{
+		fprintf(stderr, "unexpected CALL_VIDEO_PACKET, no call in progress");
+		return 0;
+	}
+
+	if (!chan->call_video_params_are_set)
+	{
+		fprintf(stderr, "no VIDEOPARAM was set, can't process VIDEO_PACKET");
+		return 0;
+	}
+
+
+	if (*(uint16_t*)(buf + 2) != (nb - 4))
+	{
+		return 0;
+	}
+
+	uint16_t pkt_size = *(uint16_t*)(buf + 2);
+
+	callbacks.call_video_packet_cb(chan->peer_id, pkt_size, buf + 4);
+
 	return 1;
 }
 
@@ -3420,6 +3616,8 @@ int PICA_start_call(struct PICA_c2c *chn)
 		return PICA_ERRNOMEM;
 	}
 
+	chn->call_state = PICA_CALL_STATE_CALLING;
+
 	return PICA_OK;
 }
 
@@ -3438,6 +3636,8 @@ int PICA_pickup_call(struct PICA_c2c *chn)
 	{
 		return PICA_ERRNOMEM;
 	}
+
+	chn->call_state = PICA_CALL_STATE_ACTIVE;
 
 	return PICA_OK;
 }
@@ -3458,6 +3658,8 @@ int PICA_reject_call(struct PICA_c2c *chn)
 		return PICA_ERRNOMEM;
 	}
 
+	chn->call_state = PICA_CALL_STATE_IDLE;
+
 	return PICA_OK;
 }
 
@@ -3465,7 +3667,7 @@ int PICA_hangup_call(struct PICA_c2c *chn)
 {
 	struct PICA_proto_msg *mp;
 
-	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
+	if (chn->call_state == PICA_CALL_STATE_IDLE)
 		return PICA_ERRCALLNOTINPROGRESS;
 
 	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALLFIN, PICA_PROTO_CALLFIN_SIZE)))
@@ -3479,6 +3681,93 @@ int PICA_hangup_call(struct PICA_c2c *chn)
 
 	// release call resources??
 	// handle incoming last stream packets?
+	chn->call_state = PICA_CALL_STATE_IDLE;
+
+	return PICA_OK;
+}
+
+int PICA_set_call_audio_params(struct PICA_c2c *chn, const char *codec_name, uint16_t sample_rate)
+{
+	struct PICA_proto_msg *mp;
+
+	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
+		return PICA_ERRCALLNOTINPROGRESS;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_AUDIOPARAM, PICA_PROTO_CALL_AUDIOPARAM_SIZE)))
+	{
+		strncpy(mp->tail, codec_name, PICA_PROTO_CALL_CODECNAMESIZE);
+		*((uint16_t*)(mp->tail + PICA_PROTO_CALL_CODECNAMESIZE)) = sample_rate;
+
+	}
+	else
+	{
+		return PICA_ERRNOMEM;
+	}
+
+	return PICA_OK;
+}
+
+int PICA_set_call_video_params(struct PICA_c2c *chn, const char *codec_name, uint16_t width, uint16_t height)
+{
+	struct PICA_proto_msg *mp;
+
+	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
+		return PICA_ERRCALLNOTINPROGRESS;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_VIDEOPARAM, PICA_PROTO_CALL_VIDEOPARAM_SIZE)))
+	{
+		strncpy(mp->tail, codec_name, PICA_PROTO_CALL_CODECNAMESIZE);
+		*((uint16_t*)(mp->tail + PICA_PROTO_CALL_CODECNAMESIZE)) = width;
+		*((uint16_t*)(mp->tail + PICA_PROTO_CALL_CODECNAMESIZE + sizeof(width))) = height;
+
+	}
+	else
+	{
+		return PICA_ERRNOMEM;
+	}
+
+	return PICA_OK;
+}
+
+int PICA_send_audio_packet(struct PICA_c2c *chn, const char *buf, unsigned int len)
+{
+	struct PICA_proto_msg *mp;
+
+	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
+		return PICA_ERRCALLNOTINPROGRESS;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_AUDIO_PACKET, len + 4)))
+	{
+		*((uint16_t*)mp->tail) = len;
+		memcpy(mp->tail + 2, buf, len);
+
+	}
+	else
+	{
+		return PICA_ERRNOMEM;
+	}
+
+	return PICA_OK;
+}
+
+int PICA_send_video_packet(struct PICA_c2c *chn, const char *buf, unsigned int len)
+{
+	struct PICA_proto_msg *mp;
+
+	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
+		return PICA_ERRCALLNOTINPROGRESS;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_VIDEO_PACKET, len + 4)))
+	{
+		*((uint16_t*)mp->tail) = len;
+		memcpy(mp->tail + 2, buf, len);
+
+	}
+	else
+	{
+		return PICA_ERRNOMEM;
+	}
+
 	return PICA_OK;
 }
 

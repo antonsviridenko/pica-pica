@@ -314,6 +314,8 @@ struct PICA_c2c
 	unsigned int directc2c_write_before_barrier_pos;
 
 	enum PICA_call_state call_state;
+	int call_audio_params_are_set;
+	int call_video_params_are_set;
 };
 
 struct PICA_listener
@@ -488,6 +490,10 @@ int PICA_start_call(struct PICA_c2c *chn);
 int PICA_pickup_call(struct PICA_c2c *chn);
 int PICA_reject_call(struct PICA_c2c *chn);
 int PICA_hangup_call(struct PICA_c2c *chn);
+int PICA_set_call_audio_params(struct PICA_c2c *chn, const char *codec_name, uint16_t sample_rate);
+int PICA_set_call_video_params(struct PICA_c2c *chn, const char *codec_name, uint16_t width, uint16_t height);
+int PICA_send_audio_packet(struct PICA_c2c *chn, const char *buf, unsigned int len);
+int PICA_send_video_packet(struct PICA_c2c *chn, const char *buf, unsigned int len);
 
 void PICA_close_c2c(struct PICA_c2c *chn);
 void PICA_close_c2n(struct PICA_c2n *cid);
