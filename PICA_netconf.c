@@ -130,6 +130,7 @@ int PICA_upnp_autoconfigure_ipv4(int public_port, int local_port, char *public_i
 	struct UPNPUrls urls;
 	struct IGDdatas data;
 	char lanaddr[64];
+	char wanaddr[64];
 	char ppstr[8];
 	char lpstr[8];
 	int ret;
@@ -140,9 +141,11 @@ int PICA_upnp_autoconfigure_ipv4(int public_port, int local_port, char *public_i
 	devlist = upnpDiscover(2000, 0, 0, 0, 0, 2, &error);
 #endif
 
-
+#if MINIUPNPC_API_VERSION < 18
 	ret = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr));
-
+#else
+	ret = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
+#endif
 	if (ret != 1)
 	{
 		freeUPNPDevlist(devlist);
