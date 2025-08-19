@@ -44,6 +44,11 @@ public:
 	void ResumeFile(QByteArray peer_id, bool resume_sending);
 	void CancelFile(QByteArray peer_id, bool cancel_sending);
 
+	void StartCall(QByteArray to);
+	void AcceptCall(QByteArray from);
+	void RejectCall(QByteArray from);
+	void HangupCall(QByteArray with);
+
 	Accounts::AccountRecord CurrentAccount()
 	{
 		return skynet_account;
@@ -78,11 +83,18 @@ signals:
 
 	void c2cClosed(QByteArray peer_id);
 
+	void CallFailed(QString reason);
+	void IncomingCall(QByteArray from);
+	void CallAccepted(QByteArray by);
+	void CallRejected(QByteArray by);
+	void CallHungup(QByteArray by);
 private:
 	Nodes nodes;
 	QList<QPair<struct PICA_c2n *, Nodes::NodeRecord> > connecting_nodes;
 	QList<struct PICA_c2n *> connected_nodes_to_close;
 	bool self_aware;
+	bool call_waiting_c2c_connect;
+	QByteArray call_waiting_to;
 	QString status;
 	struct PICA_c2n *active_nodelink;
 	struct PICA_acc *acc;
@@ -111,6 +123,10 @@ private:
 	void active_filetransfers_reset();
 	quint32 active_filetransfers;
 
+	void continue_start_call();
+	// check if there is a call waiting to be initiated with peer_id
+	bool is_call_waiting_for(const QByteArray &peer_id);
+
 	void emit_MessageReceived(QByteArray from, QString msg);
 	void emit_UnableToDeliver(QByteArray to, QString msg);
 	void emit_Delivered(QByteArray to);
@@ -136,17 +152,22 @@ private:
 	void emit_c2cClosed(QByteArray peer_id);
 	void emit_ConnectionStatusUpdated(QByteArray peer_id, QString status);
 
-	//получение сообщения.
+	void emit_CallFailed(QString reason);
+	void emit_IncomingCall(QByteArray from);
+	void emit_CallAccepted(QByteArray by);
+	void emit_CallRejected(QByteArray by);
+	void emit_CallHungup(QByteArray by);
+
 	static void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type);
-	//получение подтверждения о доставке сообщения
+
 	static void msgok_cb(const unsigned char *peer_id);
-	//создание канала с собеседником
+
 	static void c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename);
-	//создать канал не удалось
+
 	static void c2c_failed(const unsigned char *peer_id);
-	//входящий запрос на создание канала от пользователя с номером caller_id
+
 	static int accept_cb(const unsigned char *caller_id);
-	//запрошенный пользователь не найден, в оффлайне или отказался от общения
+
 	static void notfound_cb(const unsigned char *callee_id);
 
 	static void c2c_closed_cb(const unsigned char *peer_id, int reason);
@@ -178,6 +199,22 @@ private:
 	static void multilogin_cb(uint64_t timestamp, void *addr_bin, const char *addr_str, uint16_t port);
 
 	static void direct_c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename);
+
+	static void incoming_call_cb(const unsigned char *peer_id);
+
+	static void call_picked_up_cb(const unsigned char *peer_id);
+
+	static void call_rejected_cb(const unsigned char *peer_id);
+
+	static void call_hangup_cb(const unsigned char *peer_id);
+
+	static void call_audio_params_cb(const unsigned char *peer_id, const char *codec, uint16_t sample_rate);
+
+	static void call_video_params_cb(const unsigned char *peer_id, const char *codec, uint16_t width, uint16_t height);
+
+	static void call_audio_packet_cb(const unsigned char *peer_id, uint16_t size, const char *pkt_data);
+
+	static void call_video_packet_cb(const unsigned char *peer_id, uint16_t size, const char *pkt_data);
 
 private slots:
 	void nodelink_activated(PICA_c2n *c2n);

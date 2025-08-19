@@ -26,11 +26,21 @@ class CallWindow : public QWidget
 {
 	Q_OBJECT
 public:
-	explicit CallWindow(QByteArray peer_id);
+	explicit CallWindow(QByteArray peer_id, bool incoming);
+signals:
+	void start_call_pressed();
+	void accept_call_pressed();
+	void hang_call_pressed();
 private:
 	QByteArray m_peer_id;
+	bool is_incoming;
+	QPushButton *pbAccept;
 	QPushButton *pbCall;
 	QPushButton *pbHang;
+private slots:
+	void call();
+	void accept();
+	void hang();
 };
 
 #endif

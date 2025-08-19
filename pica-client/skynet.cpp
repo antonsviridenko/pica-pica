@@ -34,6 +34,7 @@ SkyNet::SkyNet()
 	: nodes(config_dbname), QObject(0), active_filetransfers(0)
 {
 	self_aware = false;
+	call_waiting_c2c_connect = false;
 
 	PICA_client_callbacks cbs =
 	{
@@ -57,7 +58,16 @@ SkyNet::SkyNet()
 		c2n_closed_cb,
 		listener_error_cb,
 		multilogin_cb,
-		direct_c2c_established_cb
+		direct_c2c_established_cb,
+		incoming_call_cb,
+		call_picked_up_cb,
+		call_rejected_cb,
+		call_hangup_cb,
+		call_audio_params_cb,
+		call_video_params_cb,
+		call_audio_packet_cb,
+		call_video_packet_cb
+
 	};
 
 	PICA_client_init(&cbs);
@@ -718,6 +728,114 @@ void SkyNet::SendMessage(QByteArray to, QString msg)
 
 }
 
+void SkyNet::AcceptCall(QByteArray from)
+{
+	int ret = PICA_OK;
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(from)))
+	{
+		ret = PICA_pickup_call(iptr);
+
+		if (ret != PICA_OK)
+			emit CallFailed(QString(tr("Failed to pickup the call: %1")).arg(ret));
+
+		return;
+	}
+
+}
+
+void SkyNet::RejectCall(QByteArray from)
+{
+	int ret = PICA_OK;
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(from)))
+	{
+		ret = PICA_reject_call(iptr);
+
+		if (ret != PICA_OK)
+			emit CallFailed(QString(tr("Failed to reject the call: %1")).arg(ret));
+
+		return;
+	}
+
+}
+
+void SkyNet::HangupCall(QByteArray with)
+{
+	int ret = PICA_OK;
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(with)))
+	{
+		ret = PICA_hangup_call(iptr);
+
+		if (ret != PICA_OK)
+			emit CallFailed(QString(tr("Failed to hang up the call: %1")).arg(ret));
+
+		return;
+	}
+
+}
+
+void SkyNet::StartCall(QByteArray to)
+{
+	if (!isSelfAware())
+	{
+		emit CallFailed(QString(tr("Pica Pica client is not online")));
+		return;
+	}
+
+	int ret = PICA_OK;
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		ret = PICA_start_call(iptr);
+
+		if (ret != PICA_OK)
+			emit CallFailed(QString(tr("Failed to initiate the call: %1")).arg(ret));
+
+		return;
+	}
+
+	call_waiting_c2c_connect = true;
+	call_waiting_to = to;
+
+	struct PICA_c2c *chan = NULL;
+
+	ret = PICA_new_c2c(active_nodelink, (const unsigned char*)to.constData(), NULL, &chan);
+
+	if (ret != PICA_OK)
+		emit CallFailed(QString(tr("Failed to create the C2C connection for the call: %1")).arg(ret));
+}
+
+bool SkyNet::is_call_waiting_for(const QByteArray &peer_id)
+{
+	if (call_waiting_c2c_connect && call_waiting_to == peer_id)
+		return true;
+
+	return false;
+}
+
+void SkyNet::continue_start_call()
+{
+	int ret = PICA_ERRCALLNOTINPROGRESS;
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(call_waiting_to)))
+	{
+		ret = PICA_start_call(iptr);
+	}
+
+	if (ret != PICA_OK)
+	{
+		emit CallFailed(QString(tr("Failed to initiate the call: %1")).arg(ret));
+		call_waiting_c2c_connect = false;
+	}
+}
+
 void SkyNet::flush_queues(QByteArray to)
 {
 	struct PICA_c2c *chan;
@@ -911,6 +1029,31 @@ void SkyNet::emit_ConnectionStatusUpdated(QByteArray peer_id, QString status)
 	emit ConnectionStatusUpdated(peer_id, status);
 }
 
+void SkyNet::emit_CallFailed(QString reason)
+{
+	emit CallFailed(reason);
+}
+
+void SkyNet::emit_IncomingCall(QByteArray from)
+{
+	emit IncomingCall(from);
+}
+
+void SkyNet::emit_CallAccepted(QByteArray by)
+{
+	emit CallAccepted(by);
+}
+
+void SkyNet::emit_CallRejected(QByteArray by)
+{
+	emit CallRejected(by);
+}
+
+void SkyNet::emit_CallHungup(QByteArray by)
+{
+	emit CallHungup(by);
+}
+
 //callbacks
 
 void SkyNet::newmsg_cb(const unsigned char *peer_id, const char *msgbuf, unsigned int nb, int type)
@@ -927,16 +1070,30 @@ void SkyNet::msgok_cb(const unsigned char *peer_id)
 
 void SkyNet::c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
 {
-	skynet->reset_c2c_reconnect_timeout(QByteArray((const char*)peer_id, PICA_ID_SIZE));
-	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString("🔐: %1 c2c").arg(ciphersuitename));
-	skynet->flush_queues(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+	skynet->reset_c2c_reconnect_timeout(peer);
+	skynet->emit_ConnectionStatusUpdated(peer, QString("🔐: %1 c2c").arg(ciphersuitename));
+	skynet->flush_queues(peer);
+
+	if (skynet->is_call_waiting_for(peer))
+	{
+		skynet->continue_start_call();
+	}
 }
 
 void SkyNet::c2c_failed(const unsigned char *peer_id)
 {
-	skynet->update_c2c_reconnect_timeout(QByteArray((const char*)peer_id, PICA_ID_SIZE));
-	qDebug() << "c2c failed (" << QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64() << ")\n";
-	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString(tr("Failed to connect")));
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+
+	skynet->update_c2c_reconnect_timeout(peer);
+	qDebug() << "c2c failed (" << peer.toBase64() << ")\n";
+	skynet->emit_ConnectionStatusUpdated(peer, QString(tr("Failed to connect")));
+
+	if (skynet->is_call_waiting_for(peer))
+	{
+		skynet->emit_CallFailed(QString(tr("Failed to establish the C2C connection to %1")).arg(QString(peer.toBase64())));
+		skynet->call_waiting_c2c_connect = false;
+	}
 }
 
 int SkyNet::accept_cb(const unsigned char *caller_id)
@@ -946,20 +1103,16 @@ int SkyNet::accept_cb(const unsigned char *caller_id)
 
 void SkyNet::notfound_cb(const unsigned char *callee_id)
 {
-	skynet->update_c2c_reconnect_timeout(QByteArray((const char*)callee_id, PICA_ID_SIZE));
-	qDebug() << "not found (" << QByteArray((const char*)callee_id, PICA_ID_SIZE).toBase64() << ")\n";
+	QByteArray peer((const char*)callee_id, PICA_ID_SIZE);
 
-	/*
-	if (skynet->msgqueues.contains(callee_id))
+	skynet->update_c2c_reconnect_timeout(peer);
+	qDebug() << "not found (" << peer.toBase64() << ")\n";
+
+	if (skynet->is_call_waiting_for(peer))
 	{
-	  while ( ! skynet->msgqueues[callee_id].empty())
-	  {
-	    skynet->emit_UnableToDeliver(callee_id, skynet->msgqueues[callee_id].last());
-	    skynet->msgqueues[callee_id].removeLast();
-	  }
-	  // msgqueues.remove(callee_id) was forgotten
+		skynet->emit_CallFailed(QString(tr("Requested peer was not found online in the Pica Pica network")));
+		skynet->call_waiting_c2c_connect = false;
 	}
-	*/
 }
 
 void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
@@ -1113,4 +1266,40 @@ void SkyNet::multilogin_cb(uint64_t timestamp, void *addr_bin, const char *addr_
 void SkyNet::direct_c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
 {
 	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString("🔐: %1 direct c2c").arg(ciphersuitename));
+}
+
+void SkyNet::incoming_call_cb(const unsigned char *peer_id)
+{
+	skynet->emit_IncomingCall(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+}
+
+void SkyNet::call_picked_up_cb(const unsigned char *peer_id)
+{
+	skynet->emit_CallAccepted(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+}
+
+void SkyNet::call_rejected_cb(const unsigned char *peer_id)
+{
+	skynet->emit_CallRejected(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+}
+
+void SkyNet::call_hangup_cb(const unsigned char *peer_id)
+{
+	skynet->emit_CallHungup(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+}
+
+void SkyNet::call_audio_params_cb(const unsigned char *peer_id, const char *codec, uint16_t sample_rate)
+{
+}
+
+void SkyNet::call_video_params_cb(const unsigned char *peer_id, const char *codec, uint16_t width, uint16_t height)
+{
+}
+
+void SkyNet::call_audio_packet_cb(const unsigned char *peer_id, uint16_t size, const char *pkt_data)
+{
+}
+
+void SkyNet::call_video_packet_cb(const unsigned char *peer_id, uint16_t size, const char *pkt_data)
+{
 }

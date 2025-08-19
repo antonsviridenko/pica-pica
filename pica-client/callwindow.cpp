@@ -19,17 +19,47 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 
-CallWindow::CallWindow(QByteArray peer_id)
-	: m_peer_id(peer_id)
+CallWindow::CallWindow(QByteArray peer_id, bool incoming)
+	: m_peer_id(peer_id), is_incoming(incoming)
 {
 	QHBoxLayout *lh = new QHBoxLayout(this);
 	QVBoxLayout *lv = new QVBoxLayout(this);
 
+	pbAccept = new QPushButton(tr("Accept"), this);
 	pbCall = new QPushButton(tr("Call"), this);
 	pbHang = new QPushButton(tr("Hang Up"), this);
 
-	lh->addWidget(pbCall, Qt::AlignRight);
-	lh->addWidget(pbHang, Qt::AlignLeft);
+	lh->addWidget(pbAccept, Qt::AlignLeft);
+	lh->addWidget(pbCall, Qt::AlignLeft);
+	lh->addWidget(pbHang, Qt::AlignRight);
 	lh->addLayout(lv);
 	setLayout(lh);
+
+	connect(pbCall, SIGNAL(clicked()), this, SLOT(call()));
+	connect(pbHang, SIGNAL(clicked()), this, SLOT(hang()));
+	connect(pbAccept, SIGNAL(clicked()), this, SLOT(accept()));
+
+	if (is_incoming)
+	{
+		pbCall->hide();
+	}
+	else
+	{
+		pbAccept->hide();
+	}
+}
+
+void CallWindow::call()
+{
+	emit start_call_pressed();
+}
+
+void CallWindow::hang()
+{
+	emit hang_call_pressed();
+}
+
+void CallWindow::accept()
+{
+	emit accept_call_pressed();
 }
