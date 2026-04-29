@@ -2020,9 +2020,14 @@ void client_tree_remove(struct client* ci)
 		if (lm != ci->right)
 		{
 			lm->up->left = lm->right;
+			if (lm->right)
+				lm->right->up = lm->up; // FIX 1
 			lm->right = ci->right;
+			ci->right->up = lm; // FIX 2
 		}
 		lm->left = ci->left;
+		if (ci->left)
+			ci->left->up = lm; // FIX 3
 		lm->up = ci->up;
 		*p_link = lm;
 	}
