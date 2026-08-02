@@ -1,0 +1,498 @@
+Protocol Specification.
+
+Terminology.
+
+Client - a software instance that interacts with human users and lets them send
+and receive encrypted messages over Pica Pica.
+
+Node - a software instance that coordinates the Pica Pica network, maintains a
+list of all active nodes and provides connectivity to clients.
+
+UH - user hash - the SHA224 hash of a user certificate in DER format, 28
+octets. It is used as a user identifier.
+
+Connections.
+There are 4 types of connections between Pica Pica nodes and clients.
+
+-client to node (c2n) - a control connection from client to node
+
+-client to client (c2c) - a data connection between clients through a node
+acting as a proxy
+
+-node to node (n2n) - a control & data connection between nodes
+
+-direct client to client (directc2c) - a direct connection between clients,
+using the IPv4/IPv6/DNS address of the accepting client previously
+communicated over a c2c connection.
+
+These connections use TCP transport. The first 3 connection types start
+with a TLS 1.2 handshake using an anonymous Diffie-Hellman ciphersuite; the
+connecting host acts as the TLS client, the accepting host as the TLS server.
+After the connection type is identified by the accepting node, the anonymous
+TLS session is gracefully closed in the case of c2n and c2c connections. In the
+case of c2n the node starts a new TLS session with the client, where the node
+acts as the TLS client and the client acts as the TLS server, using the
+client's RSA certificate. In the case of a c2c connection the node acts as a
+transparent proxy, sending chunks of data received from the first client to the
+second one and vice versa. The clients establish a mutually authenticated TLS
+session over the proxied connection; the initiator client is the TLS client,
+the accepting client has the TLS server role.
+An n2n connection continues to operate in the ADH TLS session, as by design
+nodes do not store any state that identifies them other than their network
+address.
+
+
+Packet Format.
+
+A Pica Pica protocol message packet contains a header and a tail.
+
+[Header][Tail]
+
+The header is a 2-octet sequence that identifies the packet. The first and
+second octets are always equal to each other.
+The tail is the remaining part of the packet and can be empty. The tail can
+have a fixed predefined length or, in the case of a variable length packet, it
+begins with a 1- or 2-octet sequence containing an unsigned integer that
+defines the length in octets of the remaining part of the tail, not including
+the length octets. The length field is stored in little-endian format, least
+significant octet first.
+The whole packet length is limited to 65536 octets, so the length field value
+is within the 0..65532 range.
+
+Example:
+
+0x55 0x55 0x03 0x00 0xAA 0xBB 0xCC
+[0x55 0x55] - header
+[0x03 0x00] - tail length, 2 octets
+[0xAA 0xBB 0xCC] - payload, 3 octets
+
+
+C2N Messages.
+====================================================
+C2N connection initialization request.
+Sent by the client.
+ANON TLS
+
+[0xCA 0xCA][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+VER_MAJOR, VER_MINOR - the Pica Pica protocol version supported by the client
+
+====================================================
+C2N connection initialization success.
+Sent by the node.
+ANON TLS
+
+[0x01 0x01]['O']['K']
+
+4 octets
+
+After this message the client and the node initiate an ANON TLS session
+shutdown, and after a successful shutdown they initiate a new authenticated TLS
+session over the same TCP connection. The client acts as the TLS server and
+presents the client certificate; the node acts as the TLS client and does not
+present a certificate.
+====================================================
+Protocol version mismatch.
+Sent by the node.
+ANON TLS
+
+[0x02 0x02][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+VER_MAJOR, VER_MINOR - the Pica Pica protocol version supported by the node
+
+This message is sent if the node's and the client's protocol versions do not
+match. After this message is sent and received, the TCP connection is closed by
+both hosts.
+====================================================
+
+	The messages below are transmitted over the secure c2n control
+	connection between a client and a node.
+
+====================================================
+Request to establish a connection with a peer.
+Sent by the client.
+
+[0x03 0x03][UH of the called user]
+
+30 octets
+====================================================
+Incoming connection permission request.
+Sent by the node.
+
+[0x04 0x04][UH of the initiator]
+
+30 octets
+====================================================
+The user with the given UH was not found (offline, or refused to talk).
+Sent by the node.
+
+[0x05 0x05][UH of the called user]
+
+30 octets
+====================================================
+Connection allowed by the called user.
+Sent by the called client.
+
+[0x06 0x06][UH of the calling user]
+
+30 octets
+
+After sending this message, the called client connects to the node's data
+exchange port (_DATA_PORT) and sends message 0x20 - new connection
+identification - over that connection.
+====================================================
+The user with the given UH was found and is ready to talk.
+Sent by the node to the calling client.
+
+[0x07 0x07][UH of the called user]
+
+30 octets
+====================================================
+Connection denied.
+Sent by the called client.
+
+[0x08 0x08][UH of the calling user]
+
+30 octets
+====================================================
+Node list request.
+Sent by the client.
+
+[0x09 0x09][2 pseudo-random octets]
+
+4 octets
+====================================================
+Node list.
+Sent by the node.
+
+[0x0A 0x0A] - see the 0xA4 message format
+====================================================
+Multilogin notification.
+Sent by a client that has logged in. Relayed to other nodes.
+Delivered to the existing connected client instance.
+
+[0x0E 0x0E][length 2 octets][timestamp][node address][signature from UH, timestamp, node
+address]
+
+timestamp - the time when the client logged in, a 64-bit Unix timestamp in the
+UTC timezone
+
+node address - one of the 0xA0, 0xA1, 0xA2 messages; the announced address of
+the node the sending client is connected to.
+
+signature - a digital signature using the SHA224 hash and the private RSA key
+of the sending client. The signature is calculated from the sender's
+concatenated UH, timestamp and node address = Sign(UH|timestamp|node address)
+
+====================================================
+
+	The message below is transmitted over the connection between a node
+	and a client which is used for data transfer.
+
+====================================================
+New connection identification.
+Sent by the client.
+
+[0x20 0x20][UH of the calling user][UH of the called user]
+
+58 octets
+
+Upon receiving this message the node checks the UHs. If they do not match, the
+connection is closed. After the check the node switches into data relaying mode
+between the two clients. The calling client initiates TLS connection
+establishment.
+====================================================
+
+
+C2C Messages.
+The messaging protocol between clients through node(s).
+====================================================
+C2C connection initialization request.
+Sent by a client to another client.
+
+[0xCC 0xCC][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+VER_MAJOR, VER_MINOR - the c2c protocol version supported by the client
+
+Possible responses - 0x01, 0x02
+====================================================
+Client direct address list.
+
+[0x0B 0x0B] - see the 0xA4 message format
+0xA0, 0xA1, 0xA2 - the same as in n2n messages
+
+If a client is configured to accept incoming direct client to client
+connections (bypassing the node), it can send a list of its own addresses.
+Local network addresses (if there are any) from the 192.168.0.0/16,
+172.16.0.0/12 and 10.0.0.0/8 subnets must be placed first in the list, so that
+clients residing in the same local network are able to connect directly. Public
+internet addresses follow them.
+If the client is behind NAT and forwards an open port to its local address, the
+external port number must be specified in the address.
+Having received the announcement, the other client can create a connection to
+that address and close the connection through the node.
+====================================================
+Direct connection attempts failed.
+
+[0x0C 0x0C][2 pseudo-random octets]
+
+4 octets
+
+Sent by the initiator if it has received a direct address list from the called
+client and all connection attempts to the received addresses were unsuccessful.
+After receiving this message, the called client starts connection attempts to
+the direct addresses of the initiator, if an address list was received from the
+initiator and direct connections are allowed by the called client's settings.
+====================================================
+Switch to direct connection.
+
+[0x0D 0x0D][2 pseudo-random octets]
+
+4 octets
+
+Sent by each side over the connection through the node after a successful TLS
+handshake on the direct connection. After sending this message, all subsequent
+messages are sent over the direct connection; the receiver of the message
+correspondingly expects subsequent messages over the direct connection.
+====================================================
+Message - UTF-8 encoded text.
+
+[0x30 0x30][length 2 octets][UTF-8 encoded message]
+====================================================
+Delivery report for the previous message.
+
+[0x40 0x40][2 pseudo-random octets]
+
+4 octets
+====================================================
+File sending request.
+
+[0x50 0x50][length 2 octets, 9..263][file size, 8 octets][file name in UTF-8, 1 - 255 octets]
+====================================================
+File accepted.
+
+[0x51 0x51][2 pseudo-random octets]
+
+4 octets
+
+After receiving this message, the sender starts sending the file.
+====================================================
+File rejected.
+
+[0x52 0x52][2 pseudo-random octets]
+
+4 octets
+====================================================
+File fragment.
+
+[0x53 0x53][fragment length, 2 octets, 0 - 65532][file fragment]
+====================================================
+File transfer control.
+
+[0x54 0x54][sender command][receiver command]
+
+4 octets
+
+Commands:
+00 - void command (no action)
+01 - pause
+02 - resume
+03 - cancel
+04 - cancel because of a file read/write error
+====================================================
+
+
+Audio and Video Calls.
+Sent between clients over a c2c or directc2c connection.
+====================================================
+Call request (ring)
+
+[0x70 0x70]
+[2 pseudo-random octets]
+
+4 octets
+====================================================
+Call answer (pick up)
+
+[0x71 0x71]
+[2 pseudo-random octets]
+
+4 octets
+====================================================
+Call reject
+
+[0x72 0x72]
+[2 pseudo-random octets]
+
+4 octets
+====================================================
+Call hang up (finished)
+
+[0x73 0x73]
+[2 pseudo-random octets]
+
+4 octets
+====================================================
+Audio stream parameters
+
+[0x74 0x74]
+[codec - a 20 octet string, left-aligned, padded with zeroes;
+"opus", "adpcm_g722", "pcm_alaw", named as in ffmpeg]
+[sample rate, uint16_t, little-endian]
+
+24 octets
+====================================================
+Video stream parameters
+
+[0x75 0x75]
+[codec - a 20 octet string, left-aligned, padded with zeroes, e.g.
+"hevc", "h264", "mjpeg", "vp9", named as in ffmpeg]
+[width, uint16_t, little-endian]
+[height, uint16_t, little-endian]
+
+26 octets
+====================================================
+Voice (audio) packet
+
+[0x76 0x76][length 2 octets][data]
+====================================================
+Video packet
+
+[0x77 0x77][length 2 octets][data]
+====================================================
+
+
+Ping.
+Can be sent by either side, both over the c2n control connection and over a
+connection between clients.
+====================================================
+Ping request.
+
+[0x68 0x68][2 pseudo-random octets]
+
+4 octets
+====================================================
+Ping reply.
+
+[0x69 0x69][2 pseudo-random octets]
+
+4 octets
+====================================================
+
+
+N2N Messages.
+The inter-node interaction protocol.
+====================================================
+Node connection request.
+Sent by one node to another.
+
+[0xCB 0xCB][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+VER_MAJOR, VER_MINOR - the Pica Pica protocol version supported by the node
+
+Possible responses - 0x01, 0x02 - the same as for a client
+====================================================
+New node announcement - IPv4 address.
+
+[0xA0 0xA0][IP address of the new node - 4 octets, network byte order][port number - 2 octets, network byte order]
+
+8 octets
+====================================================
+New node announcement - IPv6 address.
+
+[0xA1 0xA1][IPv6 address of the new node - 16 octets, network byte order][port number - 2 octets, network byte order]
+
+20 octets
+====================================================
+New node announcement - DNS address.
+
+[0xA2 0xA2][address length - 1 octet][DNS address of the new node][port number - 2 octets, network byte order]
+====================================================
+
+The address declared in the announcement must match the address from which the
+connection was made. The node that receives the announcement must verify this.
+
+====================================================
+Node list.
+
+[0xA4 0xA4][address list size in octets, 2 octets - 0..65532][address list]
+
+The address list is a sequence of elements of 3 possible types
+[0xA0][IP address - 4 octets][port number - 2 octets] - 7 octets
+[0xA1][IPv6 address][port number - 2 octets] - 19 octets
+[0xA2][address length - 1 octet][DNS address][port number - 2 octets] - 4 ... 259 octets
+
+The sending node's own address (in the given address space) always goes first
+in the list.
+A message can contain only a part of the node list instead of the whole list;
+in that case the whole list is sent in parts. Addresses and port numbers are in
+"network" byte order.
+The whole packet size does not exceed 64kb.
+====================================================
+Node list request.
+
+[0x90 0x90][2 pseudo-random octets]
+
+4 octets
+====================================================
+Client search.
+Sent to all nodes. The receiving node replies to this message only if the
+requested UH is found among its local clients or in its cache.
+
+[0xA5 0xA5][UH of the called user]
+
+30 octets
+====================================================
+Client search result - client found.
+Sent by a node that received 0xA5, if the requested UH is found among its local
+connected clients.
+
+[0xA8 0xA8][UH of the called user]
+
+30 octets
+====================================================
+Client search result - client found in cache.
+Sent by a node that received 0xA5, if the requested UH is found in its cache
+(i.e. there is information that the client being searched for is connected to
+another node).
+
+[0xA9 0xA9][size, 2 octets, 32..287][UH of the called user][address of the node where the requested UH may be located, in A0|A1|A2 format, see the 0xA4 description]
+====================================================
+Request to allow a connection with a client of the receiving node.
+
+[0xAA 0xAA][UH of the initiator][UH of the called user]
+
+58 octets
+====================================================
+Connection allowed by the called user.
+Sent after the called local client has replied with a 0x06 message and created
+a new connection for message exchange.
+
+[0xAB 0xAB][UH of the initiator][UH of the called user]
+
+58 octets
+====================================================
+Client not found (offline, or refused to talk).
+
+[0xB8 0xB8][UH of the initiator][UH of the called user]
+
+58 octets
+
+Sent by a node in reply to a 0xD0 message addressed to this UH, if that user
+has already disconnected or is not in the list of local clients, or in reply to
+0xAA, if the called client denied the connection.
+====================================================
+Message transmitted between nodes on behalf of clients.
+
+[0xD0 0xD0][embedded message length in octets, 56..65532, 2 octets little-endian][UH of the local sending user][UH of the user on another node][embedded data]
+
+embedded data - data transmitted over the CLIENT-CLIENT connection
+====================================================
