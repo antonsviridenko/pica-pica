@@ -31,12 +31,16 @@ signals:
 	void start_call_pressed();
 	void accept_call_pressed();
 	void hang_call_pressed();
+	void callwindow_closed(CallWindow *sender_window);
 private:
 	QByteArray m_peer_id;
 	bool is_incoming;
 	QPushButton *pbAccept;
 	QPushButton *pbCall;
 	QPushButton *pbHang;
+
+	void closeEvent(QCloseEvent *e);
+
 private slots:
 	void call();
 	void accept();

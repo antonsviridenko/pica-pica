@@ -18,10 +18,13 @@
 #include "callwindow.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QCloseEvent>
 
 CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	: m_peer_id(peer_id), is_incoming(incoming)
 {
+	setAttribute(Qt::WA_DeleteOnClose);
+
 	QHBoxLayout *lh = new QHBoxLayout(this);
 	QVBoxLayout *lv = new QVBoxLayout(this);
 
@@ -62,4 +65,11 @@ void CallWindow::hang()
 void CallWindow::accept()
 {
 	emit accept_call_pressed();
+}
+
+void CallWindow::closeEvent(QCloseEvent *e)
+{
+	emit callwindow_closed(this);
+
+	e->accept();
 }

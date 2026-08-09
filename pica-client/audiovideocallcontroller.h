@@ -68,6 +68,7 @@ private slots:
 	void initiate_call();
 	void accept_call();
 	void end_call();
+	void callwindow_closed(CallWindow *sender_window);
 
 };
 

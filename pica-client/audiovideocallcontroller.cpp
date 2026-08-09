@@ -124,6 +124,7 @@ void AudioVideoCallController::start_call(QByteArray peer_id)
 	callwindow = new CallWindow(peer_id, false);
 	connect(callwindow, SIGNAL(start_call_pressed()), this, SLOT(initiate_call()));
 	connect(callwindow, SIGNAL(hang_call_pressed()), this, SLOT(end_call()));
+	connect(callwindow, SIGNAL(callwindow_closed(CallWindow*)), this, SLOT(callwindow_closed(CallWindow*)));
 	callwindow->show();
 }
 
@@ -140,6 +141,7 @@ void AudioVideoCallController::call_from(QByteArray peer_id)
 	callwindow = new CallWindow(peer_id, true);
 	connect(callwindow, SIGNAL(accept_call_pressed()), this, SLOT(accept_call()));
 	connect(callwindow, SIGNAL(hang_call_pressed()), this, SLOT(end_call()));
+	connect(callwindow, SIGNAL(callwindow_closed(CallWindow*)), this, SLOT(callwindow_closed(CallWindow*)));
 	callwindow->show();
 
 	/* play ring tone */
@@ -167,5 +169,12 @@ void AudioVideoCallController::end_call()
 		skynet->HangupCall(m_peer_id);
 	else
 		skynet->RejectCall(m_peer_id);
+
+	callwindow->close();
+}
+
+void AudioVideoCallController::callwindow_closed(CallWindow *sender_window)
+{
+	callwindow = 0;
 }
 
