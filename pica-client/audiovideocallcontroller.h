@@ -18,15 +18,18 @@
 #define AUDIOVIDEOCALLCONTROLLER_H
 
 #include <QObject>
+#include <QThread>
 #include "callwindow.h"
 #include "audiodevice.h"
 #include "videodevice.h"
+#include "toneplayer/toneplayer.h"
 
 class AudioVideoCallController : public QObject
 {
 	Q_OBJECT
 public:
 	explicit AudioVideoCallController(QObject *parent = nullptr);
+	~AudioVideoCallController();
 	// is call active (i.e. are voice/video packets exchanged now)
 	bool const isActive() {return is_active;}
 	void processCall();
@@ -46,6 +49,20 @@ private:
 	VideoDevice *cam;
 	bool is_active;
 	QByteArray m_peer_id;
+
+	// Earpiece tones (ringback, busy, special information/unreachable),
+	// played through the "audio.playback_device" setting.
+	TonePlayer *toneplayer;
+	QThread toneplayer_thread;
+
+	// Incoming call bell, played through the "audio.ring_device" setting.
+	TonePlayer *ringtoneplayer;
+	QThread ringtoneplayer_thread;
+
+	void playEarpieceTone(void (TonePlayer::*tone)());
+	void playRingTone();
+	void stopTones();
+
 private slots:
 	// button handlers
 	void initiate_call();

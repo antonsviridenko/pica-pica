@@ -95,6 +95,8 @@ pica-client/filetransfercontroller.cpp \
 pica-client/filetransfercontroller.h \
 pica-client/sound.cpp \
 pica-client/sound.h \
+pica-client/toneplayer/toneplayer.cpp \
+pica-client/toneplayer/toneplayer.h \
 pica-client/settings.cpp \
 pica-client/settings.h \
 pica-client/mediadevice.cpp \
@@ -152,12 +154,16 @@ moc_showpicaiddialog.cpp \
 moc_dhparam.cpp \
 moc_filetransfercontroller.cpp \
 moc_nodesdialog.cpp \
+moc_toneplayer.cpp \
 ui_mainwindow.h
 
 moc_%.cpp: pica-client/%.h
 	$(MOC) $< -o $@
 
 moc_%.cpp: pica-client/dialogs/%.h
+	$(MOC) $< -o $@
+
+moc_%.cpp: pica-client/toneplayer/%.h
 	$(MOC) $< -o $@
 
 pica-client/mainwindow.cpp: ui_mainwindow.h
