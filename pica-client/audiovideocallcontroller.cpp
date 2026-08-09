@@ -125,8 +125,6 @@ void AudioVideoCallController::start_call(QByteArray peer_id)
 	connect(callwindow, SIGNAL(start_call_pressed()), this, SLOT(initiate_call()));
 	connect(callwindow, SIGNAL(hang_call_pressed()), this, SLOT(end_call()));
 	callwindow->show();
-	/* play ringing tone */
-	playEarpieceTone(&TonePlayer::playCallInProgress);
 }
 
 void AudioVideoCallController::call_from(QByteArray peer_id)
@@ -151,6 +149,8 @@ void AudioVideoCallController::call_from(QByteArray peer_id)
 void AudioVideoCallController::initiate_call()
 {
 	skynet->StartCall(m_peer_id);
+	/* play ringing tone */
+	playEarpieceTone(&TonePlayer::playCallInProgress);
 }
 
 void AudioVideoCallController::accept_call()
