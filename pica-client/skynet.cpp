@@ -17,6 +17,8 @@
 #include "skynet.h"
 #include "globals.h"
 #include <QMutex>
+#include <QMetaType>
+#include <QCoreApplication>
 //#include "dialogs/viewcertdialog.h"
 #include "contacts.h"
 #include "openssltool.h"
@@ -31,10 +33,12 @@
 #include <time.h>
 
 SkyNet::SkyNet()
-	: nodes(config_dbname), QObject(0), active_filetransfers(0)
+	: nodes(nullptr), QObject(0), active_filetransfers(0)
 {
 	self_aware = false;
 	call_waiting_c2c_connect = false;
+
+	qRegisterMetaType<Accounts::AccountRecord>("Accounts::AccountRecord");
 
 	PICA_client_callbacks cbs =
 	{
@@ -79,10 +83,36 @@ SkyNet::SkyNet()
 	connect(this, SIGNAL(PeerCertificateReceived(QByteArray, QString, bool*)), this, SLOT(verify_peer_cert(QByteArray, QString, bool*)), Qt::DirectConnection);
 	connect(this, SIGNAL(MultiloginMessageReceived(quint64,QString,quint16)), this, SLOT(multilogin_event(quint64,QString,quint16)), Qt::QueuedConnection);
 
-	event_loop_timer_id = startTimer(100);
-	c2c_reconnect_timer_id = startTimer(1000);
 	file_transfer_timer_id = 0;
 
+}
+
+SkyNet::~SkyNet()
+{
+	delete nodes;
+}
+
+// Name of the QSqlDatabase connection opened for this SkyNet instance's own
+// (network) thread - separate from the GUI thread's default connection,
+// since a QSqlDatabase connection can only be used by the thread that
+// created it.
+static const QString network_sql_connection_name = QStringLiteral("network_thread_connection");
+
+void SkyNet::init()
+{
+	QSqlDatabase netdb = QSqlDatabase::addDatabase("QSQLITE", network_sql_connection_name);
+	netdb.setDatabaseName(config_dbname);
+	netdb.open();
+
+	nodes = new Nodes(config_dbname, network_sql_connection_name);
+
+	event_loop_timer_id = startTimer(100);
+	c2c_reconnect_timer_id = startTimer(1000);
+}
+
+void SkyNet::moveBackToMainThread()
+{
+	moveToThread(QCoreApplication::instance()->thread());
 }
 
 void SkyNet::active_filetransfers_up()
@@ -140,14 +170,14 @@ void SkyNet::nodelink_activated(PICA_c2n *c2n)
 		self_aware = true;
 		active_nodelink = c2n;
 
-		nodes.MakeClean();
+		nodes->MakeClean();
 
 		emit BecameSelfAware();
 
 		//load undelivered messages from history
 		if (msgqueues.isEmpty())
 		{
-			History h(config_dbname, Accounts::GetCurrentAccount().id);
+			History h(config_dbname, Accounts::GetCurrentAccount().id, network_sql_connection_name);
 
 			msgqueues = h.GetUndeliveredMessages();
 		}
@@ -234,7 +264,7 @@ void SkyNet::multilogin_event(quint64 timestamp, QString node_addr, quint16 node
 
 void SkyNet::node_status_changed(Nodes::NodeRecord nr, bool alive)
 {
-	nodes.UpdateStatus(nr, alive);
+	nodes->UpdateStatus(nr, alive);
 }
 
 void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified)
@@ -242,7 +272,7 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 //    ViewCertDialog vcd;
 //    vcd.SetCert(cert_pem);
 //    vcd.exec();
-	Contacts cnt(config_dbname, Accounts::GetCurrentAccount().id);
+	Contacts cnt(config_dbname, Accounts::GetCurrentAccount().id, network_sql_connection_name);
 	QString stored_cert;
 
 
@@ -386,8 +416,7 @@ void SkyNet::timerEvent(QTimerEvent *e)
 	if (!self_aware && e->timerId() == nodelink_reconnect_timer_id)
 	{
 		killTimer(nodelink_reconnect_timer_id);
-		Accounts::AccountRecord acc = this->CurrentAccount();
-		Join(acc);
+		Join(skynet_account);
 	}
 }
 
@@ -417,15 +446,21 @@ bool SkyNet::open_account()
 	return true;
 }
 
-void SkyNet::Join(Accounts::AccountRecord &accrec)
+void SkyNet::Join(const Accounts::AccountRecord &accrec)
+{
+	QMetaObject::invokeMethod(this, "do_Join", Qt::AutoConnection,
+	                           Q_ARG(Accounts::AccountRecord, accrec));
+}
+
+void SkyNet::do_Join(const Accounts::AccountRecord &accrec)
 {
 	PICA_directc2c_config directc2c_cfg = PICA_DIRECTC2C_CFG_DISABLED;
 	int multilogin = PICA_MULTILOGIN_PROHIBIT;
-	Settings st(config_dbname);
+	Settings st(config_dbname, network_sql_connection_name);
 
 	skynet_account = accrec;
 
-	QList<Nodes::NodeRecord> noderecords = nodes.GetNodes();
+	QList<Nodes::NodeRecord> noderecords = nodes->GetNodes();
 
 	if (!acc)
 	{
@@ -522,6 +557,11 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 
 void SkyNet::Exit()
 {
+	QMetaObject::invokeMethod(this, "do_Exit", Qt::AutoConnection);
+}
+
+void SkyNet::do_Exit()
+{
 	if (self_aware && active_nodelink)
 	{
 		PICA_close_c2n(active_nodelink);
@@ -542,12 +582,13 @@ void SkyNet::Exit()
 	emit LostSelfAwareness();
 }
 
-bool SkyNet::isSelfAware()
+void SkyNet::SendFile(QByteArray to, QString filepath)
 {
-	return self_aware;
+	QMetaObject::invokeMethod(this, "do_SendFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(QString, filepath));
 }
 
-void SkyNet::SendFile(QByteArray to, QString filepath)
+void SkyNet::do_SendFile(QByteArray to, QString filepath)
 {
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
@@ -592,6 +633,12 @@ void SkyNet::SendFile(QByteArray to, QString filepath)
 
 void SkyNet::AcceptFile(QByteArray from, QString filepath)
 {
+	QMetaObject::invokeMethod(this, "do_AcceptFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, from), Q_ARG(QString, filepath));
+}
+
+void SkyNet::do_AcceptFile(QByteArray from, QString filepath)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -613,6 +660,12 @@ void SkyNet::AcceptFile(QByteArray from, QString filepath)
 
 void SkyNet::DenyFile(QByteArray from)
 {
+	QMetaObject::invokeMethod(this, "do_DenyFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, from));
+}
+
+void SkyNet::do_DenyFile(QByteArray from)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -631,6 +684,12 @@ void SkyNet::DenyFile(QByteArray from)
 }
 
 void SkyNet::PauseFile(QByteArray peer_id, bool pause_sending)
+{
+	QMetaObject::invokeMethod(this, "do_PauseFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, peer_id), Q_ARG(bool, pause_sending));
+}
+
+void SkyNet::do_PauseFile(QByteArray peer_id, bool pause_sending)
 {
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
@@ -651,6 +710,12 @@ void SkyNet::PauseFile(QByteArray peer_id, bool pause_sending)
 
 void SkyNet::ResumeFile(QByteArray peer_id, bool resume_sending)
 {
+	QMetaObject::invokeMethod(this, "do_ResumeFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, peer_id), Q_ARG(bool, resume_sending));
+}
+
+void SkyNet::do_ResumeFile(QByteArray peer_id, bool resume_sending)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -669,6 +734,12 @@ void SkyNet::ResumeFile(QByteArray peer_id, bool resume_sending)
 
 void SkyNet::CancelFile(QByteArray peer_id, bool cancel_sending)
 {
+	QMetaObject::invokeMethod(this, "do_CancelFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, peer_id), Q_ARG(bool, cancel_sending));
+}
+
+void SkyNet::do_CancelFile(QByteArray peer_id, bool cancel_sending)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -686,6 +757,12 @@ void SkyNet::CancelFile(QByteArray peer_id, bool cancel_sending)
 }
 
 void SkyNet::SendMessage(QByteArray to, QString msg)
+{
+	QMetaObject::invokeMethod(this, "do_SendMessage", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(QString, msg));
+}
+
+void SkyNet::do_SendMessage(QByteArray to, QString msg)
 {
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
@@ -730,6 +807,12 @@ void SkyNet::SendMessage(QByteArray to, QString msg)
 
 void SkyNet::AcceptCall(QByteArray from)
 {
+	QMetaObject::invokeMethod(this, "do_AcceptCall", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, from));
+}
+
+void SkyNet::do_AcceptCall(QByteArray from)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -746,6 +829,12 @@ void SkyNet::AcceptCall(QByteArray from)
 }
 
 void SkyNet::RejectCall(QByteArray from)
+{
+	QMetaObject::invokeMethod(this, "do_RejectCall", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, from));
+}
+
+void SkyNet::do_RejectCall(QByteArray from)
 {
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
@@ -764,6 +853,12 @@ void SkyNet::RejectCall(QByteArray from)
 
 void SkyNet::HangupCall(QByteArray with)
 {
+	QMetaObject::invokeMethod(this, "do_HangupCall", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, with));
+}
+
+void SkyNet::do_HangupCall(QByteArray with)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -781,7 +876,13 @@ void SkyNet::HangupCall(QByteArray with)
 
 void SkyNet::StartCall(QByteArray to)
 {
-	if (!isSelfAware())
+	QMetaObject::invokeMethod(this, "do_StartCall", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to));
+}
+
+void SkyNet::do_StartCall(QByteArray to)
+{
+	if (!self_aware)
 	{
 		emit CallFailed(QString(tr("Pica Pica client is not online")));
 		return;
@@ -1127,7 +1228,7 @@ void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
 void SkyNet::nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port)
 {
 	Nodes::NodeRecord nr = {addr_str, static_cast<quint16>(port)};
-	skynet->nodes.Add(nr);
+	skynet->nodes->Add(nr);
 }
 
 int SkyNet::peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_pem, unsigned int nb)

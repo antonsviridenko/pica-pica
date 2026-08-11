@@ -17,6 +17,7 @@
 //#include <QtGui/QApplication>
 #include <QCoreApplication>
 #include <QApplication>
+#include <QThread>
 #include "mainwindow.h"
 #include "accountswindow.h"
 #include "globals.h"
@@ -549,9 +550,56 @@ int main(int argc, char *argv[])
 	AudioVideoCallController avc;
 	avctrl = &avc;
 
+	// SkyNet owns all the protocol/network state (PICA_c2n/PICA_c2c
+	// connections, the timer-driven PICA_event_loop() polling, and every
+	// protocol callback dispatch). It's moved off the GUI thread onto its
+	// own network thread so that GUI-thread stalls (blocked X11/graphics
+	// calls, a locked screen suspending the process, etc.) can no longer
+	// starve the network connection and cause disconnects. Its public
+	// methods remain safe to call from any thread - see SkyNet::init() and
+	// the do_*() wrapper pattern in skynet.cpp/h.
+	//
+	// Done last, after every controller above has already connected its
+	// signal/slot listeners to skynet while it was still on the GUI
+	// thread, so there is no window during which a listener could miss a
+	// signal skynet emits from its new thread.
+	QThread networkThread;
+	networkThread.setObjectName("SkyNetThread");
+
+	skynet->moveToThread(&networkThread);
+	QObject::connect(&networkThread, SIGNAL(started()), skynet, SLOT(init()));
+	networkThread.start();
+
 	aw.show();
 
 	a.setQuitOnLastWindowClosed(false);
 
-	return a.exec();
+	int ret = a.exec();
+
+	// skynet's thread affinity needs to move back to the main thread
+	// before it (and everything else declared above) gets destroyed as
+	// main() returns - otherwise QObject's destructor can't clean up its
+	// still-registered timers (event_loop_timer_id, c2c_reconnect_timer_id,
+	// ...) and prints "Timers cannot be stopped from another thread".
+	//
+	// QObject::moveToThread() only succeeds when called from the thread
+	// the object is currently on - it can be pushed out from its own
+	// thread, but not pulled in from a different one. So this can't be a
+	// plain skynet->moveToThread(...) call made from here (the main
+	// thread); it has to run as code executing on the network thread
+	// itself, which is what moveBackToMainThread() is for. Using a
+	// blocking queued call guarantees it has actually completed before
+	// the network thread is stopped below - if it ran after quit()/wait(),
+	// there would be no event loop left on that thread to process it.
+	QMetaObject::invokeMethod(skynet, "moveBackToMainThread", Qt::BlockingQueuedConnection);
+
+	// Now stop and join the network thread before any of the objects
+	// above - skynet in particular - start being destroyed as main()
+	// unwinds. Otherwise the network thread could still be executing
+	// SkyNet code while its destructor (and the destructors of objects it
+	// signals) runs concurrently on this thread.
+	networkThread.quit();
+	networkThread.wait();
+
+	return ret;
 }

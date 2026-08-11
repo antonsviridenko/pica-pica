@@ -32,8 +32,8 @@ class SkyNet : public QObject
 	Q_OBJECT
 public:
 	SkyNet();
-	void Join(Accounts::AccountRecord &accrec);
-	bool isSelfAware();
+	~SkyNet();
+	void Join(const Accounts::AccountRecord &accrec);
 	void Exit();
 
 	void SendMessage(QByteArray to, QString msg);
@@ -48,11 +48,6 @@ public:
 	void AcceptCall(QByteArray from);
 	void RejectCall(QByteArray from);
 	void HangupCall(QByteArray with);
-
-	Accounts::AccountRecord CurrentAccount()
-	{
-		return skynet_account;
-	};
 
 signals:
 	void MessageReceived(QByteArray from, QString msg);
@@ -89,7 +84,10 @@ signals:
 	void CallRejected(QByteArray by);
 	void CallHungup(QByteArray by);
 private:
-	Nodes nodes;
+	// Constructed in init(), once this SkyNet instance is running on its
+	// own network thread and that thread's dedicated QSqlDatabase
+	// connection has been opened - see init() in skynet.cpp.
+	Nodes *nodes;
 	QList<QPair<struct PICA_c2n *, Nodes::NodeRecord> > connecting_nodes;
 	QList<struct PICA_c2n *> connected_nodes_to_close;
 	bool self_aware;
@@ -224,6 +222,44 @@ private slots:
 
 	void node_status_changed(Nodes::NodeRecord nr, bool alive);
 	void verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified);
+
+	// Connected to the network thread's QThread::started() signal. Runs
+	// once, on the network thread itself, right before that thread's
+	// event loop starts. Anything that needs to be tied to the network
+	// thread rather than whatever thread constructed this SkyNet
+	// instance - the event-loop timers and this object's own QSqlDatabase
+	// connection - is set up here instead of in the constructor.
+	void init();
+
+	// QObject::moveToThread() only succeeds when called from the thread
+	// the object is currently affiliated with - it cannot be "pulled" in
+	// from a different thread. So reclaiming this object for the main
+	// thread at shutdown has to happen via a call executed here, on the
+	// network thread itself (see main.cpp, invoked with
+	// Qt::BlockingQueuedConnection before the network thread is stopped),
+	// rather than by calling moveToThread() directly from main().
+	void moveBackToMainThread();
+
+	// Actual implementations behind the public action methods below.
+	// The public methods only forward here via QMetaObject::invokeMethod()
+	// with Qt::AutoConnection, so callers on any thread are automatically
+	// marshaled onto whichever thread this SkyNet instance lives on -
+	// direct call if already on that thread, queued otherwise.
+	void do_Join(const Accounts::AccountRecord &accrec);
+	void do_Exit();
+
+	void do_SendMessage(QByteArray to, QString msg);
+	void do_SendFile(QByteArray to, QString filepath);
+	void do_AcceptFile(QByteArray from, QString filepath);
+	void do_DenyFile(QByteArray from);
+	void do_PauseFile(QByteArray peer_id, bool pause_sending);
+	void do_ResumeFile(QByteArray peer_id, bool resume_sending);
+	void do_CancelFile(QByteArray peer_id, bool cancel_sending);
+
+	void do_StartCall(QByteArray to);
+	void do_AcceptCall(QByteArray from);
+	void do_RejectCall(QByteArray from);
+	void do_HangupCall(QByteArray with);
 
 };
 
