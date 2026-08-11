@@ -21,6 +21,7 @@
 #include <QWidget>
 #include <QPushButton>
 #include <QLabel>
+#include <QTimer>
 
 class CallWindow : public QWidget
 {
@@ -38,13 +39,20 @@ private:
 	QPushButton *pbAccept;
 	QPushButton *pbCall;
 	QPushButton *pbHang;
+	QLabel *lbTimer;
+	QTimer *callTimer;
+	int callElapsedSeconds;
 
 	void closeEvent(QCloseEvent *e);
 
+public slots:
+	void call_started();
+	void call_ended();
 private slots:
 	void call();
 	void accept();
 	void hang();
+	void update_call_timer();
 };
 
 #endif

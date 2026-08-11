@@ -25,22 +25,30 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 {
 	setAttribute(Qt::WA_DeleteOnClose);
 
-	QHBoxLayout *lh = new QHBoxLayout(this);
 	QVBoxLayout *lv = new QVBoxLayout(this);
+	QHBoxLayout *lh = new QHBoxLayout();
 
 	pbAccept = new QPushButton(tr("Accept"), this);
 	pbCall = new QPushButton(tr("Call"), this);
 	pbHang = new QPushButton(tr("Hang Up"), this);
+	lbTimer = new QLabel(this);
+	lbTimer->setAlignment(Qt::AlignCenter);
+	lbTimer->hide();
+	callTimer = new QTimer(this);
+	callElapsedSeconds = 0;
+
+	lv->addWidget(lbTimer);
 
 	lh->addWidget(pbAccept, Qt::AlignLeft);
 	lh->addWidget(pbCall, Qt::AlignLeft);
 	lh->addWidget(pbHang, Qt::AlignRight);
-	lh->addLayout(lv);
-	setLayout(lh);
+	lv->addLayout(lh);
+	setLayout(lv);
 
 	connect(pbCall, SIGNAL(clicked()), this, SLOT(call()));
 	connect(pbHang, SIGNAL(clicked()), this, SLOT(hang()));
 	connect(pbAccept, SIGNAL(clicked()), this, SLOT(accept()));
+	connect(callTimer, SIGNAL(timeout()), this, SLOT(update_call_timer()));
 
 	if (is_incoming)
 	{
@@ -50,6 +58,47 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	{
 		pbAccept->hide();
 	}
+}
+
+void CallWindow::call_started()
+{
+	pbCall->hide();
+	pbAccept->hide();
+
+	callElapsedSeconds = 0;
+	lbTimer->setText("00:00");
+	lbTimer->show();
+	callTimer->start(1000);
+}
+
+void CallWindow::call_ended()
+{
+	callTimer->stop();
+	pbHang->setDisabled(true);
+}
+
+void CallWindow::update_call_timer()
+{
+	int hours, minutes, seconds;
+	QString text;
+
+	callElapsedSeconds++;
+
+	hours = callElapsedSeconds / 3600;
+	minutes = (callElapsedSeconds % 3600) / 60;
+	seconds = callElapsedSeconds % 60;
+
+	if (hours > 0)
+		text = QString("%1:%2:%3").
+		    arg(hours, 2, 10, QChar('0')).
+		    arg(minutes, 2, 10, QChar('0')).
+		    arg(seconds, 2, 10, QChar('0'));
+	else
+		text = QString("%1:%2").
+		    arg(minutes, 2, 10, QChar('0')).
+		    arg(seconds, 2, 10, QChar('0'));
+
+	lbTimer->setText(text);
 }
 
 void CallWindow::call()
