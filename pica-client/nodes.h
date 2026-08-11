@@ -31,7 +31,12 @@ public:
 		quint16 port;
 	};
 
-	Nodes(QString storage);
+	// connectionName selects which QSqlDatabase connection to use (see
+	// QSqlDatabase::database()). A connection can only be used from the
+	// thread that created it, so callers running on a thread other than
+	// the GUI thread must pass the name of a connection opened on their
+	// own thread. Empty (the default) uses Qt's default connection.
+	Nodes(QString storage, QString connectionName = QString());
 	void Add(NodeRecord &n);
 	void Delete(NodeRecord &n);
 	QList<NodeRecord> GetNodes();

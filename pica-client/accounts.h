@@ -21,6 +21,7 @@
 #include <QtSql>
 #include <QSqlDatabase>
 #include <QStringList>
+#include <QMetaType>
 
 class Accounts
 {
@@ -54,5 +55,7 @@ private:
 
 
 };
+
+Q_DECLARE_METATYPE(Accounts::AccountRecord)
 
 #endif // ACCOUNTS_H

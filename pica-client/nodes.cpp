@@ -16,9 +16,9 @@
 */
 #include "nodes.h"
 
-Nodes::Nodes(QString storage)
+Nodes::Nodes(QString storage, QString connectionName)
 {
-	dbconn = QSqlDatabase::database();
+	dbconn = connectionName.isEmpty() ? QSqlDatabase::database() : QSqlDatabase::database(connectionName);
 	dbconn.setDatabaseName(storage);
 
 	if (!dbconn.open())
@@ -31,7 +31,7 @@ Nodes::Nodes(QString storage)
 
 void Nodes::Add(NodeRecord &n)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("insert into nodes (address, port, last_active, inactive_count) values (:addr, :port, strftime('%s','now'), 0)");
 	query.bindValue(":addr", n.address);
@@ -43,7 +43,7 @@ void Nodes::Add(NodeRecord &n)
 
 void Nodes::Delete(NodeRecord &n)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("delete from nodes where address = :addr and port = :port");
 	query.bindValue(":addr", n.address);
@@ -57,7 +57,7 @@ QList<Nodes::NodeRecord> Nodes::GetNodes()
 {
 	QList<NodeRecord> L;
 	NodeRecord r;
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.setForwardOnly(true);
 	query.exec("select address, port from nodes order by inactive_count asc, last_active desc");
@@ -79,7 +79,7 @@ QList<Nodes::NodeRecord> Nodes::GetNodes()
 
 void Nodes::MakeClean()
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 	quint32 count = 0;
 
 	query.exec("select count(*) from nodes");
@@ -115,7 +115,7 @@ void Nodes::MakeClean()
 
 void Nodes::UpdateStatus(NodeRecord &n, bool alive)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	if (alive)
 		query.prepare("update nodes set last_active = strftime('%s','now'), inactive_count = 0 where address = :addr and port = :port");

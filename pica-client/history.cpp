@@ -17,10 +17,10 @@
 #include "history.h"
 #include <QDebug>
 
-History::History(QString storage, QByteArray my_id)
+History::History(QString storage, QByteArray my_id, QString connectionName)
 	: me_(my_id)
 {
-	dbconn = QSqlDatabase::database();
+	dbconn = connectionName.isEmpty() ? QSqlDatabase::database() : QSqlDatabase::database(connectionName);
 	dbconn.setDatabaseName(storage);
 
 	if (!dbconn.open())
@@ -29,7 +29,7 @@ History::History(QString storage, QByteArray my_id)
 		return;
 	}
 
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.exec("PRAGMA foreign_keys=ON;");
 
@@ -38,7 +38,7 @@ History::History(QString storage, QByteArray my_id)
 
 void History::Add(QByteArray peer_id, QString message, bool is_me)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare(
 	    "insert into \"history\" (\"contact_id\", \"account_id\", \"is_me\", \"is_delivered\", \"message\", \"id\", \"timestamp\") \
@@ -68,7 +68,7 @@ void History::Add(QByteArray peer_id, QString message, bool is_me)
 
 void History::SetDelivered(QByteArray peer_id)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("update history set is_delivered=1 where id in \
                   (select id from history where \
@@ -86,7 +86,7 @@ QList<History::HistoryRecord> History::GetMessages(QByteArray peer_id, QString k
 {
 	QList<HistoryRecord> L;
 	HistoryRecord r;
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.setForwardOnly(true);
 	query.prepare("select contact_id, is_me, is_delivered, timestamp, message from history \
@@ -121,7 +121,7 @@ QList<History::HistoryRecord> History::GetMessages(QByteArray peer_id, quint32 s
 {
 	QList<HistoryRecord> L;
 	HistoryRecord r;
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.setForwardOnly(true);
 	query.prepare("select contact_id, is_me, is_delivered, timestamp, message from history \
@@ -156,7 +156,7 @@ QList<History::HistoryRecord> History::GetMessages(QByteArray peer_id, quint32 s
 QMap<QByteArray, QList<QString> >  History::GetUndeliveredMessages()
 {
 	QMap<QByteArray, QList<QString> > M;
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.setForwardOnly(true);
 	query.prepare("select contact_id, message from history \

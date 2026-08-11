@@ -41,7 +41,8 @@ public:
 		ContactType type;
 	};
 
-	Contacts(QString storage, QByteArray user_account_id);
+	// See Nodes::Nodes() for what connectionName selects and why.
+	Contacts(QString storage, QByteArray user_account_id, QString connectionName = QString());
 
 	bool Exists(QByteArray id);
 	void Add(QByteArray id, ContactType type = regular);

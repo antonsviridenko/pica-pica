@@ -16,9 +16,9 @@
 */
 #include "settings.h"
 
-Settings::Settings(QString storage)
+Settings::Settings(QString storage, QString connectionName)
 {
-	dbconn = QSqlDatabase::database();
+	dbconn = connectionName.isEmpty() ? QSqlDatabase::database() : QSqlDatabase::database(connectionName);
 	dbconn.setDatabaseName(storage);
 
 	if (!dbconn.open())
@@ -36,7 +36,7 @@ QString Settings::GetLastError()
 
 bool Settings::isEmpty()
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.exec("select count(*) from settings");
 
@@ -54,7 +54,7 @@ bool Settings::isEmpty()
 
 QVariant Settings::loadValue(QString name, QVariant defval)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("select value from settings where name = :name");
 	query.bindValue(":name", name);
@@ -74,7 +74,7 @@ QVariant Settings::loadValue(QString name, QVariant defval)
 
 void Settings::storeValue(QString name, QString val)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("insert into settings (name, value) values (:name, :val)");
 	query.bindValue(":name", name);
