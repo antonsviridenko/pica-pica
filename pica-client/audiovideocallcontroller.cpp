@@ -91,6 +91,7 @@ void AudioVideoCallController::stopTones()
 void AudioVideoCallController::call_failed(QString reason)
 {
 	qDebug() << "Call failed: " << reason << "\n";
+	is_active = false;
 	/* play unreachable */
 	playEarpieceTone(&TonePlayer::playUnreachable);
 }
@@ -98,6 +99,8 @@ void AudioVideoCallController::call_failed(QString reason)
 void AudioVideoCallController::call_accepted(QByteArray peer_id)
 {
 	stopTones();
+	is_active = true;
+	callwindow->call_started();
 }
 
 void AudioVideoCallController::call_rejected(QByteArray peer_id)
@@ -108,16 +111,24 @@ void AudioVideoCallController::call_rejected(QByteArray peer_id)
 
 void AudioVideoCallController::call_hungup(QByteArray peer_id)
 {
+	callwindow->call_ended();
 	/* play busy tone */
 	playEarpieceTone(&TonePlayer::playBusy);
+	is_active = false;
 }
 
 void AudioVideoCallController::start_call(QByteArray peer_id)
 {
 	if (callwindow)
 	{
+		callwindow->show();
+
+
 		/* call is already in progress */
-		return;
+		if (is_active)
+			return;
+		/* re-create callwindow for a new call */
+		callwindow->close();
 	}
 
 	m_peer_id = peer_id;
@@ -159,6 +170,8 @@ void AudioVideoCallController::accept_call()
 {
 	stopTones();
 	skynet->AcceptCall(m_peer_id);
+	is_active = true;
+	callwindow->call_started();
 }
 
 void AudioVideoCallController::end_call()
@@ -170,11 +183,13 @@ void AudioVideoCallController::end_call()
 	else
 		skynet->RejectCall(m_peer_id);
 
+	is_active = false;
 	callwindow->close();
 }
 
 void AudioVideoCallController::callwindow_closed(CallWindow *sender_window)
 {
 	callwindow = 0;
+	is_active = false;
 }
 
