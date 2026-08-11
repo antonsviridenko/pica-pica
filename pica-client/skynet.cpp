@@ -543,16 +543,6 @@ void SkyNet::do_Join(const Accounts::AccountRecord &accrec)
 			node_status_changed(noderecords[i], false);
 		}
 	}
-	/*
-	    for (int i=0;i<nodelist.count() && !self_aware;i++)
-	    {//TODO FIXME сделать запуск потоков порциями, а не все сразу
-	        threads.append(new NodeThread(nodelist[i],&self_aware, acc,&nodelink, &write_mutex));
-	        connect(threads.last(), SIGNAL(finished()),this,SLOT(nodethread_finished()));
-	        connect(threads.last(), SIGNAL(NodeStatusChanged(QString,quint16,bool)), this, SLOT(node_status_changed(QString,quint16,bool)));
-	        connect(threads.last(), SIGNAL(ConnectedToNode(QString,quint16,NodeThread*)), this, SLOT(nodethread_connected(QString,quint16,NodeThread*)));
-	        connect(threads.last(), SIGNAL(ErrorMsg(QString)), this, SIGNAL(ErrMsgFromNode(QString)));
-		}*/
-
 }
 
 void SkyNet::Exit()
