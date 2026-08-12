@@ -34,10 +34,15 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	lbTimer = new QLabel(this);
 	lbTimer->setAlignment(Qt::AlignCenter);
 	lbTimer->hide();
+	lbVideo = new QLabel(this);
+	lbVideo->setAlignment(Qt::AlignCenter);
+	lbVideo->setMinimumSize(320, 240);
+	lbVideo->hide();
 	callTimer = new QTimer(this);
 	callElapsedSeconds = 0;
 
 	lv->addWidget(lbTimer);
+	lv->addWidget(lbVideo);
 
 	lh->addWidget(pbAccept, Qt::AlignLeft);
 	lh->addWidget(pbCall, Qt::AlignLeft);
@@ -75,6 +80,19 @@ void CallWindow::call_ended()
 {
 	callTimer->stop();
 	pbHang->setDisabled(true);
+}
+
+void CallWindow::showRemoteFrame(QImage frame)
+{
+	if (frame.isNull())
+		return;
+
+	if (lbVideo->isHidden())
+		lbVideo->show();
+
+	lbVideo->setPixmap(QPixmap::fromImage(frame).scaled(lbVideo->size(),
+	                                                    Qt::KeepAspectRatio,
+	                                                    Qt::SmoothTransformation));
 }
 
 void CallWindow::update_call_timer()

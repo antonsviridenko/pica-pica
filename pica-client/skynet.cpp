@@ -896,6 +896,38 @@ void SkyNet::do_SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestam
 	}
 }
 
+void SkyNet::SendVideoParams(QByteArray to, QString codec, quint16 width, quint16 height)
+{
+	QMetaObject::invokeMethod(this, "do_SendVideoParams", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(QString, codec), Q_ARG(quint16, width), Q_ARG(quint16, height));
+}
+
+void SkyNet::do_SendVideoParams(QByteArray to, QString codec, quint16 width, quint16 height)
+{
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		PICA_set_call_video_params(iptr, codec.toLatin1().constData(), width, height);
+	}
+}
+
+void SkyNet::SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	QMetaObject::invokeMethod(this, "do_SendVideoPacket", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(quint16, seq_num), Q_ARG(quint32, timestamp), Q_ARG(QByteArray, data));
+}
+
+void SkyNet::do_SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		PICA_send_video_packet(iptr, seq_num, timestamp, data.constData(), data.size());
+	}
+}
+
 void SkyNet::StartCall(QByteArray to)
 {
 	QMetaObject::invokeMethod(this, "do_StartCall", Qt::AutoConnection,
@@ -1187,6 +1219,16 @@ void SkyNet::emit_IncomingAudioPacket(QByteArray peer_id, quint16 seq_num, quint
 	emit IncomingAudioPacket(peer_id, seq_num, timestamp, data);
 }
 
+void SkyNet::emit_IncomingVideoParams(QByteArray peer_id, QString codec, quint16 width, quint16 height)
+{
+	emit IncomingVideoParams(peer_id, codec, width, height);
+}
+
+void SkyNet::emit_IncomingVideoPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	emit IncomingVideoPacket(peer_id, seq_num, timestamp, data);
+}
+
 //callbacks
 
 void SkyNet::newmsg_cb(const unsigned char *peer_id, const char *msgbuf, unsigned int nb, int type)
@@ -1428,6 +1470,7 @@ void SkyNet::call_audio_params_cb(const unsigned char *peer_id, const char *code
 
 void SkyNet::call_video_params_cb(const unsigned char *peer_id, const char *codec, uint16_t width, uint16_t height)
 {
+	skynet->emit_IncomingVideoParams(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString::fromLatin1(codec), width, height);
 }
 
 void SkyNet::call_audio_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data)
@@ -1437,4 +1480,5 @@ void SkyNet::call_audio_packet_cb(const unsigned char *peer_id, uint16_t seq_num
 
 void SkyNet::call_video_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data)
 {
+	skynet->emit_IncomingVideoPacket(QByteArray((const char*)peer_id, PICA_ID_SIZE), seq_num, timestamp, QByteArray(pkt_data, size));
 }

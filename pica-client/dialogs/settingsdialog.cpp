@@ -155,11 +155,39 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	fillVideoDevices();
 	videoDevRefresh = new QPushButton(tr("Refresh 🔄"), this);
 	connect(videoDevRefresh, SIGNAL(clicked()), this, SLOT(fillVideoDevices()));
+
+	btVideoTest = new QPushButton(tr("Test 📷"), this);
+	connect(btVideoTest, SIGNAL(clicked()), this, SLOT(toggleVideoTest()));
+
+	videoPreview = new QLabel(this);
+	videoPreview->setAlignment(Qt::AlignCenter);
+	videoPreview->setMinimumSize(320, 240);
+	videoPreview->setFrameShape(QFrame::StyledPanel);
+
 	videodevLayout->addWidget(videoDev);
 	videodevLayout->addWidget(videoDevRefresh);
+	videodevLayout->addWidget(btVideoTest);
+	videodevLayout->addWidget(videoPreview);
 	videodevLayout->addStretch(1);
 
 	videodevtab->setLayout(videodevLayout);
+
+	// Capture+encode and decode ends of the test pipeline, each blocking its
+	// own thread while running, exactly as they do during a call. They stay
+	// idle until the Test button is pressed.
+	videoTestRunning = false;
+
+	testCam = new VideoDevice();
+	testCam->moveToThread(&testCamThread);
+	connect(testCam, SIGNAL(packetReady(QByteArray,bool)), this, SLOT(videoTestFragment(QByteArray,bool)));
+	connect(testCam, SIGNAL(errorOccurred(QString)), this, SLOT(videoTestError(QString)));
+	testCamThread.start();
+
+	testDecoder = new VideoDevice();
+	testDecoder->moveToThread(&testDecoderThread);
+	connect(testDecoder, SIGNAL(frameReady(QImage)), this, SLOT(videoTestFrame(QImage)));
+	connect(testDecoder, SIGNAL(errorOccurred(QString)), this, SLOT(videoTestError(QString)));
+	testDecoderThread.start();
 
 	tabW->addTab(directc2ctab, tr("Direct Connections"));
 	tabW->addTab(multilogintab, tr("Multiple logins"));
@@ -187,6 +215,106 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	loadSettings();
 
 	setWindowTitle(tr("Pica Pica Messenger Settings"));
+}
+
+SettingsDialog::~SettingsDialog()
+{
+	// Stops the loops first - the threads cannot finish while Capture()/Play()
+	// are still running inside them.
+	testCam->Close();
+	testDecoder->Close();
+
+	testCamThread.quit();
+	testCamThread.wait();
+	delete testCam;
+
+	testDecoderThread.quit();
+	testDecoderThread.wait();
+	delete testDecoder;
+}
+
+void SettingsDialog::toggleVideoTest()
+{
+	if (videoTestRunning)
+	{
+		stopVideoTest();
+		return;
+	}
+
+	QString dev = videoDev->itemData(videoDev->currentIndex()).toString();
+
+	if (dev.isEmpty())
+	{
+		videoPreview->setText(tr("No camera selected"));
+		return;
+	}
+
+	testAssembler.reset();
+	videoTestRunning = true;
+	btVideoTest->setText(tr("Stop ⏹"));
+	videoPreview->setText(tr("Starting..."));
+
+	QMetaObject::invokeMethod(testCam, "configureCapture", Qt::QueuedConnection,
+	                           Q_ARG(QString, dev), Q_ARG(QString, QStringLiteral("h264")),
+	                           Q_ARG(int, 640), Q_ARG(int, 480));
+	QMetaObject::invokeMethod(testCam, "Capture", Qt::QueuedConnection);
+
+	QMetaObject::invokeMethod(testDecoder, "configurePlayback", Qt::QueuedConnection,
+	                           Q_ARG(QString, QStringLiteral("h264")),
+	                           Q_ARG(int, 640), Q_ARG(int, 480));
+	QMetaObject::invokeMethod(testDecoder, "Play", Qt::QueuedConnection);
+}
+
+void SettingsDialog::stopVideoTest()
+{
+	// Direct calls: both devices are blocked inside their capture/decode
+	// loops, so a queued call would never reach them (see the comments in
+	// AudioVideoCallController::stopAudioPipeline()).
+	testCam->Close();
+	testDecoder->Close();
+
+	testAssembler.reset();
+	videoTestRunning = false;
+	btVideoTest->setText(tr("Test 📷"));
+	videoPreview->clear();
+}
+
+void SettingsDialog::videoTestFragment(QByteArray data, bool is_last_fragment)
+{
+	if (!videoTestRunning)
+		return;
+
+	// The encoder emits fragments exactly as they would go onto the wire, so
+	// feed them through the same assembler the receiving end of a call uses.
+	// The sequence number is rebuilt here the way send_video_packet() builds
+	// it, the timestamp being constant since only frame boundaries matter.
+	quint16 seq = is_last_fragment ? VideoFrameAssembler::LastFragmentFlag : 0;
+	QByteArray frame = testAssembler.addFragment(seq, 0, data);
+
+	if (frame.isEmpty())
+		return;
+
+	// Direct call, for the same reason as in the call controller.
+	testDecoder->enqueueFrame(frame);
+}
+
+void SettingsDialog::videoTestFrame(QImage frame)
+{
+	if (!videoTestRunning || frame.isNull())
+		return;
+
+	videoPreview->setPixmap(QPixmap::fromImage(frame).scaled(videoPreview->size(),
+	                                                         Qt::KeepAspectRatio,
+	                                                         Qt::SmoothTransformation));
+}
+
+void SettingsDialog::videoTestError(QString message)
+{
+	if (!videoTestRunning)
+		return;
+
+	stopVideoTest();
+	videoPreview->setText(message);
 }
 
 void SettingsDialog::fillDevicesComboBox(QComboBox *cb, MediaDevice *dev, enum MediaDeviceStreamDirection dir)

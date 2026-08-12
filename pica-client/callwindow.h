@@ -22,6 +22,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QTimer>
+#include <QImage>
 
 class CallWindow : public QWidget
 {
@@ -40,6 +41,9 @@ private:
 	QPushButton *pbCall;
 	QPushButton *pbHang;
 	QLabel *lbTimer;
+	// Displays the remote side's video. Stays hidden until the first frame
+	// arrives, so an audio-only call keeps the compact window it had before.
+	QLabel *lbVideo;
 	QTimer *callTimer;
 	int callElapsedSeconds;
 
@@ -48,6 +52,7 @@ private:
 public slots:
 	void call_started();
 	void call_ended();
+	void showRemoteFrame(QImage frame);
 private slots:
 	void call();
 	void accept();

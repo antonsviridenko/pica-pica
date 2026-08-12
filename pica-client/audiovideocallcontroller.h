@@ -47,7 +47,10 @@ private:
 	AudioDevice *ringdevice;
 	AudioDevice *microphone;
 	AudioDevice *output;
+	// Local camera capture+encode.
 	VideoDevice *cam;
+	// Decoding of the video stream received from the peer.
+	VideoDevice *remotevideo;
 	bool is_active;
 	QByteArray m_peer_id;
 
@@ -65,10 +68,27 @@ private:
 	QThread microphone_thread;
 	QThread output_thread;
 
+	// Camera capture+encode and remote-video decode, same arrangement as
+	// the audio devices above (see VideoDevice).
+	QThread cam_thread;
+	QThread remotevideo_thread;
+
 	// Sequence number / capture-clock timestamp stamped onto outgoing
 	// 0x76 audio packets (see PICA_PROTO_CALL_PACKET_HDRSIZE).
 	quint16 m_audioSeq;
 	QElapsedTimer m_callClock;
+
+	// Outgoing 0x77 video packets. The counter occupies the low 15 bits of
+	// the wire sequence number, the top bit being the last fragment marker.
+	// All fragments of one encoded frame share m_videoFrameTimestamp, which
+	// is re-read from m_callClock only when a new frame starts - tracked by
+	// m_videoFrameStarted, set false again after emitting a last fragment.
+	quint16 m_videoSeq;
+	quint32 m_videoFrameTimestamp;
+	bool m_videoFrameStarted;
+
+	// Reassembly of incoming 0x77 fragments into whole encoded frames.
+	VideoFrameAssembler m_videoAssembler;
 
 	void playEarpieceTone(void (TonePlayer::*tone)());
 	void playRingTone();
@@ -76,6 +96,9 @@ private:
 
 	void startAudioPipeline();
 	void stopAudioPipeline();
+
+	void startVideoPipeline();
+	void stopVideoPipeline();
 
 private slots:
 	// button handlers
@@ -87,6 +110,10 @@ private slots:
 	void send_audio_packet(QByteArray data);
 	void incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate);
 	void incoming_audio_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void send_video_packet(QByteArray data, bool is_last_fragment);
+	void incoming_video_params(QByteArray peer_id, QString codec, quint16 width, quint16 height);
+	void incoming_video_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 };
 

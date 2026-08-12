@@ -52,6 +52,9 @@ public:
 	void SendAudioParams(QByteArray to, QString codec, quint16 sample_rate);
 	void SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
 
+	void SendVideoParams(QByteArray to, QString codec, quint16 width, quint16 height);
+	void SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
+
 signals:
 	void MessageReceived(QByteArray from, QString msg);
 	void UnableToDeliver(QByteArray to, QString msg);
@@ -89,6 +92,9 @@ signals:
 
 	void IncomingAudioParams(QByteArray peer_id, QString codec, quint16 sample_rate);
 	void IncomingAudioPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void IncomingVideoParams(QByteArray peer_id, QString codec, quint16 width, quint16 height);
+	void IncomingVideoPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 private:
 	// Constructed in init(), once this SkyNet instance is running on its
 	// own network thread and that thread's dedicated QSqlDatabase
@@ -164,6 +170,9 @@ private:
 
 	void emit_IncomingAudioParams(QByteArray peer_id, QString codec, quint16 sample_rate);
 	void emit_IncomingAudioPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void emit_IncomingVideoParams(QByteArray peer_id, QString codec, quint16 width, quint16 height);
+	void emit_IncomingVideoPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 	static void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type);
 
@@ -272,6 +281,9 @@ private slots:
 
 	void do_SendAudioParams(QByteArray to, QString codec, quint16 sample_rate);
 	void do_SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void do_SendVideoParams(QByteArray to, QString codec, quint16 width, quint16 height);
+	void do_SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 };
 

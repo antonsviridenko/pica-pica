@@ -22,8 +22,16 @@
 #include <QDebug>
 #include <QMetaObject>
 
+// Capture/encode resolution announced to the peer in the 0x75 message. Fixed
+// for now - a resolution setting is a planned follow-up, see VideoDevice for
+// the rest of the encoding parameters.
+static const quint16 kVideoWidth = 640;
+static const quint16 kVideoHeight = 480;
+
+
 AudioVideoCallController::AudioVideoCallController(QObject *parent)
- : QObject(parent), callwindow(0), ringdevice(0), is_active(false), m_audioSeq(0)
+ : QObject(parent), callwindow(0), ringdevice(0), is_active(false), m_audioSeq(0),
+   m_videoSeq(0), m_videoFrameTimestamp(0), m_videoFrameStarted(false)
 {
 	connect(skynet, SIGNAL(IncomingCall(QByteArray)), this, SLOT(call_from(QByteArray)));
 	connect(skynet, SIGNAL(CallFailed(QByteArray,QString)), this, SLOT(call_failed(QByteArray,QString)));
@@ -33,6 +41,9 @@ AudioVideoCallController::AudioVideoCallController(QObject *parent)
 
 	connect(skynet, SIGNAL(IncomingAudioParams(QByteArray,QString,quint16)), this, SLOT(incoming_audio_params(QByteArray,QString,quint16)));
 	connect(skynet, SIGNAL(IncomingAudioPacket(QByteArray,quint16,quint32,QByteArray)), this, SLOT(incoming_audio_packet(QByteArray,quint16,quint32,QByteArray)));
+
+	connect(skynet, SIGNAL(IncomingVideoParams(QByteArray,QString,quint16,quint16)), this, SLOT(incoming_video_params(QByteArray,QString,quint16,quint16)));
+	connect(skynet, SIGNAL(IncomingVideoPacket(QByteArray,quint16,quint32,QByteArray)), this, SLOT(incoming_video_packet(QByteArray,quint16,quint32,QByteArray)));
 
 	// Earpiece tones (ringback/busy/unreachable) and the incoming call bell
 	// are played by two TonePlayer instances, each living on its own
@@ -58,12 +69,24 @@ AudioVideoCallController::AudioVideoCallController(QObject *parent)
 	output = new AudioDevice();
 	output->moveToThread(&output_thread);
 	output_thread.start();
+
+	// Camera capture+encode and remote video decode - same arrangement as
+	// the audio devices above.
+	cam = new VideoDevice();
+	cam->moveToThread(&cam_thread);
+	connect(cam, SIGNAL(packetReady(QByteArray,bool)), this, SLOT(send_video_packet(QByteArray,bool)));
+	cam_thread.start();
+
+	remotevideo = new VideoDevice();
+	remotevideo->moveToThread(&remotevideo_thread);
+	remotevideo_thread.start();
 }
 
 AudioVideoCallController::~AudioVideoCallController()
 {
 	stopTones();
 	stopAudioPipeline();
+	stopVideoPipeline();
 
 	toneplayer_thread.quit();
 	toneplayer_thread.wait();
@@ -80,6 +103,14 @@ AudioVideoCallController::~AudioVideoCallController()
 	output_thread.quit();
 	output_thread.wait();
 	delete output;
+
+	cam_thread.quit();
+	cam_thread.wait();
+	delete cam;
+
+	remotevideo_thread.quit();
+	remotevideo_thread.wait();
+	delete remotevideo;
 }
 
 void AudioVideoCallController::playEarpieceTone(void (TonePlayer::*tone)())
@@ -150,6 +181,53 @@ void AudioVideoCallController::stopAudioPipeline()
 	output->Close();
 }
 
+void AudioVideoCallController::startVideoPipeline()
+{
+	Settings st(config_dbname);
+	QString camDev = st.loadValue("video.capture_device", QString()).toString();
+
+	// Unlike the audio devices, which fall back to the platform's "default"
+	// device, there is no such name for cameras - so with nothing configured
+	// yet (the setting is only written once the settings dialog has been
+	// visited) pick the first camera found.
+	if (camDev.isEmpty())
+	{
+		VideoDevice enumerator;
+		QList<MediaDeviceInfo> cams = enumerator.Enumerate(CAPTURE);
+
+		if (!cams.isEmpty())
+			camDev = cams.first().device;
+	}
+
+	// No camera at all - the call simply carries no outgoing video. Incoming
+	// video is unaffected, it only depends on what the peer sends.
+	if (camDev.isEmpty())
+		return;
+
+	m_videoSeq = 0;
+	m_videoFrameTimestamp = 0;
+	m_videoFrameStarted = false;
+
+	skynet->SendVideoParams(m_peer_id, QStringLiteral("h264"), kVideoWidth, kVideoHeight);
+
+	QMetaObject::invokeMethod(cam, "configureCapture", Qt::QueuedConnection,
+	                           Q_ARG(QString, camDev), Q_ARG(QString, QStringLiteral("h264")),
+	                           Q_ARG(int, kVideoWidth), Q_ARG(int, kVideoHeight));
+	QMetaObject::invokeMethod(cam, "Capture", Qt::QueuedConnection);
+
+	// remotevideo is configured lazily, once the peer's own 0x75 (see
+	// incoming_video_params()) tells us what it is sending.
+}
+
+void AudioVideoCallController::stopVideoPipeline()
+{
+	// Direct calls, for the same reason stopAudioPipeline() uses them.
+	cam->Close();
+	remotevideo->Close();
+
+	m_videoAssembler.reset();
+}
+
 void AudioVideoCallController::call_failed(QByteArray peer_id, QString reason)
 {
 	qDebug() << "Call failed: " << reason << "\n";
@@ -175,6 +253,7 @@ void AudioVideoCallController::call_accepted(QByteArray peer_id)
 	is_active = true;
 	callwindow->call_started();
 	startAudioPipeline();
+	startVideoPipeline();
 }
 
 void AudioVideoCallController::call_rejected(QByteArray peer_id)
@@ -192,6 +271,7 @@ void AudioVideoCallController::call_hungup(QByteArray peer_id)
 		return;
 
 	stopAudioPipeline();
+	stopVideoPipeline();
 
 	/* queued from the SkyNet thread as well - the window may already be closed */
 	if (callwindow)
@@ -221,6 +301,9 @@ void AudioVideoCallController::start_call(QByteArray peer_id)
 	connect(callwindow, SIGNAL(start_call_pressed()), this, SLOT(initiate_call()));
 	connect(callwindow, SIGNAL(hang_call_pressed()), this, SLOT(end_call()));
 	connect(callwindow, SIGNAL(callwindow_closed(CallWindow*)), this, SLOT(callwindow_closed(CallWindow*)));
+	/* decoded frames arrive from remotevideo's thread, so this is a queued
+	   connection; it dies with the window, which is deleted on close */
+	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
 	callwindow->show();
 }
 
@@ -238,6 +321,8 @@ void AudioVideoCallController::call_from(QByteArray peer_id)
 	connect(callwindow, SIGNAL(accept_call_pressed()), this, SLOT(accept_call()));
 	connect(callwindow, SIGNAL(hang_call_pressed()), this, SLOT(end_call()));
 	connect(callwindow, SIGNAL(callwindow_closed(CallWindow*)), this, SLOT(callwindow_closed(CallWindow*)));
+	/* see the same connection in start_call() */
+	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
 	callwindow->show();
 
 	/* play ring tone */
@@ -258,12 +343,14 @@ void AudioVideoCallController::accept_call()
 	is_active = true;
 	callwindow->call_started();
 	startAudioPipeline();
+	startVideoPipeline();
 }
 
 void AudioVideoCallController::end_call()
 {
 	stopTones();
 	stopAudioPipeline();
+	stopVideoPipeline();
 
 	if (is_active)
 		skynet->HangupCall(m_peer_id);
@@ -318,5 +405,58 @@ void AudioVideoCallController::incoming_audio_packet(QByteArray peer_id, quint16
 	// call would mean it's never delivered, and Play() would sit forever
 	// pulling from an empty jitter buffer.
 	output->enqueuePacket(data);
+}
+
+void AudioVideoCallController::send_video_packet(QByteArray data, bool is_last_fragment)
+{
+	if (!is_active)
+		return;
+
+	// Every fragment of one encoded frame carries the timestamp taken when
+	// that frame's first fragment was sent, so the receiving side can tell
+	// the fragments of one frame from those of the next.
+	if (!m_videoFrameStarted)
+	{
+		m_videoFrameTimestamp = (quint32)m_callClock.elapsed();
+		m_videoFrameStarted = true;
+	}
+
+	quint16 seq = m_videoSeq & VideoFrameAssembler::SeqNumMask;
+	m_videoSeq = (m_videoSeq + 1) & VideoFrameAssembler::SeqNumMask;
+
+	if (is_last_fragment)
+	{
+		seq |= VideoFrameAssembler::LastFragmentFlag;
+		// The next fragment emitted belongs to a new frame.
+		m_videoFrameStarted = false;
+	}
+
+	skynet->SendVideoPacket(m_peer_id, seq, m_videoFrameTimestamp, data);
+}
+
+void AudioVideoCallController::incoming_video_params(QByteArray peer_id, QString codec, quint16 width, quint16 height)
+{
+	if (!is_active || peer_id != m_peer_id)
+		return;
+
+	QMetaObject::invokeMethod(remotevideo, "configurePlayback", Qt::QueuedConnection,
+	                           Q_ARG(QString, codec), Q_ARG(int, (int)width), Q_ARG(int, (int)height));
+	QMetaObject::invokeMethod(remotevideo, "Play", Qt::QueuedConnection);
+}
+
+void AudioVideoCallController::incoming_video_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	if (!is_active || peer_id != m_peer_id)
+		return;
+
+	QByteArray frame = m_videoAssembler.addFragment(seq_num, timestamp, data);
+
+	// Still waiting for the rest of this frame's fragments.
+	if (frame.isEmpty())
+		return;
+
+	// Direct call, not invokeMethod()/QueuedConnection - same reason as in
+	// incoming_audio_packet().
+	remotevideo->enqueueFrame(frame);
 }
 

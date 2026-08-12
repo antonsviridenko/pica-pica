@@ -384,13 +384,34 @@ Video packet
 length - covers everything following it: the 2-octet sequence number, the
 4-octet timestamp and the data, i.e. data length + 6.
 
-sequence number - incremented by one for every video packet sent over this
-call, wraps around at 65536. Same purpose as in the 0x76 message: gap
-detection and future unordered/lossy transport support.
+sequence number - the most significant bit (0x8000) is the last fragment
+marker, see the fragmentation description below. The remaining 15 bits are a
+counter incremented by one for every video packet sent over this call,
+wrapping around at 32768. The counter serves the same purpose as in the 0x76
+message: gap detection and future unordered/lossy transport support.
 
 timestamp - the capture timestamp of the encoded video frame, in
 milliseconds, relative to the moment the call became active. Used by the
-receiver for playout timing and audio/video synchronization.
+receiver for playout timing and audio/video synchronization. All fragments
+of one encoded frame carry the same timestamp, see below.
+
+Fragmentation.
+
+The length field limits the data carried by a single 0x77 message to 65526
+octets, while an encoded video frame - an intra-coded (key) frame in
+particular - can be larger than that. Such a frame is split into several
+consecutive 0x77 messages.
+
+All fragments of one encoded frame carry the same timestamp; the 15-bit
+counter part of the sequence number is incremented for every fragment, as it
+is for every other video packet. The last fragment of a frame has the last
+fragment marker bit (0x8000) set in its sequence number; every preceding
+fragment of the same frame has that bit cleared. A frame that fits into a
+single message is sent as one message with the marker bit set.
+
+The receiving side concatenates the data of the received fragments in the
+order they arrive, and passes the result to the video decoder once a message
+with the marker bit set has been received.
 ====================================================
 
 

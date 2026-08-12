@@ -24,13 +24,18 @@
 #include <QRadioButton>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QLabel>
+#include <QThread>
+#include <QImage>
 #include "../mediadevice.h"
+#include "../videodevice.h"
 
 class SettingsDialog : public QDialog
 {
 	Q_OBJECT
 public:
 	explicit SettingsDialog(QWidget *parent = 0);
+	~SettingsDialog();
 
 signals:
 
@@ -61,6 +66,21 @@ private:
 
 	QPushButton *btAudioTest;
 
+	// Local video pipeline test: frames from the selected camera are
+	// encoded, split into protocol sized fragments, reassembled and decoded
+	// again, then shown in videoPreview - the same path a call takes, minus
+	// the network, so the whole chain can be checked from this dialog.
+	QPushButton *btVideoTest;
+	QLabel *videoPreview;
+	VideoDevice *testCam;
+	VideoDevice *testDecoder;
+	QThread testCamThread;
+	QThread testDecoderThread;
+	VideoFrameAssembler testAssembler;
+	bool videoTestRunning;
+
+	void stopVideoTest();
+
 	QPushButton *btOk;
 	QPushButton *btCancel;
 
@@ -78,6 +98,11 @@ private slots:
 	void fillAudioCaptureDevices();
 	void fillAudioPlaybackDevices();
 	void fillAudioRingDevices();
+
+	void toggleVideoTest();
+	void videoTestFragment(QByteArray data, bool is_last_fragment);
+	void videoTestFrame(QImage frame);
+	void videoTestError(QString message);
 
 };
 
