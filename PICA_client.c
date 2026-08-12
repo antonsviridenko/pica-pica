@@ -1764,7 +1764,7 @@ multilogin_err1:
 	return 1;
 }
 
-static unsigned int procmsg_CALLREQ(unsigned char*, unsigned int, void *p)
+static unsigned int procmsg_CALLREQ(unsigned char* buf, unsigned int nb, void *p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
@@ -1790,7 +1790,7 @@ static unsigned int procmsg_CALLREQ(unsigned char*, unsigned int, void *p)
 	return 1;
 }
 
-static unsigned int procmsg_CALLANS(unsigned char*, unsigned int, void *p)
+static unsigned int procmsg_CALLANS(unsigned char* buf, unsigned int nb, void *p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
@@ -1806,7 +1806,7 @@ static unsigned int procmsg_CALLANS(unsigned char*, unsigned int, void *p)
 	return 1;
 }
 
-static unsigned int procmsg_CALLREJ(unsigned char*, unsigned int, void *p)
+static unsigned int procmsg_CALLREJ(unsigned char* buf, unsigned int nb, void *p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
@@ -1823,7 +1823,7 @@ static unsigned int procmsg_CALLREJ(unsigned char*, unsigned int, void *p)
 	return 1;
 }
 
-static unsigned int procmsg_CALLFIN(unsigned char*, unsigned int, void *p)
+static unsigned int procmsg_CALLFIN(unsigned char* buf, unsigned int nb, void *p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
