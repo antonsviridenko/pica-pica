@@ -1524,18 +1524,21 @@ void cclink_setwaitconn(struct cclink *ccl)
 
 int cclink_allocbufs(struct cclink *ccl)
 {
-	ccl->buf_p1p2 = malloc(DEFAULT_BUF_SIZE);
-	ccl->buf_p2p1 = malloc(DEFAULT_BUF_SIZE);
+	ccl->buf_p1p2 = malloc(C2C_BUF_SIZE);
+	ccl->buf_p2p1 = malloc(C2C_BUF_SIZE);
 	if (!ccl->buf_p1p2 || !ccl->buf_p2p1)
 	{
 		if (ccl->buf_p1p2)
 			free(ccl->buf_p1p2);
 		if (ccl->buf_p2p1)
 			free(ccl->buf_p2p1);
+		//cclink_list_delete() frees these again on the way out
+		ccl->buf_p1p2 = NULL;
+		ccl->buf_p2p1 = NULL;
 		return 0;
 	}
-	ccl->buflen_p1p2 = DEFAULT_BUF_SIZE;
-	ccl->buflen_p2p1 = DEFAULT_BUF_SIZE;
+	ccl->buflen_p1p2 = C2C_BUF_SIZE;
+	ccl->buflen_p2p1 = C2C_BUF_SIZE;
 	return 1;
 }
 
@@ -3157,6 +3160,8 @@ void process_c2c_write(evutil_socket_t s, short event, void *arg)
 
 	if (cc->bufpos_p1p2)
 	{
+		int attempted = 1;
+
 		if (cc->state == PICA_CCLINK_N2NCLR_ACTIVE) //receiver is on remote node
 		{
 			int sendlen;
@@ -3175,53 +3180,64 @@ void process_c2c_write(evutil_socket_t s, short event, void *arg)
 			else
 				ret = 0;
 		}
-		else if (s == cc->sck_p2)
+		else if (cc->sck_p2 != -1)
 			ret = send(cc->sck_p2, cc->buf_p1p2, cc->bufpos_p1p2, MSG_NOSIGNAL);
+		else
+			attempted = 0; //no local p2 socket to flush into, leave the buffer untouched
 
-		PICA_debug3("process_c2c_write: send  p1p2: ret=%i", ret);
-		if (ret > 0)
+		//ret is only meaningful when one of the branches above ran - this
+		//callback is shared by ev_write_p1/ev_write_p2 and is also invoked
+		//directly with s == -1, so it is routinely entered for a direction
+		//that cannot be flushed on this pass
+		if (attempted)
 		{
-			if (ret < cc->bufpos_p1p2)
-				memmove(cc->buf_p1p2, cc->buf_p1p2 + ret, cc->bufpos_p1p2 - ret); //may be it's better to implement ring buffer here
-			cc->bufpos_p1p2 -= ret;
+			PICA_debug3("process_c2c_write: send  p1p2: ret=%i", ret);
+			if (ret > 0)
+			{
+				if (ret < cc->bufpos_p1p2)
+					memmove(cc->buf_p1p2, cc->buf_p1p2 + ret, cc->bufpos_p1p2 - ret); //may be it's better to implement ring buffer here
+				cc->bufpos_p1p2 -= ret;
 
-			if (cc->bufpos_p1p2 == 0 && cc->sck_p1 != -1)
-				event_add(cc->ev_read_p1, NULL);
+				if (cc->bufpos_p1p2 == 0 && cc->sck_p1 != -1)
+					event_add(cc->ev_read_p1, NULL);
 
-			cc->jam_p1p2 = 0;
-		}
+				cc->jam_p1p2 = 0;
+			}
 
-		if (ret == 0)
-		{
-			kill_ptr = cc;
-		}
-		if (ret == -1)
-		{
+			if (ret == 0)
+			{
+				kill_ptr = cc;
+			}
+			if (ret == -1)
+			{
 #ifdef WIN32
-			ret = WSAGetLastError();
-			if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
-				cc->jam_p1p2 = 1;
-			else
-			{
-				kill_ptr = cc;
-			}
+				ret = WSAGetLastError();
+				if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
+					cc->jam_p1p2 = 1;
+				else
+				{
+					kill_ptr = cc;
+				}
 #else
-			ret = errno;
-			if (ret == EAGAIN || ret == ENOBUFS)
-				cc->jam_p1p2 = 1;
-			else
-			{
-				kill_ptr = cc;
-			}
+				ret = errno;
+				if (ret == EAGAIN || ret == ENOBUFS)
+					cc->jam_p1p2 = 1;
+				else
+				{
+					kill_ptr = cc;
+				}
 #endif
+			}
 		}
 
-		if (!kill_ptr && cc->bufpos_p1p2 && s != -1)
+		if (!kill_ptr && cc->bufpos_p1p2 && cc->ev_write_p2)
 			event_add(cc->ev_write_p2, NULL);
 
 	}
 	if (cc->bufpos_p2p1 /*&& (cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLR_ACTIVE)*/)
 	{
+		int attempted = 1;
+
 		if (cc->state == PICA_CCLINK_N2NCLE_ACTIVE) //receiver is on remote node
 		{
 			int sendlen;
@@ -3240,49 +3256,54 @@ void process_c2c_write(evutil_socket_t s, short event, void *arg)
 			else
 				ret = 0;
 		}
-		else if (s == cc->sck_p1)
+		else if (cc->sck_p1 != -1)
 			ret = send(cc->sck_p1, cc->buf_p2p1, cc->bufpos_p2p1, MSG_NOSIGNAL);
+		else
+			attempted = 0; //no local p1 socket to flush into, leave the buffer untouched
 
-		PICA_debug3("process_c2c_write: send  p2p1: ret=%i", ret);
-		if (ret > 0)
+		if (attempted)
 		{
-			if (ret < cc->bufpos_p2p1)
-				memmove(cc->buf_p2p1, cc->buf_p2p1 + ret, cc->bufpos_p2p1 - ret); //may be it's better to implement ring buffer here
-			cc->bufpos_p2p1 -= ret;
+			PICA_debug3("process_c2c_write: send  p2p1: ret=%i", ret);
+			if (ret > 0)
+			{
+				if (ret < cc->bufpos_p2p1)
+					memmove(cc->buf_p2p1, cc->buf_p2p1 + ret, cc->bufpos_p2p1 - ret); //may be it's better to implement ring buffer here
+				cc->bufpos_p2p1 -= ret;
 
-			if (cc->bufpos_p2p1 == 0 && cc->sck_p2 != -1)
-				event_add(cc->ev_read_p2, NULL);
+				if (cc->bufpos_p2p1 == 0 && cc->sck_p2 != -1)
+					event_add(cc->ev_read_p2, NULL);
 
-			cc->jam_p2p1 = 0;
-		}
+				cc->jam_p2p1 = 0;
+			}
 
-		if (ret == 0)
-		{
-			kill_ptr = cc;
-		}
-		if (ret == -1)
-		{
+			if (ret == 0)
+			{
+				kill_ptr = cc;
+			}
+			if (ret == -1)
+			{
 #ifdef WIN32
-			ret = WSAGetLastError();
-			if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
-				cc->jam_p2p1 = 1;
-			else
-			{
-				kill_ptr = cc;
-			}
+				ret = WSAGetLastError();
+				if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
+					cc->jam_p2p1 = 1;
+				else
+				{
+					kill_ptr = cc;
+				}
 #else
-			ret = errno;
-			if (ret == EAGAIN || ret == ENOBUFS)
-				cc->jam_p2p1 = 1;
-			else
-			{
-				kill_ptr = cc;
-			}
+				ret = errno;
+				if (ret == EAGAIN || ret == ENOBUFS)
+					cc->jam_p2p1 = 1;
+				else
+				{
+					kill_ptr = cc;
+				}
 #endif
 
+			}
 		}
 
-		if (!kill_ptr && cc->bufpos_p2p1 && s != -1)
+		if (!kill_ptr && cc->bufpos_p2p1 && cc->ev_write_p1)
 			event_add(cc->ev_write_p1, NULL);
 
 	}

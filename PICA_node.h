@@ -102,6 +102,15 @@
 
 #define DEFAULT_BUF_SIZE 4096
 
+//Relay buffers of a c2c link. procmsg_N2NMSG() drops the whole link when an
+//incoming N2NMSG does not fit into the free space left in these, and the
+//announced payload length of an N2NMSG is a 16 bit field less the two peer ids
+//(65535 - 2 * PICA_ID_SIZE), so anything below 64K makes that a routine event
+//instead of an exceptional one - a link carrying a call has a backlog in both
+//directions most of the time. Deliberately not DEFAULT_BUF_SIZE: that one is
+//also the r_buf/w_buf granularity paid for by every connected client.
+#define C2C_BUF_SIZE 65536
+
 struct nodelink;
 
 struct client
