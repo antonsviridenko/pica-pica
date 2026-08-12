@@ -424,9 +424,9 @@ struct PICA_client_callbacks
 
 	void (*call_video_params_cb)(const unsigned char *peer_id, const char *codec, uint16_t width, uint16_t height);
 
-	void (*call_audio_packet_cb)(const unsigned char *peer_id, uint16_t size, const char *pkt_data);
+	void (*call_audio_packet_cb)(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
 
-	void (*call_video_packet_cb)(const unsigned char *peer_id, uint16_t size, const char *pkt_data);
+	void (*call_video_packet_cb)(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
 };
 
 
@@ -492,8 +492,8 @@ int PICA_reject_call(struct PICA_c2c *chn);
 int PICA_hangup_call(struct PICA_c2c *chn);
 int PICA_set_call_audio_params(struct PICA_c2c *chn, const char *codec_name, uint16_t sample_rate);
 int PICA_set_call_video_params(struct PICA_c2c *chn, const char *codec_name, uint16_t width, uint16_t height);
-int PICA_send_audio_packet(struct PICA_c2c *chn, const char *buf, unsigned int len);
-int PICA_send_video_packet(struct PICA_c2c *chn, const char *buf, unsigned int len);
+int PICA_send_audio_packet(struct PICA_c2c *chn, uint16_t seq_num, uint32_t timestamp, const char *buf, unsigned int len);
+int PICA_send_video_packet(struct PICA_c2c *chn, uint16_t seq_num, uint32_t timestamp, const char *buf, unsigned int len);
 
 void PICA_close_c2c(struct PICA_c2c *chn);
 void PICA_close_c2n(struct PICA_c2n *cid);

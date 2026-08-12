@@ -811,7 +811,7 @@ void SkyNet::do_AcceptCall(QByteArray from)
 		ret = PICA_pickup_call(iptr);
 
 		if (ret != PICA_OK)
-			emit CallFailed(QString(tr("Failed to pickup the call: %1")).arg(ret));
+			emit CallFailed(from, QString(tr("Failed to pickup the call: %1")).arg(ret));
 
 		return;
 	}
@@ -834,7 +834,7 @@ void SkyNet::do_RejectCall(QByteArray from)
 		ret = PICA_reject_call(iptr);
 
 		if (ret != PICA_OK)
-			emit CallFailed(QString(tr("Failed to reject the call: %1")).arg(ret));
+			emit CallFailed(from, QString(tr("Failed to reject the call: %1")).arg(ret));
 
 		return;
 	}
@@ -857,11 +857,43 @@ void SkyNet::do_HangupCall(QByteArray with)
 		ret = PICA_hangup_call(iptr);
 
 		if (ret != PICA_OK)
-			emit CallFailed(QString(tr("Failed to hang up the call: %1")).arg(ret));
+			emit CallFailed(with, QString(tr("Failed to hang up the call: %1")).arg(ret));
 
 		return;
 	}
 
+}
+
+void SkyNet::SendAudioParams(QByteArray to, QString codec, quint16 sample_rate)
+{
+	QMetaObject::invokeMethod(this, "do_SendAudioParams", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(QString, codec), Q_ARG(quint16, sample_rate));
+}
+
+void SkyNet::do_SendAudioParams(QByteArray to, QString codec, quint16 sample_rate)
+{
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		PICA_set_call_audio_params(iptr, codec.toLatin1().constData(), sample_rate);
+	}
+}
+
+void SkyNet::SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	QMetaObject::invokeMethod(this, "do_SendAudioPacket", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(quint16, seq_num), Q_ARG(quint32, timestamp), Q_ARG(QByteArray, data));
+}
+
+void SkyNet::do_SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		PICA_send_audio_packet(iptr, seq_num, timestamp, data.constData(), data.size());
+	}
 }
 
 void SkyNet::StartCall(QByteArray to)
@@ -874,7 +906,7 @@ void SkyNet::do_StartCall(QByteArray to)
 {
 	if (!self_aware)
 	{
-		emit CallFailed(QString(tr("Pica Pica client is not online")));
+		emit CallFailed(to, QString(tr("Pica Pica client is not online")));
 		return;
 	}
 
@@ -886,7 +918,7 @@ void SkyNet::do_StartCall(QByteArray to)
 		ret = PICA_start_call(iptr);
 
 		if (ret != PICA_OK)
-			emit CallFailed(QString(tr("Failed to initiate the call: %1")).arg(ret));
+			emit CallFailed(to, QString(tr("Failed to initiate the call: %1")).arg(ret));
 
 		return;
 	}
@@ -899,7 +931,7 @@ void SkyNet::do_StartCall(QByteArray to)
 	ret = PICA_new_c2c(active_nodelink, (const unsigned char*)to.constData(), NULL, &chan);
 
 	if (ret != PICA_OK)
-		emit CallFailed(QString(tr("Failed to create the C2C connection for the call: %1")).arg(ret));
+		emit CallFailed(to, QString(tr("Failed to create the C2C connection for the call: %1")).arg(ret));
 }
 
 bool SkyNet::is_call_waiting_for(const QByteArray &peer_id)
@@ -922,7 +954,7 @@ void SkyNet::continue_start_call()
 
 	if (ret != PICA_OK)
 	{
-		emit CallFailed(QString(tr("Failed to initiate the call: %1")).arg(ret));
+		emit CallFailed(call_waiting_to, QString(tr("Failed to initiate the call: %1")).arg(ret));
 		call_waiting_c2c_connect = false;
 	}
 }
@@ -1120,9 +1152,9 @@ void SkyNet::emit_ConnectionStatusUpdated(QByteArray peer_id, QString status)
 	emit ConnectionStatusUpdated(peer_id, status);
 }
 
-void SkyNet::emit_CallFailed(QString reason)
+void SkyNet::emit_CallFailed(QByteArray peer_id, QString reason)
 {
-	emit CallFailed(reason);
+	emit CallFailed(peer_id, reason);
 }
 
 void SkyNet::emit_IncomingCall(QByteArray from)
@@ -1143,6 +1175,16 @@ void SkyNet::emit_CallRejected(QByteArray by)
 void SkyNet::emit_CallHungup(QByteArray by)
 {
 	emit CallHungup(by);
+}
+
+void SkyNet::emit_IncomingAudioParams(QByteArray peer_id, QString codec, quint16 sample_rate)
+{
+	emit IncomingAudioParams(peer_id, codec, sample_rate);
+}
+
+void SkyNet::emit_IncomingAudioPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	emit IncomingAudioPacket(peer_id, seq_num, timestamp, data);
 }
 
 //callbacks
@@ -1182,7 +1224,7 @@ void SkyNet::c2c_failed(const unsigned char *peer_id)
 
 	if (skynet->is_call_waiting_for(peer))
 	{
-		skynet->emit_CallFailed(QString(tr("Failed to establish the C2C connection to %1")).arg(QString(peer.toBase64())));
+		skynet->emit_CallFailed(peer, QString(tr("Failed to establish the C2C connection to %1")).arg(QString(peer.toBase64())));
 		skynet->call_waiting_c2c_connect = false;
 	}
 }
@@ -1201,7 +1243,7 @@ void SkyNet::notfound_cb(const unsigned char *callee_id)
 
 	if (skynet->is_call_waiting_for(peer))
 	{
-		skynet->emit_CallFailed(QString(tr("Requested peer was not found online in the Pica Pica network")));
+		skynet->emit_CallFailed(peer, QString(tr("Requested peer was not found online in the Pica Pica network")));
 		skynet->call_waiting_c2c_connect = false;
 	}
 }
@@ -1381,16 +1423,18 @@ void SkyNet::call_hangup_cb(const unsigned char *peer_id)
 
 void SkyNet::call_audio_params_cb(const unsigned char *peer_id, const char *codec, uint16_t sample_rate)
 {
+	skynet->emit_IncomingAudioParams(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString::fromLatin1(codec), sample_rate);
 }
 
 void SkyNet::call_video_params_cb(const unsigned char *peer_id, const char *codec, uint16_t width, uint16_t height)
 {
 }
 
-void SkyNet::call_audio_packet_cb(const unsigned char *peer_id, uint16_t size, const char *pkt_data)
+void SkyNet::call_audio_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data)
 {
+	skynet->emit_IncomingAudioPacket(QByteArray((const char*)peer_id, PICA_ID_SIZE), seq_num, timestamp, QByteArray(pkt_data, size));
 }
 
-void SkyNet::call_video_packet_cb(const unsigned char *peer_id, uint16_t size, const char *pkt_data)
+void SkyNet::call_video_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data)
 {
 }

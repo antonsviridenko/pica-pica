@@ -360,11 +360,37 @@ Video stream parameters
 ====================================================
 Voice (audio) packet
 
-[0x76 0x76][length 2 octets][data]
+[0x76 0x76][length 2 octets][sequence number, uint16_t, little-endian][timestamp, uint32_t, little-endian, milliseconds since the start of the call][data]
+
+length - covers everything following it: the 2-octet sequence number, the
+4-octet timestamp and the data, i.e. data length + 6.
+
+sequence number - incremented by one for every audio packet sent over this
+call, wraps around at 65536. Since c2c/directc2c connections are carried
+over TCP, packets already arrive in order and without loss; the sequence
+number's purpose is to let the receiving side detect encoder-side gaps (e.g.
+a dropped capture buffer) and, in the future, to support delivery over an
+unordered/lossy transport (e.g. UDP).
+
+timestamp - the capture timestamp of the packet's first sample, in
+milliseconds, relative to the moment the call became active (the 0x71
+message was processed). Used by the receiver for playout-buffer timing and
+audio/video synchronization.
 ====================================================
 Video packet
 
-[0x77 0x77][length 2 octets][data]
+[0x77 0x77][length 2 octets][sequence number, uint16_t, little-endian][timestamp, uint32_t, little-endian, milliseconds since the start of the call][data]
+
+length - covers everything following it: the 2-octet sequence number, the
+4-octet timestamp and the data, i.e. data length + 6.
+
+sequence number - incremented by one for every video packet sent over this
+call, wraps around at 65536. Same purpose as in the 0x76 message: gap
+detection and future unordered/lossy transport support.
+
+timestamp - the capture timestamp of the encoded video frame, in
+milliseconds, relative to the moment the call became active. Used by the
+receiver for playout timing and audio/video synchronization.
 ====================================================
 
 

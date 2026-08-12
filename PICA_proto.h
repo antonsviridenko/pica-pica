@@ -166,6 +166,13 @@
 
 #define PICA_PROTO_CALL_CODECNAMESIZE 20
 
+// Sequence number (2 octets) + capture timestamp in milliseconds (4
+// octets), little-endian, prepended to the payload in the 0x76/0x77 packet
+// tail, ahead of the codec data.
+#define PICA_PROTO_CALL_PACKET_SEQNUM_SIZE 2
+#define PICA_PROTO_CALL_PACKET_TIMESTAMP_SIZE 4
+#define PICA_PROTO_CALL_PACKET_HDRSIZE (PICA_PROTO_CALL_PACKET_SEQNUM_SIZE + PICA_PROTO_CALL_PACKET_TIMESTAMP_SIZE)
+
 struct PICA_proto_msg
 {
 	unsigned char head[2];

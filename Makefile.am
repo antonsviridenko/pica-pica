@@ -155,6 +155,7 @@ moc_dhparam.cpp \
 moc_filetransfercontroller.cpp \
 moc_nodesdialog.cpp \
 moc_toneplayer.cpp \
+moc_audiodevice.cpp \
 ui_mainwindow.h
 
 moc_%.cpp: pica-client/%.h

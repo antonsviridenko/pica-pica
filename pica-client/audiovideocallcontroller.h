@@ -19,6 +19,7 @@
 
 #include <QObject>
 #include <QThread>
+#include <QElapsedTimer>
 #include "callwindow.h"
 #include "audiodevice.h"
 #include "videodevice.h"
@@ -36,7 +37,7 @@ public:
 public slots:
 	void start_call(QByteArray peer_id);
 	void call_from(QByteArray peer_id);
-	void call_failed(QString reason);
+	void call_failed(QByteArray peer_id, QString reason);
 	void call_accepted(QByteArray peer_id);
 	void call_rejected(QByteArray peer_id);
 	void call_hungup(QByteArray peer_id);
@@ -59,9 +60,22 @@ private:
 	TonePlayer *ringtoneplayer;
 	QThread ringtoneplayer_thread;
 
+	// Mic capture+encode and remote-audio decode+playback, each blocking
+	// its own thread for the duration of the call (see AudioDevice).
+	QThread microphone_thread;
+	QThread output_thread;
+
+	// Sequence number / capture-clock timestamp stamped onto outgoing
+	// 0x76 audio packets (see PICA_PROTO_CALL_PACKET_HDRSIZE).
+	quint16 m_audioSeq;
+	QElapsedTimer m_callClock;
+
 	void playEarpieceTone(void (TonePlayer::*tone)());
 	void playRingTone();
 	void stopTones();
+
+	void startAudioPipeline();
+	void stopAudioPipeline();
 
 private slots:
 	// button handlers
@@ -69,6 +83,10 @@ private slots:
 	void accept_call();
 	void end_call();
 	void callwindow_closed(CallWindow *sender_window);
+
+	void send_audio_packet(QByteArray data);
+	void incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate);
+	void incoming_audio_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 };
 

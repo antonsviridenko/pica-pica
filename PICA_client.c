@@ -1909,9 +1909,18 @@ static unsigned int procmsg_CALL_AUDIO_PACKET(unsigned char *buf, unsigned int n
 		return 0;
 	}
 
-	uint16_t pkt_size = *(uint16_t*)(buf + 2);
+	uint16_t tail_size = *(uint16_t*)(buf + 2);
 
-	callbacks.call_audio_packet_cb(chan->peer_id, pkt_size, buf + 4);
+	if (tail_size < PICA_PROTO_CALL_PACKET_HDRSIZE)
+	{
+		return 0;
+	}
+
+	uint16_t seq_num = *(uint16_t*)(buf + 4);
+	uint32_t timestamp = *(uint32_t*)(buf + 4 + PICA_PROTO_CALL_PACKET_SEQNUM_SIZE);
+	uint16_t pkt_size = tail_size - PICA_PROTO_CALL_PACKET_HDRSIZE;
+
+	callbacks.call_audio_packet_cb(chan->peer_id, seq_num, timestamp, pkt_size, buf + 4 + PICA_PROTO_CALL_PACKET_HDRSIZE);
 
 	return 1;
 }
@@ -1938,9 +1947,18 @@ static unsigned int procmsg_CALL_VIDEO_PACKET(unsigned char *buf, unsigned int n
 		return 0;
 	}
 
-	uint16_t pkt_size = *(uint16_t*)(buf + 2);
+	uint16_t tail_size = *(uint16_t*)(buf + 2);
 
-	callbacks.call_video_packet_cb(chan->peer_id, pkt_size, buf + 4);
+	if (tail_size < PICA_PROTO_CALL_PACKET_HDRSIZE)
+	{
+		return 0;
+	}
+
+	uint16_t seq_num = *(uint16_t*)(buf + 4);
+	uint32_t timestamp = *(uint32_t*)(buf + 4 + PICA_PROTO_CALL_PACKET_SEQNUM_SIZE);
+	uint16_t pkt_size = tail_size - PICA_PROTO_CALL_PACKET_HDRSIZE;
+
+	callbacks.call_video_packet_cb(chan->peer_id, seq_num, timestamp, pkt_size, buf + 4 + PICA_PROTO_CALL_PACKET_HDRSIZE);
 
 	return 1;
 }
@@ -3729,17 +3747,19 @@ int PICA_set_call_video_params(struct PICA_c2c *chn, const char *codec_name, uin
 	return PICA_OK;
 }
 
-int PICA_send_audio_packet(struct PICA_c2c *chn, const char *buf, unsigned int len)
+int PICA_send_audio_packet(struct PICA_c2c *chn, uint16_t seq_num, uint32_t timestamp, const char *buf, unsigned int len)
 {
 	struct PICA_proto_msg *mp;
 
 	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
 		return PICA_ERRCALLNOTINPROGRESS;
 
-	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_AUDIO_PACKET, len + 4)))
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_AUDIO_PACKET, len + 4 + PICA_PROTO_CALL_PACKET_HDRSIZE)))
 	{
-		*((uint16_t*)mp->tail) = len;
-		memcpy(mp->tail + 2, buf, len);
+		*((uint16_t*)mp->tail) = len + PICA_PROTO_CALL_PACKET_HDRSIZE;
+		*((uint16_t*)(mp->tail + 2)) = seq_num;
+		*((uint32_t*)(mp->tail + 2 + PICA_PROTO_CALL_PACKET_SEQNUM_SIZE)) = timestamp;
+		memcpy(mp->tail + 2 + PICA_PROTO_CALL_PACKET_HDRSIZE, buf, len);
 
 	}
 	else
@@ -3750,17 +3770,19 @@ int PICA_send_audio_packet(struct PICA_c2c *chn, const char *buf, unsigned int l
 	return PICA_OK;
 }
 
-int PICA_send_video_packet(struct PICA_c2c *chn, const char *buf, unsigned int len)
+int PICA_send_video_packet(struct PICA_c2c *chn, uint16_t seq_num, uint32_t timestamp, const char *buf, unsigned int len)
 {
 	struct PICA_proto_msg *mp;
 
 	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
 		return PICA_ERRCALLNOTINPROGRESS;
 
-	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_VIDEO_PACKET, len + 4)))
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_VIDEO_PACKET, len + 4 + PICA_PROTO_CALL_PACKET_HDRSIZE)))
 	{
-		*((uint16_t*)mp->tail) = len;
-		memcpy(mp->tail + 2, buf, len);
+		*((uint16_t*)mp->tail) = len + PICA_PROTO_CALL_PACKET_HDRSIZE;
+		*((uint16_t*)(mp->tail + 2)) = seq_num;
+		*((uint32_t*)(mp->tail + 2 + PICA_PROTO_CALL_PACKET_SEQNUM_SIZE)) = timestamp;
+		memcpy(mp->tail + 2 + PICA_PROTO_CALL_PACKET_HDRSIZE, buf, len);
 
 	}
 	else

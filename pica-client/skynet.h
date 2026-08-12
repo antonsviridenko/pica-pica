@@ -49,6 +49,9 @@ public:
 	void RejectCall(QByteArray from);
 	void HangupCall(QByteArray with);
 
+	void SendAudioParams(QByteArray to, QString codec, quint16 sample_rate);
+	void SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
+
 signals:
 	void MessageReceived(QByteArray from, QString msg);
 	void UnableToDeliver(QByteArray to, QString msg);
@@ -78,11 +81,14 @@ signals:
 
 	void c2cClosed(QByteArray peer_id);
 
-	void CallFailed(QString reason);
+	void CallFailed(QByteArray peer_id, QString reason);
 	void IncomingCall(QByteArray from);
 	void CallAccepted(QByteArray by);
 	void CallRejected(QByteArray by);
 	void CallHungup(QByteArray by);
+
+	void IncomingAudioParams(QByteArray peer_id, QString codec, quint16 sample_rate);
+	void IncomingAudioPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 private:
 	// Constructed in init(), once this SkyNet instance is running on its
 	// own network thread and that thread's dedicated QSqlDatabase
@@ -150,11 +156,14 @@ private:
 	void emit_c2cClosed(QByteArray peer_id);
 	void emit_ConnectionStatusUpdated(QByteArray peer_id, QString status);
 
-	void emit_CallFailed(QString reason);
+	void emit_CallFailed(QByteArray peer_id, QString reason);
 	void emit_IncomingCall(QByteArray from);
 	void emit_CallAccepted(QByteArray by);
 	void emit_CallRejected(QByteArray by);
 	void emit_CallHungup(QByteArray by);
+
+	void emit_IncomingAudioParams(QByteArray peer_id, QString codec, quint16 sample_rate);
+	void emit_IncomingAudioPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 	static void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type);
 
@@ -210,9 +219,9 @@ private:
 
 	static void call_video_params_cb(const unsigned char *peer_id, const char *codec, uint16_t width, uint16_t height);
 
-	static void call_audio_packet_cb(const unsigned char *peer_id, uint16_t size, const char *pkt_data);
+	static void call_audio_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
 
-	static void call_video_packet_cb(const unsigned char *peer_id, uint16_t size, const char *pkt_data);
+	static void call_video_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
 
 private slots:
 	void nodelink_activated(PICA_c2n *c2n);
@@ -260,6 +269,9 @@ private slots:
 	void do_AcceptCall(QByteArray from);
 	void do_RejectCall(QByteArray from);
 	void do_HangupCall(QByteArray with);
+
+	void do_SendAudioParams(QByteArray to, QString codec, quint16 sample_rate);
+	void do_SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 };
 
