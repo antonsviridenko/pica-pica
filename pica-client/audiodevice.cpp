@@ -147,6 +147,11 @@ void AudioDevice::enqueuePacket(QByteArray data)
 void AudioDevice::Close()
 {
 	m_abort.storeRelaxed(1);
+
+	{
+		QMutexLocker locker(&m_queueMutex);
+		m_playQueue.clear();
+	}
 	m_queueCond.wakeAll();
 }
 

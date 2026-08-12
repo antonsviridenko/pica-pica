@@ -137,8 +137,17 @@ void AudioVideoCallController::startAudioPipeline()
 
 void AudioVideoCallController::stopAudioPipeline()
 {
-	QMetaObject::invokeMethod(microphone, "Close", Qt::QueuedConnection);
-	QMetaObject::invokeMethod(output, "Close", Qt::QueuedConnection);
+	// Close() only touches a QAtomicInt and wakes a QWaitCondition, both
+	// safe to reach from any thread - it must be called directly rather
+	// than via invokeMethod()/QueuedConnection: microphone/output's own
+	// thread is blocked inside Capture()/Play() for the call's duration,
+	// so its event loop cannot deliver a queued call back to itself until
+	// that blocking call returns - which is exactly what Close() is
+	// supposed to make happen. Routing it through the event queue would
+	// deadlock (the thread would never quit, and the app would hang on
+	// exit after a call).
+	microphone->Close();
+	output->Close();
 }
 
 void AudioVideoCallController::call_failed(QByteArray peer_id, QString reason)
@@ -303,6 +312,11 @@ void AudioVideoCallController::incoming_audio_packet(QByteArray peer_id, quint16
 	if (!is_active || peer_id != m_peer_id)
 		return;
 
-	QMetaObject::invokeMethod(output, "enqueuePacket", Qt::QueuedConnection, Q_ARG(QByteArray, data));
+	// Direct call, not invokeMethod()/QueuedConnection - see the comment in
+	// stopAudioPipeline(). enqueuePacket() is mutex-protected and safe to
+	// call from any thread; queuing it behind output's own blocking Play()
+	// call would mean it's never delivered, and Play() would sit forever
+	// pulling from an empty jitter buffer.
+	output->enqueuePacket(data);
 }
 
