@@ -97,7 +97,13 @@ private:
 	QMutex m_queueMutex;
 	QWaitCondition m_queueCond;
 	QQueue<QByteArray> m_playQueue;
-	static const int kMaxQueueDepth = 4;
+	static const int kMaxQueueDepth = 8;
+
+	// Number of packets Play() waits to have buffered before writing the
+	// first one, to build up a cushion against arrival jitter (packets
+	// this call apart arrive roughly every 20ms - see
+	// AudioVideoCallController::startAudioPipeline()).
+	static const int kPrerollDepth = 3;
 };
 
 #endif // AUDIODEVICE_H

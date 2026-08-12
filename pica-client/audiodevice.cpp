@@ -235,6 +235,12 @@ void AudioDevice::Capture()
 	enc_ctx->time_base = AVRational{1, m_sampleRate};
 	applyMonoLayout(enc_ctx);
 
+	// "voip" favors speech intelligibility over faithfulness and has lower
+	// algorithmic delay than the default "audio" mode - a better fit for a
+	// live call than for e.g. music. Only libopus exposes this private
+	// option; harmless no-op on the native "opus" encoder fallback.
+	av_opt_set(enc_ctx->priv_data, "application", "voip", 0);
+
 	if ((ret = avcodec_open2(enc_ctx, enc, nullptr)) < 0)
 	{
 		QString msg = QString("Could not open Opus encoder: %1").arg(ff_errstr(ret));
@@ -472,6 +478,15 @@ void AudioDevice::Play()
 	bool loggedDecodeError = false;
 	bool loggedResamplerError = false;
 	bool loggedEncodeError = false;
+
+	// Preroll: wait for a small cushion of buffered packets before writing
+	// the first one, so ordinary arrival jitter doesn't immediately drain
+	// the queue and starve the ALSA buffer (heard as crackling/xruns).
+	{
+		QMutexLocker locker(&m_queueMutex);
+		while (m_playQueue.size() < kPrerollDepth && !m_abort.loadRelaxed())
+			m_queueCond.wait(&m_queueMutex, 100);
+	}
 
 	while (true)
 	{
