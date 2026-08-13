@@ -31,6 +31,21 @@
 #include <QNetworkInterface>
 #include <QHostAddress>
 #include <QTabWidget>
+#include <QTimer>
+
+// Audio pipeline test: how long the microphone is recorded for, and the
+// sample rate to record at - the same rate a call negotiates.
+static const int kAudioTestRecordMs = 5000;
+static const int kAudioTestSampleRate = 48000;
+
+// One encoded packet covers this much audio (the Opus encoder produces
+// 20 ms frames at 48 kHz), so feeding one packet per this many milliseconds
+// replays the recording at its natural rate.
+static const int kAudioTestPacketMs = 20;
+
+// Grace period after the last packet has been handed over, for the jitter
+// buffer and the sound card's own buffer to drain before closing the device.
+static const int kAudioTestDrainMs = 500;
 
 SettingsDialog::SettingsDialog(QWidget *parent) :
 	QDialog(parent)
@@ -136,18 +151,68 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	audioRingDev->setMinimumHeight(audioRingDev->height() * 2);
 	fillAudioRingDevices();
 
-	btAudioTest = new QPushButton(tr("Test"), this);
+	btAudioTest = new QPushButton(tr("Test 🎙️"), this);
+	connect(btAudioTest, SIGNAL(clicked()), this, SLOT(toggleAudioTest()));
 
+	audioTestStatus = new QLabel(this);
+	audioTestStatus->setAlignment(Qt::AlignCenter);
+
+	btRingTest = new QPushButton(tr("Test ring 🔔"), this);
+	connect(btRingTest, SIGNAL(clicked()), this, SLOT(toggleRingTest()));
+
+	ringTestStatus = new QLabel(this);
+	ringTestStatus->setAlignment(Qt::AlignCenter);
+
+	// The microphone test covers the capture and playback devices, so it sits
+	// with them, above the unrelated ring device below.
 	audiodevlayout->addWidget(lbAudioCaptureDev);
 	audiodevlayout->addWidget(audioCaptureDev);
 	audiodevlayout->addWidget(lbAudioPlaybackDev);
 	audiodevlayout->addWidget(audioPlaybackDev);
+	audiodevlayout->addWidget(btAudioTest);
+	audiodevlayout->addWidget(audioTestStatus);
 	audiodevlayout->addWidget(lbAudioRingDev);
 	audiodevlayout->addWidget(audioRingDev);
-	audiodevlayout->addWidget(btAudioTest);
+	audiodevlayout->addWidget(btRingTest);
+	audiodevlayout->addWidget(ringTestStatus);
 	audiodevlayout->addStretch(1);
 
 	audiodevtab->setLayout(audiodevlayout);
+
+	// Capture+encode and decode+playback ends of the test, each blocking its
+	// own thread while running, exactly as they do during a call. They stay
+	// idle until the Test button is pressed.
+	audioTestState = AudioTestIdle;
+	audioTestPlaybackPos = 0;
+
+	audioTestRecordTimer = new QTimer(this);
+	audioTestRecordTimer->setSingleShot(true);
+	connect(audioTestRecordTimer, SIGNAL(timeout()), this, SLOT(audioTestRecordingFinished()));
+
+	audioTestPlaybackTimer = new QTimer(this);
+	connect(audioTestPlaybackTimer, SIGNAL(timeout()), this, SLOT(audioTestFeedPacket()));
+
+	audioTestDrainTimer = new QTimer(this);
+	audioTestDrainTimer->setSingleShot(true);
+	connect(audioTestDrainTimer, SIGNAL(timeout()), this, SLOT(audioTestPlaybackFinished()));
+
+	testMic = new AudioDevice();
+	testMic->moveToThread(&testMicThread);
+	connect(testMic, SIGNAL(packetReady(QByteArray)), this, SLOT(audioTestPacket(QByteArray)));
+	connect(testMic, SIGNAL(errorOccurred(QString)), this, SLOT(audioTestError(QString)));
+	testMicThread.start();
+
+	testSpeaker = new AudioDevice();
+	testSpeaker->moveToThread(&testSpeakerThread);
+	connect(testSpeaker, SIGNAL(errorOccurred(QString)), this, SLOT(audioTestError(QString)));
+	testSpeakerThread.start();
+
+	ringTestRunning = false;
+	ringTestPlayer = new TonePlayer();
+	ringTestPlayer->moveToThread(&ringTestPlayerThread);
+	connect(ringTestPlayer, SIGNAL(finishedPlaying()), this, SLOT(ringTestFinished()));
+	connect(ringTestPlayer, SIGNAL(errorOccured(QString)), this, SLOT(ringTestError(QString)));
+	ringTestPlayerThread.start();
 
 //Video Devices
 	videoDev = new QComboBox(this);
@@ -223,6 +288,8 @@ SettingsDialog::~SettingsDialog()
 	// are still running inside them.
 	testCam->Close();
 	testDecoder->Close();
+	testMic->Close();
+	testSpeaker->Close();
 
 	testCamThread.quit();
 	testCamThread.wait();
@@ -231,6 +298,214 @@ SettingsDialog::~SettingsDialog()
 	testDecoderThread.quit();
 	testDecoderThread.wait();
 	delete testDecoder;
+
+	testMicThread.quit();
+	testMicThread.wait();
+	delete testMic;
+
+	testSpeakerThread.quit();
+	testSpeakerThread.wait();
+	delete testSpeaker;
+
+	// Same reasoning: stop() first, since the thread cannot finish while
+	// TonePlayer::play() is still running inside it.
+	ringTestPlayer->stop();
+	ringTestPlayerThread.quit();
+	ringTestPlayerThread.wait();
+	delete ringTestPlayer;
+}
+
+void SettingsDialog::toggleRingTest()
+{
+	if (ringTestRunning)
+	{
+		// stop() only sets an atomic flag, so it is safe to call directly on
+		// a TonePlayer whose thread is blocked inside play().
+		ringTestPlayer->stop();
+		ringTestRunning = false;
+		btRingTest->setText(tr("Test ring 🔔"));
+		ringTestStatus->clear();
+		return;
+	}
+
+	QString dev = audioRingDev->itemData(audioRingDev->currentIndex()).toString();
+
+	if (dev.isEmpty())
+	{
+		ringTestStatus->setText(tr("No ring device selected"));
+		return;
+	}
+
+	ringTestRunning = true;
+	btRingTest->setText(tr("Stop ⏹"));
+	ringTestStatus->setText(tr("Ringing..."));
+
+	// Same sequence AudioVideoCallController::playRingTone() uses for a real
+	// incoming call: clear any tone still playing, point the player at the
+	// configured device, then start the bell.
+	ringTestPlayer->stop();
+	QMetaObject::invokeMethod(ringTestPlayer, "setDeviceName", Qt::QueuedConnection, Q_ARG(QString, dev));
+	QMetaObject::invokeMethod(ringTestPlayer, "playClassicRingtone", Qt::QueuedConnection);
+}
+
+void SettingsDialog::ringTestFinished()
+{
+	if (!ringTestRunning)
+		return;
+
+	ringTestRunning = false;
+	btRingTest->setText(tr("Test ring 🔔"));
+	ringTestStatus->clear();
+}
+
+void SettingsDialog::ringTestError(QString message)
+{
+	ringTestRunning = false;
+	btRingTest->setText(tr("Test ring 🔔"));
+	ringTestStatus->setText(message);
+}
+
+void SettingsDialog::toggleAudioTest()
+{
+	if (audioTestState != AudioTestIdle)
+	{
+		stopAudioTest();
+		audioTestStatus->setText(tr("Stopped"));
+		return;
+	}
+
+	QString dev = audioCaptureDev->itemData(audioCaptureDev->currentIndex()).toString();
+
+	if (dev.isEmpty())
+	{
+		audioTestStatus->setText(tr("No microphone selected"));
+		return;
+	}
+
+	audioTestPackets.clear();
+	audioTestPlaybackPos = 0;
+	audioTestState = AudioTestRecording;
+	btAudioTest->setText(tr("Stop ⏹"));
+	audioTestStatus->setText(tr("Recording, say something..."));
+
+	QMetaObject::invokeMethod(testMic, "configureCapture", Qt::QueuedConnection,
+	                           Q_ARG(QString, dev), Q_ARG(QString, QStringLiteral("opus")),
+	                           Q_ARG(int, kAudioTestSampleRate));
+	QMetaObject::invokeMethod(testMic, "Capture", Qt::QueuedConnection);
+
+	audioTestRecordTimer->start(kAudioTestRecordMs);
+}
+
+void SettingsDialog::audioTestPacket(QByteArray data)
+{
+	// Packets still in flight from the microphone thread after the recording
+	// phase ended are not part of the recording.
+	if (audioTestState != AudioTestRecording)
+		return;
+
+	audioTestPackets.append(data);
+}
+
+void SettingsDialog::audioTestRecordingFinished()
+{
+	// The test may have been stopped, or have failed, while the timer ran.
+	if (audioTestState != AudioTestRecording)
+		return;
+
+	// Direct call: the microphone thread is blocked inside Capture(), so a
+	// queued call would never reach it (see the comments in
+	// AudioVideoCallController::stopAudioPipeline()).
+	testMic->Close();
+
+	if (audioTestPackets.isEmpty())
+	{
+		stopAudioTest();
+		audioTestStatus->setText(tr("Nothing was captured"));
+		return;
+	}
+
+	startAudioTestPlayback();
+}
+
+void SettingsDialog::startAudioTestPlayback()
+{
+	QString dev = audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString();
+
+	if (dev.isEmpty())
+	{
+		stopAudioTest();
+		audioTestStatus->setText(tr("No playback device selected"));
+		return;
+	}
+
+	audioTestState = AudioTestPlaying;
+	audioTestPlaybackPos = 0;
+	audioTestStatus->setText(tr("Playing back..."));
+
+	QMetaObject::invokeMethod(testSpeaker, "configurePlayback", Qt::QueuedConnection,
+	                           Q_ARG(QString, dev), Q_ARG(QString, QStringLiteral("opus")),
+	                           Q_ARG(int, kAudioTestSampleRate));
+	QMetaObject::invokeMethod(testSpeaker, "Play", Qt::QueuedConnection);
+
+	// The recording has to be handed over at the rate it plays at, not all at
+	// once: AudioDevice's jitter buffer holds only a few packets and drops
+	// the oldest when full, so dumping the whole recording into it would
+	// discard everything but the tail.
+	audioTestPlaybackTimer->start(kAudioTestPacketMs);
+}
+
+void SettingsDialog::audioTestFeedPacket()
+{
+	if (audioTestState != AudioTestPlaying)
+		return;
+
+	if (audioTestPlaybackPos >= audioTestPackets.size())
+	{
+		audioTestPlaybackTimer->stop();
+		// Let what is already queued, plus the sound card's own buffer, play
+		// out before tearing the playback device down.
+		audioTestDrainTimer->start(kAudioTestDrainMs);
+		return;
+	}
+
+	// Direct call, for the same reason as in the call controller.
+	testSpeaker->enqueuePacket(audioTestPackets.at(audioTestPlaybackPos++));
+}
+
+void SettingsDialog::audioTestPlaybackFinished()
+{
+	if (audioTestState != AudioTestPlaying)
+		return;
+
+	stopAudioTest();
+	audioTestStatus->setText(tr("Done"));
+}
+
+void SettingsDialog::stopAudioTest()
+{
+	audioTestRecordTimer->stop();
+	audioTestPlaybackTimer->stop();
+	audioTestDrainTimer->stop();
+
+	// Direct calls: both devices may be blocked inside their capture/playback
+	// loops, where a queued call would never reach them.
+	testMic->Close();
+	testSpeaker->Close();
+
+	audioTestPackets.clear();
+	audioTestPlaybackPos = 0;
+	audioTestState = AudioTestIdle;
+	btAudioTest->setText(tr("Test 🎙️"));
+	audioTestStatus->clear();
+}
+
+void SettingsDialog::audioTestError(QString message)
+{
+	if (audioTestState == AudioTestIdle)
+		return;
+
+	stopAudioTest();
+	audioTestStatus->setText(message);
 }
 
 void SettingsDialog::toggleVideoTest()
