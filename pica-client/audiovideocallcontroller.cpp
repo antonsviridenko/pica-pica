@@ -210,6 +210,7 @@ void AudioVideoCallController::startVideoPipeline()
 	m_videoFrameStarted = false;
 
 	bool preferCompressed = st.loadValue("video.prefer_compressed", 0).toBool();
+	bool vaapiEncoding = st.loadValue("video.vaapi_encoding", 0).toBool();
 
 	// The peer is told what we are sending only once the camera is open and
 	// the format is settled - with a compressed camera stream being forwarded
@@ -218,7 +219,7 @@ void AudioVideoCallController::startVideoPipeline()
 	QMetaObject::invokeMethod(cam, "configureCapture", Qt::QueuedConnection,
 	                           Q_ARG(QString, camDev),
 	                           Q_ARG(int, kVideoWidth), Q_ARG(int, kVideoHeight),
-	                           Q_ARG(bool, preferCompressed));
+	                           Q_ARG(bool, preferCompressed), Q_ARG(bool, vaapiEncoding));
 	QMetaObject::invokeMethod(cam, "Capture", Qt::QueuedConnection);
 
 	// remotevideo is configured lazily, once the peer's own 0x75 (see
@@ -310,6 +311,9 @@ void AudioVideoCallController::start_call(QByteArray peer_id)
 	/* decoded frames arrive from remotevideo's thread, so this is a queued
 	   connection; it dies with the window, which is deleted on close */
 	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
+#ifdef HAVE_VAAPI
+	connect(remotevideo, SIGNAL(hwFrameReady(AVFramePtr)), callwindow, SLOT(showRemoteHwFrame(AVFramePtr)));
+#endif
 	callwindow->show();
 }
 
@@ -327,8 +331,11 @@ void AudioVideoCallController::call_from(QByteArray peer_id)
 	connect(callwindow, SIGNAL(accept_call_pressed()), this, SLOT(accept_call()));
 	connect(callwindow, SIGNAL(hang_call_pressed()), this, SLOT(end_call()));
 	connect(callwindow, SIGNAL(callwindow_closed(CallWindow*)), this, SLOT(callwindow_closed(CallWindow*)));
-	/* see the same connection in start_call() */
+	/* see the same connections in start_call() */
 	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
+#ifdef HAVE_VAAPI
+	connect(remotevideo, SIGNAL(hwFrameReady(AVFramePtr)), callwindow, SLOT(showRemoteHwFrame(AVFramePtr)));
+#endif
 	callwindow->show();
 
 	/* play ring tone */
@@ -456,8 +463,13 @@ void AudioVideoCallController::incoming_video_params(QByteArray peer_id, QString
 	if (!is_active || peer_id != m_peer_id)
 		return;
 
+	Settings st(config_dbname);
+	bool vaapiDecoding = st.loadValue("video.vaapi_decoding", 0).toBool();
+	bool vaapiRendering = st.loadValue("video.vaapi_rendering", 0).toBool();
+
 	QMetaObject::invokeMethod(remotevideo, "configurePlayback", Qt::QueuedConnection,
-	                           Q_ARG(QString, codec), Q_ARG(int, (int)width), Q_ARG(int, (int)height));
+	                           Q_ARG(QString, codec), Q_ARG(int, (int)width), Q_ARG(int, (int)height),
+	                           Q_ARG(bool, vaapiDecoding), Q_ARG(bool, vaapiRendering));
 	QMetaObject::invokeMethod(remotevideo, "Play", Qt::QueuedConnection);
 }
 

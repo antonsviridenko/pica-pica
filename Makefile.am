@@ -159,14 +159,20 @@ moc_audiodevice.cpp \
 moc_videodevice.cpp \
 ui_mainwindow.h
 
+# moc runs its own preprocessor and sees none of the compiler's defines, so
+# any define that a header's signals or slots are conditional on has to be
+# repeated here - otherwise moc skips those declarations and the signals end
+# up declared but never generated, failing at link time.
+MOCFLAGS =
+
 moc_%.cpp: pica-client/%.h
-	$(MOC) $< -o $@
+	$(MOC) $(MOCFLAGS) $< -o $@
 
 moc_%.cpp: pica-client/dialogs/%.h
-	$(MOC) $< -o $@
+	$(MOC) $(MOCFLAGS) $< -o $@
 
 moc_%.cpp: pica-client/toneplayer/%.h
-	$(MOC) $< -o $@
+	$(MOC) $(MOCFLAGS) $< -o $@
 
 pica-client/mainwindow.cpp: ui_mainwindow.h
 
@@ -179,6 +185,23 @@ ui_%.h: pica-client/%.ui
  
 pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) $(FFMPEG_CFLAGS) $(PLATFORM_DEPS_CFLAGS)
 pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS) $(FFMPEG_LIBS) $(PLATFORM_DEPS_LIBS)
+
+# VAAPI accelerated encoding, decoding and rendering. Everything below is left
+# out of the build entirely when configure did not find libva/EGL or was told
+# not to look - the code itself is additionally guarded by #ifdef HAVE_VAAPI.
+if PICA_VAAPI
+pica_client_pica_client_SOURCES += \
+pica-client/vaapi.cpp \
+pica-client/vaapi.h \
+pica-client/vaapivideowidget.cpp \
+pica-client/vaapivideowidget.h
+
+nodist_pica_client_pica_client_SOURCES += moc_vaapivideowidget.cpp
+
+pica_client_pica_client_CPPFLAGS += $(VAAPI_CFLAGS)
+pica_client_pica_client_LDADD += $(VAAPI_LIBS) -lGL
+MOCFLAGS += -DHAVE_VAAPI
+endif
 
 pkgpicaclientdir = ${datarootdir}/pica-client
 dist_pkgpicaclient_DATA =  \

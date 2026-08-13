@@ -18,6 +18,7 @@
 #define VIDEODEVICE_H
 
 #include "mediadevice.h"
+#include "vaapi.h"
 #include <QObject>
 #include <QString>
 #include <QByteArray>
@@ -79,8 +80,21 @@ public:
 	// re-encoding every frame. The codec that ends up being used is only
 	// known once the camera has been opened, and is reported by
 	// captureStarted() - it is not necessarily the one requested here.
-	Q_INVOKABLE void configureCapture(QString deviceName, int width, int height, bool preferCompressed);
-	Q_INVOKABLE void configurePlayback(QString codec, int width, int height);
+	//
+	// useVaapi asks for the frames to be encoded on the GPU. It is a request,
+	// not a guarantee: without VAAPI support built in, without usable
+	// hardware, or if the hardware encoder will not open, capture falls back
+	// to encoding in software.
+	Q_INVOKABLE void configureCapture(QString deviceName, int width, int height,
+	                                  bool preferCompressed, bool useVaapi);
+
+	// useVaapi decodes on the GPU. useVaapiRender additionally keeps the
+	// decoded frames there and emits them through hwFrameReady() instead of
+	// frameReady(), for a renderer that can draw a VA surface directly; it
+	// implies GPU decoding, since there is no surface to draw otherwise. Both
+	// fall back to software the same way capture does.
+	Q_INVOKABLE void configurePlayback(QString codec, int width, int height,
+	                                   bool useVaapi, bool useVaapiRender);
 
 	// Push one complete encoded frame (already reassembled from 0x77
 	// fragments by the caller) into the decode queue. Safe to call from any
@@ -119,7 +133,20 @@ signals:
 	// One decoded picture from the remote side, ready to be displayed.
 	void frameReady(QImage frame);
 
+#ifdef HAVE_VAAPI
+	// One decoded picture still living in GPU memory as a VA surface, for a
+	// renderer that can draw it without a round trip through system memory.
+	// Emitted instead of frameReady() when GPU rendering is in use.
+	void hwFrameReady(AVFramePtr frame);
+#endif
+
 	void errorOccurred(QString message);
+
+	// Says in plain words which path capture or playback actually settled on,
+	// for the settings dialog to show. A request for GPU work can silently
+	// come back as software, and forwarding a compressed camera stream skips
+	// encoding altogether - neither should have to be guessed at.
+	void accelerationInUse(QString description);
 
 public:
 	virtual QList<MediaDeviceInfo> Enumerate(enum MediaDeviceStreamDirection dir);
@@ -141,6 +168,8 @@ private:
 	int m_width;
 	int m_height;
 	bool m_preferCompressed;
+	bool m_useVaapi;
+	bool m_useVaapiRender;
 
 	QAtomicInt m_abort;
 

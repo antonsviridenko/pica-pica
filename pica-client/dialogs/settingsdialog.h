@@ -33,6 +33,9 @@
 #include "../audiodevice.h"
 #include "../videodevice.h"
 #include "../toneplayer/toneplayer.h"
+#ifdef HAVE_VAAPI
+#include "../vaapivideowidget.h"
+#endif
 
 class SettingsDialog : public QDialog
 {
@@ -118,7 +121,20 @@ private:
 	// the network, so the whole chain can be checked from this dialog.
 	QPushButton *btVideoTest;
 	QLabel *videoPreview;
+	// Shown under the preview: the format the camera settled on, and whether
+	// the GPU or the CPU ended up doing the encoding and decoding.
+	QLabel *videoTestStatus;
+	QString videoTestFormat;
+	QString videoTestPathReport;
 	QCheckBox *cbPreferCompressed;
+#ifdef HAVE_VAAPI
+	QCheckBox *cbVaapiEncoding;
+	QCheckBox *cbVaapiDecoding;
+	QCheckBox *cbVaapiRendering;
+	// Shown in place of videoPreview while frames are being drawn straight
+	// from GPU memory; only one of the two is ever visible.
+	VaapiVideoWidget *videoPreviewGpu;
+#endif
 	VideoDevice *testCam;
 	VideoDevice *testDecoder;
 	QThread testCamThread;
@@ -159,8 +175,13 @@ private slots:
 
 	void toggleVideoTest();
 	void videoTestCaptureStarted(QString codec, int width, int height);
+	void videoTestPath(QString description);
 	void videoTestFragment(QByteArray data, bool is_last_fragment);
 	void videoTestFrame(QImage frame);
+#ifdef HAVE_VAAPI
+	void videoTestHwFrame(AVFramePtr frame);
+	void videoTestRenderFailed(QString message);
+#endif
 	void videoTestError(QString message);
 
 };

@@ -228,6 +228,15 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	cbPreferCompressed = new QCheckBox(tr("Prefer compressed formats if provided by the camera"), this);
 
+#ifdef HAVE_VAAPI
+	cbVaapiEncoding = new QCheckBox(tr("enable VAAPI-accelerated hardware encoding"), this);
+	cbVaapiDecoding = new QCheckBox(tr("enable VAAPI-accelerated hardware decoding"), this);
+	cbVaapiRendering = new QCheckBox(tr("enable VAAPI accelerated hardware rendering"), this);
+	// Drawing a VA surface means having decoded into one first, so rendering
+	// brings decoding along with it whether or not it was asked for.
+	cbVaapiRendering->setToolTip(tr("Requires hardware decoding, which is enabled along with it"));
+#endif
+
 	btVideoTest = new QPushButton(tr("Test 📷"), this);
 	connect(btVideoTest, SIGNAL(clicked()), this, SLOT(toggleVideoTest()));
 
@@ -236,11 +245,30 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videoPreview->setMinimumSize(320, 240);
 	videoPreview->setFrameShape(QFrame::StyledPanel);
 
+	videoTestStatus = new QLabel(this);
+	videoTestStatus->setAlignment(Qt::AlignCenter);
+
+#ifdef HAVE_VAAPI
+	videoPreviewGpu = new VaapiVideoWidget(this);
+	videoPreviewGpu->setMinimumSize(320, 240);
+	videoPreviewGpu->hide();
+	connect(videoPreviewGpu, SIGNAL(renderingFailed(QString)), this, SLOT(videoTestRenderFailed(QString)));
+#endif
+
 	videodevLayout->addWidget(videoDev);
 	videodevLayout->addWidget(videoDevRefresh);
 	videodevLayout->addWidget(cbPreferCompressed);
+#ifdef HAVE_VAAPI
+	videodevLayout->addWidget(cbVaapiEncoding);
+	videodevLayout->addWidget(cbVaapiDecoding);
+	videodevLayout->addWidget(cbVaapiRendering);
+#endif
 	videodevLayout->addWidget(btVideoTest);
 	videodevLayout->addWidget(videoPreview);
+#ifdef HAVE_VAAPI
+	videodevLayout->addWidget(videoPreviewGpu);
+#endif
+	videodevLayout->addWidget(videoTestStatus);
 	videodevLayout->addStretch(1);
 
 	videodevtab->setLayout(videodevLayout);
@@ -255,12 +283,17 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	connect(testCam, SIGNAL(captureStarted(QString,int,int)), this, SLOT(videoTestCaptureStarted(QString,int,int)));
 	connect(testCam, SIGNAL(packetReady(QByteArray,bool)), this, SLOT(videoTestFragment(QByteArray,bool)));
 	connect(testCam, SIGNAL(errorOccurred(QString)), this, SLOT(videoTestError(QString)));
+	connect(testCam, SIGNAL(accelerationInUse(QString)), this, SLOT(videoTestPath(QString)));
 	testCamThread.start();
 
 	testDecoder = new VideoDevice();
 	testDecoder->moveToThread(&testDecoderThread);
 	connect(testDecoder, SIGNAL(frameReady(QImage)), this, SLOT(videoTestFrame(QImage)));
 	connect(testDecoder, SIGNAL(errorOccurred(QString)), this, SLOT(videoTestError(QString)));
+	connect(testDecoder, SIGNAL(accelerationInUse(QString)), this, SLOT(videoTestPath(QString)));
+#ifdef HAVE_VAAPI
+	connect(testDecoder, SIGNAL(hwFrameReady(AVFramePtr)), this, SLOT(videoTestHwFrame(AVFramePtr)));
+#endif
 	testDecoderThread.start();
 
 	tabW->addTab(directc2ctab, tr("Direct Connections"));
@@ -538,10 +571,18 @@ void SettingsDialog::toggleVideoTest()
 	btVideoTest->setText(tr("Stop ⏹"));
 	videoPreview->setText(tr("Starting..."));
 
+	bool vaapiEncoding = false;
+#ifdef HAVE_VAAPI
+	vaapiEncoding = cbVaapiEncoding->isChecked();
+#endif
+
+	videoTestPathReport.clear();
+
 	QMetaObject::invokeMethod(testCam, "configureCapture", Qt::QueuedConnection,
 	                           Q_ARG(QString, dev),
 	                           Q_ARG(int, kVideoTestWidth), Q_ARG(int, kVideoTestHeight),
-	                           Q_ARG(bool, cbPreferCompressed->isChecked()));
+	                           Q_ARG(bool, cbPreferCompressed->isChecked()),
+	                           Q_ARG(bool, vaapiEncoding));
 	QMetaObject::invokeMethod(testCam, "Capture", Qt::QueuedConnection);
 
 	// The decoder is only started once the camera has settled on a format,
@@ -556,12 +597,33 @@ void SettingsDialog::videoTestCaptureStarted(QString codec, int width, int heigh
 
 	// Says which path the test is exercising: the camera's own compressed
 	// stream forwarded untouched, or frames decoded and re-encoded here.
-	videoPreview->setText(tr("Capturing %1 %2x%3...").arg(codec).arg(width).arg(height));
+	videoTestFormat = tr("%1 %2x%3").arg(codec).arg(width).arg(height);
+	videoPreview->setText(tr("Capturing %1...").arg(videoTestFormat));
+
+	bool vaapiDecoding = false;
+	bool vaapiRendering = false;
+#ifdef HAVE_VAAPI
+	vaapiDecoding = cbVaapiDecoding->isChecked();
+	vaapiRendering = cbVaapiRendering->isChecked();
+#endif
 
 	QMetaObject::invokeMethod(testDecoder, "configurePlayback", Qt::QueuedConnection,
 	                           Q_ARG(QString, codec),
-	                           Q_ARG(int, width), Q_ARG(int, height));
+	                           Q_ARG(int, width), Q_ARG(int, height),
+	                           Q_ARG(bool, vaapiDecoding), Q_ARG(bool, vaapiRendering));
 	QMetaObject::invokeMethod(testDecoder, "Play", Qt::QueuedConnection);
+}
+
+void SettingsDialog::videoTestPath(QString description)
+{
+	if (!videoTestRunning)
+		return;
+
+	// Capture and playback each report once; both lines are kept so the whole
+	// path is visible, since either end can quietly fall back to software.
+	if (!videoTestPathReport.isEmpty())
+		videoTestPathReport += QLatin1String(", ");
+	videoTestPathReport += description;
 }
 
 void SettingsDialog::stopVideoTest()
@@ -574,8 +636,16 @@ void SettingsDialog::stopVideoTest()
 
 	testAssembler.reset();
 	videoTestRunning = false;
+	videoTestFormat.clear();
+	videoTestPathReport.clear();
 	btVideoTest->setText(tr("Test 📷"));
 	videoPreview->clear();
+	videoTestStatus->clear();
+#ifdef HAVE_VAAPI
+	videoPreviewGpu->clearFrame();
+	videoPreviewGpu->hide();
+	videoPreview->show();
+#endif
 }
 
 void SettingsDialog::videoTestFragment(QByteArray data, bool is_last_fragment)
@@ -602,10 +672,47 @@ void SettingsDialog::videoTestFrame(QImage frame)
 	if (!videoTestRunning || frame.isNull())
 		return;
 
+	// The preview itself is showing pixels now, so what format came off the
+	// camera and which of the GPU or CPU did the work goes underneath it.
+	videoTestStatus->setText(videoTestPathReport.isEmpty()
+	                         ? videoTestFormat
+	                         : tr("%1 - %2").arg(videoTestFormat, videoTestPathReport));
+
 	videoPreview->setPixmap(QPixmap::fromImage(frame).scaled(videoPreview->size(),
 	                                                         Qt::KeepAspectRatio,
 	                                                         Qt::SmoothTransformation));
 }
+
+#ifdef HAVE_VAAPI
+void SettingsDialog::videoTestHwFrame(AVFramePtr frame)
+{
+	if (!videoTestRunning)
+		return;
+
+	// Frames arriving here never went through system memory, so the label has
+	// nothing to show - the GL widget takes over the preview area.
+	if (videoPreviewGpu->isHidden())
+	{
+		videoPreview->hide();
+		videoPreviewGpu->show();
+	}
+
+	videoTestStatus->setText(videoTestPathReport.isEmpty()
+	                         ? videoTestFormat
+	                         : tr("%1 - %2, GPU rendering").arg(videoTestFormat, videoTestPathReport));
+
+	videoPreviewGpu->setFrame(frame);
+}
+
+void SettingsDialog::videoTestRenderFailed(QString message)
+{
+	// Drawing straight from GPU memory did not work out. The decoder is still
+	// running, so say so and leave the test going rather than killing it.
+	videoPreviewGpu->hide();
+	videoPreview->show();
+	videoPreview->setText(message);
+}
+#endif
 
 void SettingsDialog::videoTestError(QString message)
 {
@@ -776,6 +883,12 @@ void SettingsDialog::loadSettings()
 
 	cbPreferCompressed->setChecked(st.loadValue("video.prefer_compressed", 0).toBool());
 
+#ifdef HAVE_VAAPI
+	cbVaapiEncoding->setChecked(st.loadValue("video.vaapi_encoding", 0).toBool());
+	cbVaapiDecoding->setChecked(st.loadValue("video.vaapi_decoding", 0).toBool());
+	cbVaapiRendering->setChecked(st.loadValue("video.vaapi_rendering", 0).toBool());
+#endif
+
 	QString audioCapDevVal = st.loadValue("audio.capture_device", "default").toString();
 	int audioCapDevItem = audioCaptureDev->findData(audioCapDevVal);
 	if (audioCapDevItem >= 0)
@@ -830,6 +943,11 @@ void SettingsDialog::storeSettings()
 
 	st.storeValue("video.capture_device", videoDev->itemData(videoDev->currentIndex()).toString());
 	st.storeValue("video.prefer_compressed", cbPreferCompressed->isChecked() ? "1" : "0");
+#ifdef HAVE_VAAPI
+	st.storeValue("video.vaapi_encoding", cbVaapiEncoding->isChecked() ? "1" : "0");
+	st.storeValue("video.vaapi_decoding", cbVaapiDecoding->isChecked() ? "1" : "0");
+	st.storeValue("video.vaapi_rendering", cbVaapiRendering->isChecked() ? "1" : "0");
+#endif
 	st.storeValue("audio.capture_device", audioCaptureDev->itemData(audioCaptureDev->currentIndex()).toString());
 	st.storeValue("audio.playback_device", audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString());
 	st.storeValue("audio.ring_device", audioRingDev->itemData(audioRingDev->currentIndex()).toString());

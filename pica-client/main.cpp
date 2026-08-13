@@ -28,6 +28,7 @@
 #include "audiovideocallcontroller.h"
 #include "picaactioncenter.h"
 #include "picasystray.h"
+#include "vaapi.h"
 #include <QDir>
 #include <QMessageBox>
 #include <QString>
@@ -499,6 +500,12 @@ static bool create_config_dir()
 int main(int argc, char *argv[])
 {
 	QApplication a(argc, argv);
+
+#ifdef HAVE_VAAPI
+	// Decoded hardware frames travel from the decoding thread to the widget
+	// drawing them through queued signals, which needs their type registered.
+	VaapiContext::registerMetaTypes();
+#endif
 
 #ifdef WIN32
 	config_resourceDir = QLatin1String("share\\");

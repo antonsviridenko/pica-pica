@@ -48,6 +48,9 @@ extern "C" {
 #include <libavutil/mem.h>
 #include <libavutil/error.h>
 #include <libswscale/swscale.h>
+#ifdef HAVE_VAAPI
+#include <libavutil/hwcontext.h>
+#endif
 }
 
 // Encoding defaults. Not exposed as settings yet - see the deferred list in
@@ -89,6 +92,26 @@ static const struct
 	// Some cameras report plain JPEG rather than MJPEG for the same stream.
 	{ V4L2_PIX_FMT_JPEG,  "mjpeg" }
 };
+#endif
+
+#ifdef HAVE_VAAPI
+// Picks the GPU pixel format out of what the decoder offers. Returning the
+// first entry instead - which is what happens when VAAPI is not among them -
+// leaves the decoder working in software, which is the wanted fallback.
+static AVPixelFormat vaapi_get_format(AVCodecContext *ctx, const AVPixelFormat *formats)
+{
+	Q_UNUSED(ctx);
+
+	for (const AVPixelFormat *p = formats; *p != AV_PIX_FMT_NONE; p++)
+	{
+		if (*p == AV_PIX_FMT_VAAPI)
+			return *p;
+	}
+
+	qWarning() << "The GPU cannot decode this stream, decoding in software";
+
+	return formats[0];
+}
 #endif
 
 QStringList VideoDevice::CompressedFormats(const QString &device)
@@ -162,7 +185,8 @@ QByteArray VideoFrameAssembler::addFragment(quint16 seq_num, quint32 timestamp, 
 }
 
 VideoDevice::VideoDevice(QObject *parent)
-	: QObject(parent), m_width(640), m_height(480), m_preferCompressed(false), m_abort(0)
+	: QObject(parent), m_width(640), m_height(480), m_preferCompressed(false),
+	  m_useVaapi(false), m_useVaapiRender(false), m_abort(0)
 {
 }
 
@@ -171,19 +195,26 @@ VideoDevice::~VideoDevice()
 	Close();
 }
 
-void VideoDevice::configureCapture(QString deviceName, int width, int height, bool preferCompressed)
+void VideoDevice::configureCapture(QString deviceName, int width, int height,
+                                   bool preferCompressed, bool useVaapi)
 {
 	m_deviceName = deviceName;
 	m_width = width;
 	m_height = height;
 	m_preferCompressed = preferCompressed;
+	m_useVaapi = useVaapi;
 }
 
-void VideoDevice::configurePlayback(QString codec, int width, int height)
+void VideoDevice::configurePlayback(QString codec, int width, int height,
+                                    bool useVaapi, bool useVaapiRender)
 {
 	m_codec = codec;
 	m_width = width;
 	m_height = height;
+	// Drawing a VA surface requires having decoded into one in the first
+	// place, so asking for GPU rendering turns on GPU decoding regardless.
+	m_useVaapi = useVaapi || useVaapiRender;
+	m_useVaapiRender = useVaapiRender;
 }
 
 void VideoDevice::enqueueFrame(QByteArray encodedFrame)
@@ -323,6 +354,10 @@ void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st,
 
 	emit captureStarted(codec, width, height);
 
+	// Nothing encodes here at all - the camera's own packets go out as they
+	// arrive - so any hardware encoding setting simply has nothing to act on.
+	emit accelerationInUse(QStringLiteral("no encoding, camera stream forwarded unchanged"));
+
 	AVPacket *pkt = av_packet_alloc();
 	bool loggedReadError = false;
 
@@ -368,44 +403,128 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 		return;
 	}
 
-	const AVCodec *enc = avcodec_find_encoder_by_name("libx264");
-	if (!enc)
-		enc = avcodec_find_encoder(AV_CODEC_ID_H264);
-	AVCodecContext *enc_ctx = enc ? avcodec_alloc_context3(enc) : nullptr;
-	if (!enc || !enc_ctx)
+	// The GPU encoder is tried first when asked for, and anything that goes
+	// wrong on the way - no such encoder built into FFmpeg, no usable VAAPI
+	// device, no surface pool, the encoder refusing to open - just leaves
+	// hardware false and takes the software path below.
+	bool hardware = false;
+	const AVCodec *enc = nullptr;
+	AVCodecContext *enc_ctx = nullptr;
+	AVBufferRef *hw_frames_ref = nullptr;
+
+#ifdef HAVE_VAAPI
+	if (m_useVaapi && VaapiContext::isAvailable())
 	{
-		QString msg = "H.264 encoder not available";
-		qWarning() << msg;
-		emit errorOccurred(msg);
-		avcodec_free_context(&dec_ctx);
-		return;
+		enc = avcodec_find_encoder_by_name("h264_vaapi");
+		AVBufferRef *hw_device_ref = enc ? VaapiContext::deviceRef() : nullptr;
+
+		if (hw_device_ref)
+		{
+			enc_ctx = avcodec_alloc_context3(enc);
+			hw_frames_ref = enc_ctx ? av_hwframe_ctx_alloc(hw_device_ref) : nullptr;
+
+			if (hw_frames_ref)
+			{
+				// The pool the encoder draws its input surfaces from. NV12 is
+				// what VAAPI encoders take; the frames themselves live in GPU
+				// memory, which is what AV_PIX_FMT_VAAPI denotes.
+				AVHWFramesContext *frames_ctx = (AVHWFramesContext *)hw_frames_ref->data;
+				frames_ctx->format = AV_PIX_FMT_VAAPI;
+				frames_ctx->sw_format = AV_PIX_FMT_NV12;
+				frames_ctx->width = m_width;
+				frames_ctx->height = m_height;
+				frames_ctx->initial_pool_size = 20;
+
+				if (av_hwframe_ctx_init(hw_frames_ref) >= 0)
+				{
+					enc_ctx->width = m_width;
+					enc_ctx->height = m_height;
+					enc_ctx->pix_fmt = AV_PIX_FMT_VAAPI;
+					enc_ctx->time_base = AVRational{1, kFrameRate};
+					enc_ctx->framerate = AVRational{kFrameRate, 1};
+					enc_ctx->bit_rate = kBitrate;
+					enc_ctx->gop_size = kGopSize;
+					enc_ctx->max_b_frames = 0;
+					enc_ctx->hw_frames_ctx = av_buffer_ref(hw_frames_ref);
+
+					// No preset/tune here: those are x264's own options and
+					// mean nothing to a VAAPI encoder.
+					if ((ret = avcodec_open2(enc_ctx, enc, nullptr)) >= 0)
+						hardware = true;
+					else
+						qWarning() << QString("VAAPI H.264 encoder would not open (%1), encoding in software")
+						              .arg(ff_errstr(ret));
+				}
+				else
+				{
+					qWarning() << "Could not create a VAAPI surface pool, encoding in software";
+				}
+			}
+
+			av_buffer_unref(&hw_device_ref);
+		}
+		else if (enc)
+		{
+			qWarning() << "No usable VAAPI device, encoding in software";
+		}
+		else
+		{
+			qWarning() << "FFmpeg has no h264_vaapi encoder, encoding in software";
+		}
+
+		if (!hardware)
+		{
+			if (enc_ctx) avcodec_free_context(&enc_ctx);
+			if (hw_frames_ref) av_buffer_unref(&hw_frames_ref);
+			enc = nullptr;
+		}
+	}
+#endif
+
+	if (!hardware)
+	{
+		enc = avcodec_find_encoder_by_name("libx264");
+		if (!enc)
+			enc = avcodec_find_encoder(AV_CODEC_ID_H264);
+		enc_ctx = enc ? avcodec_alloc_context3(enc) : nullptr;
+		if (!enc || !enc_ctx)
+		{
+			QString msg = "H.264 encoder not available";
+			qWarning() << msg;
+			emit errorOccurred(msg);
+			avcodec_free_context(&dec_ctx);
+			return;
+		}
+
+		enc_ctx->width = m_width;
+		enc_ctx->height = m_height;
+		enc_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+		enc_ctx->time_base = AVRational{1, kFrameRate};
+		enc_ctx->framerate = AVRational{kFrameRate, 1};
+		enc_ctx->bit_rate = kBitrate;
+		enc_ctx->gop_size = kGopSize;
+		// B-frames reorder output, which would cost latency in a live call.
+		enc_ctx->max_b_frames = 0;
+
+		// Note the absence of AV_CODEC_FLAG_GLOBAL_HEADER: we want the parameter
+		// sets repeated in-band with every keyframe, since the receiving side has
+		// no out-of-band way to learn them and may start decoding mid-stream.
+		av_opt_set(enc_ctx->priv_data, "preset", "veryfast", 0);
+		av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
+
+		if ((ret = avcodec_open2(enc_ctx, enc, nullptr)) < 0)
+		{
+			QString msg = QString("Could not open H.264 encoder: %1").arg(ff_errstr(ret));
+			qWarning() << msg;
+			emit errorOccurred(msg);
+			avcodec_free_context(&enc_ctx);
+			avcodec_free_context(&dec_ctx);
+			return;
+		}
 	}
 
-	enc_ctx->width = m_width;
-	enc_ctx->height = m_height;
-	enc_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
-	enc_ctx->time_base = AVRational{1, kFrameRate};
-	enc_ctx->framerate = AVRational{kFrameRate, 1};
-	enc_ctx->bit_rate = kBitrate;
-	enc_ctx->gop_size = kGopSize;
-	// B-frames reorder output, which would cost latency in a live call.
-	enc_ctx->max_b_frames = 0;
-
-	// Note the absence of AV_CODEC_FLAG_GLOBAL_HEADER: we want the parameter
-	// sets repeated in-band with every keyframe, since the receiving side has
-	// no out-of-band way to learn them and may start decoding mid-stream.
-	av_opt_set(enc_ctx->priv_data, "preset", "veryfast", 0);
-	av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
-
-	if ((ret = avcodec_open2(enc_ctx, enc, nullptr)) < 0)
-	{
-		QString msg = QString("Could not open H.264 encoder: %1").arg(ff_errstr(ret));
-		qWarning() << msg;
-		emit errorOccurred(msg);
-		avcodec_free_context(&enc_ctx);
-		avcodec_free_context(&dec_ctx);
-		return;
-	}
+	emit accelerationInUse(hardware ? QStringLiteral("GPU encoding (VAAPI)")
+	                                : QStringLiteral("CPU encoding (libx264)"));
 
 	// Everything the camera sends is scaled to the encoder's size and re-encoded,
 	// so this is what the peer will receive regardless of what the camera
@@ -416,10 +535,16 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 	emit captureStarted(QLatin1String(avcodec_get_name(enc_ctx->codec_id)),
 	                    enc_ctx->width, enc_ctx->height);
 
+	// What the camera's frames are scaled into. With a hardware encoder this
+	// is only a staging buffer in system memory - NV12, which is what VAAPI
+	// takes - that gets uploaded to a GPU surface below; the encoder itself
+	// consumes AV_PIX_FMT_VAAPI frames and never sees this one.
+	AVPixelFormat sw_pix_fmt = hardware ? AV_PIX_FMT_NV12 : enc_ctx->pix_fmt;
+
 	AVFrame *enc_frame = av_frame_alloc();
 	if (enc_frame)
 	{
-		enc_frame->format = enc_ctx->pix_fmt;
+		enc_frame->format = sw_pix_fmt;
 		enc_frame->width = enc_ctx->width;
 		enc_frame->height = enc_ctx->height;
 	}
@@ -429,6 +554,7 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 		qWarning() << msg;
 		emit errorOccurred(msg);
 		if (enc_frame) av_frame_free(&enc_frame);
+		if (hw_frames_ref) av_buffer_unref(&hw_frames_ref);
 		avcodec_free_context(&enc_ctx);
 		avcodec_free_context(&dec_ctx);
 		return;
@@ -471,7 +597,7 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 			if (!sws)
 			{
 				sws = sws_getContext(cam_frame->width, cam_frame->height, (AVPixelFormat)cam_frame->format,
-				                     enc_ctx->width, enc_ctx->height, enc_ctx->pix_fmt,
+				                     enc_ctx->width, enc_ctx->height, sw_pix_fmt,
 				                     SWS_BILINEAR, nullptr, nullptr, nullptr);
 				if (!sws)
 				{
@@ -497,7 +623,41 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 
 			enc_frame->pts = pts++;
 
-			if (avcodec_send_frame(enc_ctx, enc_frame) != 0)
+			// What actually goes to the encoder: the staging frame itself in
+			// software, or a GPU surface holding a copy of it in hardware.
+			AVFrame *frame_to_encode = enc_frame;
+#ifdef HAVE_VAAPI
+			AVFrame *hw_frame = nullptr;
+
+			if (hardware)
+			{
+				hw_frame = av_frame_alloc();
+
+				if (!hw_frame ||
+				    av_hwframe_get_buffer(enc_ctx->hw_frames_ctx, hw_frame, 0) < 0 ||
+				    av_hwframe_transfer_data(hw_frame, enc_frame, 0) < 0)
+				{
+					if (!loggedEncodeError)
+					{
+						qWarning() << "Could not upload the frame to the GPU";
+						loggedEncodeError = true;
+					}
+					if (hw_frame) av_frame_free(&hw_frame);
+					continue;
+				}
+
+				hw_frame->pts = enc_frame->pts;
+				frame_to_encode = hw_frame;
+			}
+#endif
+
+			int send_ret = avcodec_send_frame(enc_ctx, frame_to_encode);
+#ifdef HAVE_VAAPI
+			if (hw_frame)
+				av_frame_free(&hw_frame);
+#endif
+
+			if (send_ret != 0)
 			{
 				if (!loggedEncodeError)
 				{
@@ -520,6 +680,7 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 	av_frame_free(&cam_frame);
 	av_frame_free(&enc_frame);
 	if (sws) sws_freeContext(sws);
+	if (hw_frames_ref) av_buffer_unref(&hw_frames_ref);
 	avcodec_free_context(&enc_ctx);
 	avcodec_free_context(&dec_ctx);
 }
@@ -541,6 +702,29 @@ void VideoDevice::Play()
 	if (dec && dec->type != AVMEDIA_TYPE_VIDEO)
 		dec = nullptr;
 	AVCodecContext *dec_ctx = dec ? avcodec_alloc_context3(dec) : nullptr;
+
+#ifdef HAVE_VAAPI
+	// Has to be attached before opening the decoder. Unlike encoding, there is
+	// no separate hardware decoder to look up: the ordinary decoder is told to
+	// use a VAAPI device, and get_format then picks the GPU pixel format when
+	// the codec and hardware between them can manage it.
+	if (m_useVaapi && dec_ctx && VaapiContext::isAvailable())
+	{
+		AVBufferRef *hw_device_ref = VaapiContext::deviceRef();
+
+		if (hw_device_ref)
+		{
+			// The context takes ownership of this reference.
+			dec_ctx->hw_device_ctx = hw_device_ref;
+			dec_ctx->get_format = vaapi_get_format;
+		}
+		else
+		{
+			qWarning() << "No usable VAAPI device, decoding in software";
+		}
+	}
+#endif
+
 	if (!dec || !dec_ctx || avcodec_open2(dec_ctx, dec, nullptr) < 0)
 	{
 		QString msg = QString("Unsupported call video codec: %1").arg(m_codec);
@@ -557,6 +741,11 @@ void VideoDevice::Play()
 	AVFrame *rgb_frame = av_frame_alloc();
 	bool loggedDecodeError = false;
 	bool loggedScaleError = false;
+	bool loggedTransferError = false;
+	// Whether the GPU is really doing the decoding is only knowable from a
+	// decoded frame, so the answer is reported once the first one arrives
+	// rather than guessed from what was asked for.
+	bool reportedAcceleration = false;
 
 	while (true)
 	{
@@ -597,15 +786,74 @@ void VideoDevice::Play()
 
 		while (avcodec_receive_frame(dec_ctx, dec_frame) == 0)
 		{
+			bool decodedOnGpu = false;
+#ifdef HAVE_VAAPI
+			decodedOnGpu = (dec_frame->format == AV_PIX_FMT_VAAPI);
+#endif
+
+			if (!reportedAcceleration)
+			{
+				emit accelerationInUse(decodedOnGpu ? QStringLiteral("GPU decoding (VAAPI)")
+				                                    : QStringLiteral("CPU decoding"));
+				reportedAcceleration = true;
+			}
+
+			// The frame the rest of this iteration works from. A GPU frame
+			// holds no pixels, so unless it is going straight to a renderer
+			// that can draw it, it has to be brought down into system memory
+			// first.
+			AVFrame *display_frame = dec_frame;
+#ifdef HAVE_VAAPI
+			AVFrame *sw_frame = nullptr;
+
+			if (decodedOnGpu && m_useVaapiRender)
+			{
+				// Zero copy: hand the surface itself over, holding a
+				// reference so it stays alive until the renderer is done.
+				AVFrame *hw_ref = av_frame_alloc();
+
+				if (hw_ref && av_frame_ref(hw_ref, dec_frame) == 0)
+				{
+					emit hwFrameReady(wrapAVFrame(hw_ref));
+				}
+				else if (hw_ref)
+				{
+					av_frame_free(&hw_ref);
+				}
+
+				av_frame_unref(dec_frame);
+				continue;
+			}
+
+			if (decodedOnGpu)
+			{
+				sw_frame = av_frame_alloc();
+
+				if (!sw_frame || av_hwframe_transfer_data(sw_frame, dec_frame, 0) < 0)
+				{
+					if (!loggedTransferError)
+					{
+						qWarning() << "Could not read the decoded frame back from the GPU";
+						loggedTransferError = true;
+					}
+					if (sw_frame) av_frame_free(&sw_frame);
+					av_frame_unref(dec_frame);
+					continue;
+				}
+
+				display_frame = sw_frame;
+			}
+#endif
+
 			// Rebuilt whenever the incoming picture format or size changes -
 			// including the first frame, when they first become known.
-			if (!sws || dec_frame->width != sws_width || dec_frame->height != sws_height ||
-			    (AVPixelFormat)dec_frame->format != sws_fmt)
+			if (!sws || display_frame->width != sws_width || display_frame->height != sws_height ||
+			    (AVPixelFormat)display_frame->format != sws_fmt)
 			{
 				if (sws) sws_freeContext(sws);
-				sws_width = dec_frame->width;
-				sws_height = dec_frame->height;
-				sws_fmt = (AVPixelFormat)dec_frame->format;
+				sws_width = display_frame->width;
+				sws_height = display_frame->height;
+				sws_fmt = (AVPixelFormat)display_frame->format;
 
 				sws = sws_getContext(sws_width, sws_height, sws_fmt,
 				                     sws_width, sws_height, AV_PIX_FMT_RGB24,
@@ -624,6 +872,9 @@ void VideoDevice::Play()
 						loggedScaleError = true;
 					}
 					if (sws) { sws_freeContext(sws); sws = nullptr; }
+#ifdef HAVE_VAAPI
+					if (sw_frame) av_frame_free(&sw_frame);
+#endif
 					av_frame_unref(dec_frame);
 					continue;
 				}
@@ -631,11 +882,14 @@ void VideoDevice::Play()
 
 			if (av_frame_make_writable(rgb_frame) < 0)
 			{
+#ifdef HAVE_VAAPI
+				if (sw_frame) av_frame_free(&sw_frame);
+#endif
 				av_frame_unref(dec_frame);
 				continue;
 			}
 
-			sws_scale(sws, dec_frame->data, dec_frame->linesize, 0, dec_frame->height,
+			sws_scale(sws, display_frame->data, display_frame->linesize, 0, display_frame->height,
 			          rgb_frame->data, rgb_frame->linesize);
 
 			// Deep copy: the QImage outlives this iteration (it travels to
@@ -645,6 +899,9 @@ void VideoDevice::Play()
 			           rgb_frame->linesize[0], QImage::Format_RGB888);
 			emit frameReady(img.copy());
 
+#ifdef HAVE_VAAPI
+			if (sw_frame) av_frame_free(&sw_frame);
+#endif
 			av_frame_unref(dec_frame);
 		}
 	}

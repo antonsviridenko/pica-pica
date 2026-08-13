@@ -23,6 +23,9 @@
 #include <QLabel>
 #include <QTimer>
 #include <QImage>
+#ifdef HAVE_VAAPI
+#include "vaapivideowidget.h"
+#endif
 
 class CallWindow : public QWidget
 {
@@ -44,6 +47,11 @@ private:
 	// Displays the remote side's video. Stays hidden until the first frame
 	// arrives, so an audio-only call keeps the compact window it had before.
 	QLabel *lbVideo;
+#ifdef HAVE_VAAPI
+	// Used instead of lbVideo when frames arrive still living in GPU memory;
+	// only one of the two is ever visible.
+	VaapiVideoWidget *videoGpu;
+#endif
 	QTimer *callTimer;
 	int callElapsedSeconds;
 
@@ -53,6 +61,9 @@ public slots:
 	void call_started();
 	void call_ended();
 	void showRemoteFrame(QImage frame);
+#ifdef HAVE_VAAPI
+	void showRemoteHwFrame(AVFramePtr frame);
+#endif
 private slots:
 	void call();
 	void accept();

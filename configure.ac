@@ -82,8 +82,18 @@ AS_IF([test "x$enable_client" != "xno"], [
   PICA_CLIENT_ENABLED=yes
 ])
 
+#checking if VAAPI hardware acceleration is wanted
+#unspecified means autodetect: use it when the libraries are there, do without
+#them when they are not. --enable-vaapi makes their absence a hard error,
+#--disable-vaapi skips looking for them at all.
+AC_ARG_ENABLE([vaapi],
+    AS_HELP_STRING([--enable-vaapi],
+      [Enable VAAPI accelerated video encoding, decoding and rendering (default: autodetect)])
+    AS_HELP_STRING([--disable-vaapi],
+      [Disable VAAPI accelerated video encoding, decoding and rendering]))
+
 #at least one program must be enabled
-AS_IF([test "x$PICA_NODE_ENABLED" != "xyes" && test "x$PICA_CLIENT_ENABLED" != "xyes"  ], 
+AS_IF([test "x$PICA_NODE_ENABLED" != "xyes" && test "x$PICA_CLIENT_ENABLED" != "xyes"  ],
   AC_MSG_ERROR(["Either pica-node or pica-client must be enabled"])
 )
 
@@ -131,7 +141,27 @@ AS_IF([test "x$OPENSSL_TOOL" != xyes],[AC_MSG_WARN(["openssl command line tool n
 PKG_CHECK_MODULES([FFMPEG],["libavcodec libavdevice libavformat libavutil libswresample libswscale"])
 AC_SUBST([FFMPEG_CFLAGS])
 AC_SUBST([FFMPEG_LIBS])
+
+#check for VAAPI libraries, unless explicitly disabled
+#libva is the accelerator itself, libva-drm opens it through a DRM render node,
+#and EGL is what lets a decoded surface be handed to OpenGL without a copy.
+AS_IF([test "x$enable_vaapi" != "xno"], [
+  PKG_CHECK_MODULES([VAAPI], [libva libva-drm egl],
+    [
+      PICA_VAAPI_ENABLED=yes
+      AC_DEFINE([HAVE_VAAPI], [1], [Define to 1 if VAAPI accelerated video is available])
+      AC_SUBST([VAAPI_CFLAGS])
+      AC_SUBST([VAAPI_LIBS])
+    ],
+    [
+      AS_IF([test "x$enable_vaapi" = "xyes"],
+        [AC_MSG_ERROR(["VAAPI support was requested but libva, libva-drm or EGL was not found"])],
+        [AC_MSG_WARN(["libva, libva-drm or EGL not found - building without VAAPI acceleration"])])
+    ])
 ])
+])
+
+AM_CONDITIONAL([PICA_VAAPI], [test "x$PICA_VAAPI_ENABLED" = "xyes"])
 
 AC_SUBST([PLATFORM_DEPS_CFLAGS])
 AC_SUBST([PLATFORM_DEPS_LIBS])

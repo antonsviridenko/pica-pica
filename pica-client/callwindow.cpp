@@ -38,11 +38,19 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	lbVideo->setAlignment(Qt::AlignCenter);
 	lbVideo->setMinimumSize(320, 240);
 	lbVideo->hide();
+#ifdef HAVE_VAAPI
+	videoGpu = new VaapiVideoWidget(this);
+	videoGpu->setMinimumSize(320, 240);
+	videoGpu->hide();
+#endif
 	callTimer = new QTimer(this);
 	callElapsedSeconds = 0;
 
 	lv->addWidget(lbTimer);
 	lv->addWidget(lbVideo);
+#ifdef HAVE_VAAPI
+	lv->addWidget(videoGpu);
+#endif
 
 	lh->addWidget(pbAccept, Qt::AlignLeft);
 	lh->addWidget(pbCall, Qt::AlignLeft);
@@ -94,6 +102,24 @@ void CallWindow::showRemoteFrame(QImage frame)
 	                                                    Qt::KeepAspectRatio,
 	                                                    Qt::SmoothTransformation));
 }
+
+#ifdef HAVE_VAAPI
+void CallWindow::showRemoteHwFrame(AVFramePtr frame)
+{
+	if (!frame)
+		return;
+
+	// These frames hold a GPU surface rather than pixels, so the label cannot
+	// show them - the GL widget takes over the video area instead.
+	if (videoGpu->isHidden())
+	{
+		lbVideo->hide();
+		videoGpu->show();
+	}
+
+	videoGpu->setFrame(frame);
+}
+#endif
 
 void CallWindow::update_call_timer()
 {
