@@ -29,6 +29,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+
+// Added to the kernel headers later than the formats around it, so define it
+// here when building against an older set.
+#ifndef V4L2_PIX_FMT_HEVC
+#define V4L2_PIX_FMT_HEVC v4l2_fourcc('H', 'E', 'V', 'C')
+#endif
 #endif
 
 // FFmpeg headers
@@ -65,6 +71,64 @@ static QString ff_errstr(int err)
 	return QString::fromLocal8Bit(buf);
 }
 
+#ifdef Q_OS_LINUX
+// Compressed formats worth forwarding untouched, best first: HEVC gives the
+// most picture per byte, H.264 is the widely supported middle ground, and
+// MJPEG - every frame a standalone JPEG - costs far more bandwidth but still
+// beats decoding and re-encoding. The names are FFmpeg codec names, as used
+// by the v4l2 demuxer's input_format option and by the 0x75 protocol message.
+static const struct
+{
+	unsigned int v4l2_pixelformat;
+	const char *ffmpeg_codec;
+} kCompressedFormatPreference[] =
+{
+	{ V4L2_PIX_FMT_HEVC,  "hevc"  },
+	{ V4L2_PIX_FMT_H264,  "h264"  },
+	{ V4L2_PIX_FMT_MJPEG, "mjpeg" },
+	// Some cameras report plain JPEG rather than MJPEG for the same stream.
+	{ V4L2_PIX_FMT_JPEG,  "mjpeg" }
+};
+#endif
+
+QStringList VideoDevice::CompressedFormats(const QString &device)
+{
+	QStringList result;
+
+#ifdef Q_OS_LINUX
+	int fd = ::open(device.toLatin1().constData(), O_RDWR | O_NONBLOCK);
+	if (fd < 0)
+		return result;
+
+	// Collect what the camera offers first, then report it in preference
+	// order rather than in the order the camera happens to list it.
+	QList<unsigned int> offered;
+	struct v4l2_fmtdesc fmt;
+
+	memset(&fmt, 0, sizeof fmt);
+	fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+	for (fmt.index = 0; ::ioctl(fd, VIDIOC_ENUM_FMT, &fmt) == 0; fmt.index++)
+	{
+		if (fmt.flags & V4L2_FMT_FLAG_COMPRESSED)
+			offered << fmt.pixelformat;
+	}
+	::close(fd);
+
+	for (unsigned int i = 0; i < sizeof(kCompressedFormatPreference) / sizeof(kCompressedFormatPreference[0]); i++)
+	{
+		QString codec = QLatin1String(kCompressedFormatPreference[i].ffmpeg_codec);
+
+		if (offered.contains(kCompressedFormatPreference[i].v4l2_pixelformat) && !result.contains(codec))
+			result << codec;
+	}
+#else
+	Q_UNUSED(device);
+#endif
+
+	return result;
+}
+
 VideoFrameAssembler::VideoFrameAssembler()
 	: m_timestamp(0), m_inProgress(false)
 {
@@ -98,7 +162,7 @@ QByteArray VideoFrameAssembler::addFragment(quint16 seq_num, quint32 timestamp, 
 }
 
 VideoDevice::VideoDevice(QObject *parent)
-	: QObject(parent), m_width(640), m_height(480), m_abort(0)
+	: QObject(parent), m_width(640), m_height(480), m_preferCompressed(false), m_abort(0)
 {
 }
 
@@ -107,12 +171,12 @@ VideoDevice::~VideoDevice()
 	Close();
 }
 
-void VideoDevice::configureCapture(QString deviceName, QString codec, int width, int height)
+void VideoDevice::configureCapture(QString deviceName, int width, int height, bool preferCompressed)
 {
 	m_deviceName = deviceName;
-	m_codec = codec;
 	m_width = width;
 	m_height = height;
+	m_preferCompressed = preferCompressed;
 }
 
 void VideoDevice::configurePlayback(QString codec, int width, int height)
@@ -165,13 +229,46 @@ void VideoDevice::Capture()
 		return;
 	}
 
+	// Ask the camera for a compressed stream when told to and it offers one:
+	// its packets can then go straight onto the network, with no decoding and
+	// re-encoding in between. The formats are queried rather than guessed, so
+	// this asks for one the camera has already said it can deliver.
+	QString passthroughCodec;
+
+	if (m_preferCompressed)
+	{
+		QStringList formats = CompressedFormats(m_deviceName);
+
+		if (!formats.isEmpty())
+			passthroughCodec = formats.first();
+	}
+
 	AVDictionary *opts = nullptr;
 	av_dict_set(&opts, "video_size", QString("%1x%2").arg(m_width).arg(m_height).toUtf8().constData(), 0);
 	av_dict_set(&opts, "framerate", QString::number(kFrameRate).toUtf8().constData(), 0);
+	if (!passthroughCodec.isEmpty())
+		av_dict_set(&opts, "input_format", passthroughCodec.toUtf8().constData(), 0);
 
 	AVFormatContext *ifmt_ctx = nullptr;
 	int ret = avformat_open_input(&ifmt_ctx, deviceUtf8.constData(), ifmt, &opts);
 	av_dict_free(&opts);
+
+	if (ret < 0 && !passthroughCodec.isEmpty())
+	{
+		// The camera listed the format but will not actually hand it over at
+		// this size or frame rate. Fall back to whatever it does give.
+		qWarning() << QString("Camera '%1' would not deliver %2 (%3), falling back to re-encoding")
+		              .arg(m_deviceName, passthroughCodec, ff_errstr(ret));
+		passthroughCodec.clear();
+
+		opts = nullptr;
+		av_dict_set(&opts, "video_size", QString("%1x%2").arg(m_width).arg(m_height).toUtf8().constData(), 0);
+		av_dict_set(&opts, "framerate", QString::number(kFrameRate).toUtf8().constData(), 0);
+
+		ret = avformat_open_input(&ifmt_ctx, deviceUtf8.constData(), ifmt, &opts);
+		av_dict_free(&opts);
+	}
+
 	if (ret < 0)
 	{
 		// Not fatal to the call - it simply proceeds without outgoing video.
@@ -192,10 +289,72 @@ void VideoDevice::Capture()
 
 	AVStream *in_st = ifmt_ctx->streams[0];
 
-	// The camera hands us either raw frames or, on many webcams, an already
-	// compressed stream (MJPEG). Either way it goes through a decoder here to
-	// get raw pictures for the encoder. Forwarding an already compressed
-	// camera stream untouched is a planned optimization, not done yet.
+	if (!passthroughCodec.isEmpty())
+		runPassthroughLoop(ifmt_ctx, in_st, passthroughCodec);
+	else
+		runTranscodeLoop(ifmt_ctx, in_st);
+
+	avformat_close_input(&ifmt_ctx);
+}
+
+void VideoDevice::emitFragments(const unsigned char *data, int size)
+{
+	// One encoded frame goes out as one or more 0x77 messages; the final one
+	// is flagged so the receiver knows the frame is complete (see the
+	// fragmentation notes in the protocol doc).
+	int offset = 0;
+
+	while (offset < size)
+	{
+		int chunk = qMin(kMaxFragmentSize, size - offset);
+		bool isLast = (offset + chunk >= size);
+
+		emit packetReady(QByteArray((const char *)data + offset, chunk), isLast);
+		offset += chunk;
+	}
+}
+
+void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st, const QString &codec)
+{
+	// The camera decides the picture size here, since nothing rescales it on
+	// the way out - announce what it actually produced.
+	int width = in_st->codecpar->width > 0 ? in_st->codecpar->width : m_width;
+	int height = in_st->codecpar->height > 0 ? in_st->codecpar->height : m_height;
+
+	emit captureStarted(codec, width, height);
+
+	AVPacket *pkt = av_packet_alloc();
+	bool loggedReadError = false;
+
+	while (!m_abort.loadRelaxed())
+	{
+		int ret = av_read_frame(ifmt_ctx, pkt);
+		if (ret < 0)
+		{
+			if (ret == AVERROR(EAGAIN))
+				continue;
+			if (!loggedReadError)
+			{
+				qWarning() << QString("Camera read failed: %1").arg(ff_errstr(ret));
+				loggedReadError = true;
+			}
+			break;
+		}
+
+		emitFragments(pkt->data, pkt->size);
+		av_packet_unref(pkt);
+	}
+
+	av_packet_free(&pkt);
+}
+
+void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
+{
+	int ret;
+
+	// The camera hands us either raw frames or a compressed stream that is
+	// not being forwarded as-is; either way it goes through a decoder here to
+	// get raw pictures for the encoder.
 	const AVCodec *cam_dec = avcodec_find_decoder(in_st->codecpar->codec_id);
 	AVCodecContext *dec_ctx = cam_dec ? avcodec_alloc_context3(cam_dec) : nullptr;
 	if (!cam_dec || !dec_ctx ||
@@ -206,7 +365,6 @@ void VideoDevice::Capture()
 		qWarning() << msg;
 		emit errorOccurred(msg);
 		if (dec_ctx) avcodec_free_context(&dec_ctx);
-		avformat_close_input(&ifmt_ctx);
 		return;
 	}
 
@@ -220,7 +378,6 @@ void VideoDevice::Capture()
 		qWarning() << msg;
 		emit errorOccurred(msg);
 		avcodec_free_context(&dec_ctx);
-		avformat_close_input(&ifmt_ctx);
 		return;
 	}
 
@@ -247,9 +404,17 @@ void VideoDevice::Capture()
 		emit errorOccurred(msg);
 		avcodec_free_context(&enc_ctx);
 		avcodec_free_context(&dec_ctx);
-		avformat_close_input(&ifmt_ctx);
 		return;
 	}
+
+	// Everything the camera sends is scaled to the encoder's size and re-encoded,
+	// so this is what the peer will receive regardless of what the camera
+	// produced. The codec name is taken from the encoder rather than written
+	// out literally, so that changing the encoder above cannot leave the peer
+	// being told something else - avcodec_get_name() yields exactly the
+	// FFmpeg codec names the 0x75 message is defined in terms of.
+	emit captureStarted(QLatin1String(avcodec_get_name(enc_ctx->codec_id)),
+	                    enc_ctx->width, enc_ctx->height);
 
 	AVFrame *enc_frame = av_frame_alloc();
 	if (enc_frame)
@@ -266,7 +431,6 @@ void VideoDevice::Capture()
 		if (enc_frame) av_frame_free(&enc_frame);
 		avcodec_free_context(&enc_ctx);
 		avcodec_free_context(&dec_ctx);
-		avformat_close_input(&ifmt_ctx);
 		return;
 	}
 
@@ -345,18 +509,7 @@ void VideoDevice::Capture()
 
 			while (avcodec_receive_packet(enc_ctx, out_pkt) == 0)
 			{
-				// One encoded frame goes out as one or more 0x77 messages;
-				// the final one is flagged so the receiver knows the frame is
-				// complete (see the fragmentation notes in the protocol doc).
-				int offset = 0;
-				while (offset < out_pkt->size)
-				{
-					int chunk = qMin(kMaxFragmentSize, out_pkt->size - offset);
-					bool isLast = (offset + chunk >= out_pkt->size);
-
-					emit packetReady(QByteArray((const char *)out_pkt->data + offset, chunk), isLast);
-					offset += chunk;
-				}
+				emitFragments(out_pkt->data, out_pkt->size);
 				av_packet_unref(out_pkt);
 			}
 		}
@@ -369,7 +522,6 @@ void VideoDevice::Capture()
 	if (sws) sws_freeContext(sws);
 	avcodec_free_context(&enc_ctx);
 	avcodec_free_context(&dec_ctx);
-	avformat_close_input(&ifmt_ctx);
 }
 
 void VideoDevice::Play()
@@ -380,11 +532,16 @@ void VideoDevice::Play()
 	avcodec_register_all();
 #endif
 
-	// Only "h264" is understood by this slice - matches what
-	// AudioVideoCallController always negotiates via SendVideoParams().
-	const AVCodec *dec = avcodec_find_decoder(AV_CODEC_ID_H264);
+	// The peer announces its codec by FFmpeg name in the 0x75 message, which
+	// is exactly what avcodec_find_decoder_by_name() takes - so whatever the
+	// other side ends up sending (its own camera's hevc/h264/mjpeg stream
+	// forwarded untouched, or h264 it encoded itself) is handled here without
+	// a codec list to keep in step.
+	const AVCodec *dec = avcodec_find_decoder_by_name(m_codec.toLatin1().constData());
+	if (dec && dec->type != AVMEDIA_TYPE_VIDEO)
+		dec = nullptr;
 	AVCodecContext *dec_ctx = dec ? avcodec_alloc_context3(dec) : nullptr;
-	if (m_codec != QLatin1String("h264") || !dec || !dec_ctx || avcodec_open2(dec_ctx, dec, nullptr) < 0)
+	if (!dec || !dec_ctx || avcodec_open2(dec_ctx, dec, nullptr) < 0)
 	{
 		QString msg = QString("Unsupported call video codec: %1").arg(m_codec);
 		qWarning() << msg;
@@ -538,6 +695,7 @@ QList<MediaDeviceInfo> VideoDevice::Enumerate(enum MediaDeviceStreamDirection di
 			if (!(cap.device_caps & V4L2_CAP_VIDEO_CAPTURE))
 				continue;
 			d.index = index++;
+			d.compressedFormats = CompressedFormats(d.device);
 
 			result << d;
 		}

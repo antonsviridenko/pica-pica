@@ -74,7 +74,12 @@ public:
 	VideoDevice(QObject *parent = nullptr);
 	~VideoDevice();
 
-	Q_INVOKABLE void configureCapture(QString deviceName, QString codec, int width, int height);
+	// preferCompressed asks for the camera's own compressed stream to be
+	// forwarded untouched when it offers one, saving the cost of decoding and
+	// re-encoding every frame. The codec that ends up being used is only
+	// known once the camera has been opened, and is reported by
+	// captureStarted() - it is not necessarily the one requested here.
+	Q_INVOKABLE void configureCapture(QString deviceName, int width, int height, bool preferCompressed);
 	Q_INVOKABLE void configurePlayback(QString codec, int width, int height);
 
 	// Push one complete encoded frame (already reassembled from 0x77
@@ -100,6 +105,12 @@ public slots:
 	virtual void Close() override;
 
 signals:
+	// Emitted by Capture() once the camera is open and the format actually
+	// being sent is known - either the camera's own compressed format, when
+	// forwarding it untouched, or the one this class encodes to. Carries the
+	// values to announce to the peer, before any packet is emitted.
+	void captureStarted(QString codec, int width, int height);
+
 	// One fragment of an encoded frame, ready to be sent over the network.
 	// isLastFragment marks the final fragment of a frame - it maps directly
 	// onto the 0x77 sequence number's last fragment marker bit.
@@ -117,11 +128,19 @@ public:
 	// video capture API. Counterpart of AudioDevice::PlatformDriverName().
 	static QString PlatformDriverName();
 
+	// Compressed formats the given camera can deliver by itself, as FFmpeg
+	// codec names, ordered by preference: the more efficient the codec, the
+	// earlier it comes. Empty if the camera offers none, or on platforms
+	// where the formats cannot be queried - in which case captured frames
+	// are decoded and re-encoded as usual.
+	static QStringList CompressedFormats(const QString &device);
+
 private:
 	QString m_deviceName;
 	QString m_codec;
 	int m_width;
 	int m_height;
+	bool m_preferCompressed;
 
 	QAtomicInt m_abort;
 
@@ -129,6 +148,15 @@ private:
 	QWaitCondition m_queueCond;
 	QQueue<QByteArray> m_frameQueue;
 	static const int kMaxQueueDepth = 2;
+
+	// Sends one encoded frame out as one or more protocol sized fragments.
+	void emitFragments(const unsigned char *data, int size);
+
+	// The two shapes Capture() can take: forwarding the camera's own
+	// compressed stream as it arrives, or decoding what the camera sends and
+	// re-encoding it. Both emit captureStarted() before their first packet.
+	void runPassthroughLoop(struct AVFormatContext *ifmt_ctx, struct AVStream *in_st, const QString &codec);
+	void runTranscodeLoop(struct AVFormatContext *ifmt_ctx, struct AVStream *in_st);
 };
 
 #endif // VIDEODEVICE_H

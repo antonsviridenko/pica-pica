@@ -118,6 +118,7 @@ private:
 	// the network, so the whole chain can be checked from this dialog.
 	QPushButton *btVideoTest;
 	QLabel *videoPreview;
+	QCheckBox *cbPreferCompressed;
 	VideoDevice *testCam;
 	VideoDevice *testDecoder;
 	QThread testCamThread;
@@ -157,6 +158,7 @@ private slots:
 	void audioTestError(QString message);
 
 	void toggleVideoTest();
+	void videoTestCaptureStarted(QString codec, int width, int height);
 	void videoTestFragment(QByteArray data, bool is_last_fragment);
 	void videoTestFrame(QImage frame);
 	void videoTestError(QString message);

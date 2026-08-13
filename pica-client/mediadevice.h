@@ -2,6 +2,7 @@
 #define MEDIADEVICE_H
 
 #include <QString>
+#include <QStringList>
 #include <QList>
 
 enum MediaDeviceStreamDirection
@@ -15,6 +16,10 @@ struct MediaDeviceInfo
 	QString device;
 	QString humanReadable;
 	int index;
+	// Compressed formats this device can deliver by itself, as FFmpeg codec
+	// names, most preferred first. Filled in for cameras that offer such a
+	// stream (see VideoDevice::CompressedFormats), empty otherwise.
+	QStringList compressedFormats;
 };
 
 class MediaDevice

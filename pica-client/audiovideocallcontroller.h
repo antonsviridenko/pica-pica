@@ -111,6 +111,7 @@ private slots:
 	void incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate);
 	void incoming_audio_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 
+	void video_capture_started(QString codec, int width, int height);
 	void send_video_packet(QByteArray data, bool is_last_fragment);
 	void incoming_video_params(QByteArray peer_id, QString codec, quint16 width, quint16 height);
 	void incoming_video_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);

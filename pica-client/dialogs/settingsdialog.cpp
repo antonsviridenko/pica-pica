@@ -47,6 +47,11 @@ static const int kAudioTestPacketMs = 20;
 // buffer and the sound card's own buffer to drain before closing the device.
 static const int kAudioTestDrainMs = 500;
 
+// Size requested from the camera by the video pipeline test, matching what a
+// call asks for.
+static const int kVideoTestWidth = 640;
+static const int kVideoTestHeight = 480;
+
 SettingsDialog::SettingsDialog(QWidget *parent) :
 	QDialog(parent)
 {
@@ -221,6 +226,8 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videoDevRefresh = new QPushButton(tr("Refresh 🔄"), this);
 	connect(videoDevRefresh, SIGNAL(clicked()), this, SLOT(fillVideoDevices()));
 
+	cbPreferCompressed = new QCheckBox(tr("Prefer compressed formats if provided by the camera"), this);
+
 	btVideoTest = new QPushButton(tr("Test 📷"), this);
 	connect(btVideoTest, SIGNAL(clicked()), this, SLOT(toggleVideoTest()));
 
@@ -231,6 +238,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	videodevLayout->addWidget(videoDev);
 	videodevLayout->addWidget(videoDevRefresh);
+	videodevLayout->addWidget(cbPreferCompressed);
 	videodevLayout->addWidget(btVideoTest);
 	videodevLayout->addWidget(videoPreview);
 	videodevLayout->addStretch(1);
@@ -244,6 +252,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	testCam = new VideoDevice();
 	testCam->moveToThread(&testCamThread);
+	connect(testCam, SIGNAL(captureStarted(QString,int,int)), this, SLOT(videoTestCaptureStarted(QString,int,int)));
 	connect(testCam, SIGNAL(packetReady(QByteArray,bool)), this, SLOT(videoTestFragment(QByteArray,bool)));
 	connect(testCam, SIGNAL(errorOccurred(QString)), this, SLOT(videoTestError(QString)));
 	testCamThread.start();
@@ -530,13 +539,28 @@ void SettingsDialog::toggleVideoTest()
 	videoPreview->setText(tr("Starting..."));
 
 	QMetaObject::invokeMethod(testCam, "configureCapture", Qt::QueuedConnection,
-	                           Q_ARG(QString, dev), Q_ARG(QString, QStringLiteral("h264")),
-	                           Q_ARG(int, 640), Q_ARG(int, 480));
+	                           Q_ARG(QString, dev),
+	                           Q_ARG(int, kVideoTestWidth), Q_ARG(int, kVideoTestHeight),
+	                           Q_ARG(bool, cbPreferCompressed->isChecked()));
 	QMetaObject::invokeMethod(testCam, "Capture", Qt::QueuedConnection);
 
+	// The decoder is only started once the camera has settled on a format,
+	// which is what captureStarted() reports - the same order a call follows,
+	// where the peer's 0x75 message arrives before its first video packet.
+}
+
+void SettingsDialog::videoTestCaptureStarted(QString codec, int width, int height)
+{
+	if (!videoTestRunning)
+		return;
+
+	// Says which path the test is exercising: the camera's own compressed
+	// stream forwarded untouched, or frames decoded and re-encoded here.
+	videoPreview->setText(tr("Capturing %1 %2x%3...").arg(codec).arg(width).arg(height));
+
 	QMetaObject::invokeMethod(testDecoder, "configurePlayback", Qt::QueuedConnection,
-	                           Q_ARG(QString, QStringLiteral("h264")),
-	                           Q_ARG(int, 640), Q_ARG(int, 480));
+	                           Q_ARG(QString, codec),
+	                           Q_ARG(int, width), Q_ARG(int, height));
 	QMetaObject::invokeMethod(testDecoder, "Play", Qt::QueuedConnection);
 }
 
@@ -601,6 +625,12 @@ void SettingsDialog::fillDevicesComboBox(QComboBox *cb, MediaDevice *dev, enum M
 			QString item = QString(QLatin1String("%2\n(%1)"))
 									.arg(md.at(i).device)
 									.arg(md.at(i).humanReadable);
+
+			// Cameras that can deliver a compressed stream themselves say so,
+			// which is what the "prefer compressed formats" setting acts on.
+			if (!md.at(i).compressedFormats.isEmpty())
+				item += QString(QLatin1String(" [%1]")).arg(md.at(i).compressedFormats.join(QLatin1String(", ")));
+
 			cb->addItem(item, md.at(i).device);
 		}
 }
@@ -744,6 +774,8 @@ void SettingsDialog::loadSettings()
 	if (videoDevItem >= 0)
 		videoDev->setCurrentIndex(videoDevItem);
 
+	cbPreferCompressed->setChecked(st.loadValue("video.prefer_compressed", 0).toBool());
+
 	QString audioCapDevVal = st.loadValue("audio.capture_device", "default").toString();
 	int audioCapDevItem = audioCaptureDev->findData(audioCapDevVal);
 	if (audioCapDevItem >= 0)
@@ -797,6 +829,7 @@ void SettingsDialog::storeSettings()
 	st.storeValue("multiple_logins.state", QString::number(mlpstate));
 
 	st.storeValue("video.capture_device", videoDev->itemData(videoDev->currentIndex()).toString());
+	st.storeValue("video.prefer_compressed", cbPreferCompressed->isChecked() ? "1" : "0");
 	st.storeValue("audio.capture_device", audioCaptureDev->itemData(audioCaptureDev->currentIndex()).toString());
 	st.storeValue("audio.playback_device", audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString());
 	st.storeValue("audio.ring_device", audioRingDev->itemData(audioRingDev->currentIndex()).toString());

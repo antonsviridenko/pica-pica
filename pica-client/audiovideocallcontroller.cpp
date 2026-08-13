@@ -74,6 +74,7 @@ AudioVideoCallController::AudioVideoCallController(QObject *parent)
 	// the audio devices above.
 	cam = new VideoDevice();
 	cam->moveToThread(&cam_thread);
+	connect(cam, SIGNAL(captureStarted(QString,int,int)), this, SLOT(video_capture_started(QString,int,int)));
 	connect(cam, SIGNAL(packetReady(QByteArray,bool)), this, SLOT(send_video_packet(QByteArray,bool)));
 	cam_thread.start();
 
@@ -208,11 +209,16 @@ void AudioVideoCallController::startVideoPipeline()
 	m_videoFrameTimestamp = 0;
 	m_videoFrameStarted = false;
 
-	skynet->SendVideoParams(m_peer_id, QStringLiteral("h264"), kVideoWidth, kVideoHeight);
+	bool preferCompressed = st.loadValue("video.prefer_compressed", 0).toBool();
 
+	// The peer is told what we are sending only once the camera is open and
+	// the format is settled - with a compressed camera stream being forwarded
+	// as-is, the codec is the camera's choice, not ours (see
+	// video_capture_started()).
 	QMetaObject::invokeMethod(cam, "configureCapture", Qt::QueuedConnection,
-	                           Q_ARG(QString, camDev), Q_ARG(QString, QStringLiteral("h264")),
-	                           Q_ARG(int, kVideoWidth), Q_ARG(int, kVideoHeight));
+	                           Q_ARG(QString, camDev),
+	                           Q_ARG(int, kVideoWidth), Q_ARG(int, kVideoHeight),
+	                           Q_ARG(bool, preferCompressed));
 	QMetaObject::invokeMethod(cam, "Capture", Qt::QueuedConnection);
 
 	// remotevideo is configured lazily, once the peer's own 0x75 (see
@@ -405,6 +411,17 @@ void AudioVideoCallController::incoming_audio_packet(QByteArray peer_id, quint16
 	// call would mean it's never delivered, and Play() would sit forever
 	// pulling from an empty jitter buffer.
 	output->enqueuePacket(data);
+}
+
+void AudioVideoCallController::video_capture_started(QString codec, int width, int height)
+{
+	if (!is_active)
+		return;
+
+	// Announced only now, because what the camera turned out to deliver
+	// decides it: a compressed camera stream is forwarded in the camera's own
+	// codec and at the camera's own size, rather than in ours.
+	skynet->SendVideoParams(m_peer_id, codec, (quint16)width, (quint16)height);
 }
 
 void AudioVideoCallController::send_video_packet(QByteArray data, bool is_last_fragment)
