@@ -115,6 +115,9 @@ private slots:
 	void send_video_packet(QByteArray data, bool is_last_fragment);
 	void incoming_video_params(QByteArray peer_id, QString codec, quint16 width, quint16 height);
 	void incoming_video_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+#ifdef HAVE_VAAPI
+	void video_rendering_failed();
+#endif
 
 };
 

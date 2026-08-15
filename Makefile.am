@@ -203,6 +203,21 @@ pica_client_pica_client_LDADD += $(VAAPI_LIBS) -lGL
 MOCFLAGS += -DHAVE_VAAPI
 endif
 
+# Drawing a decoded surface in an X11 session, where Qt's OpenGL contexts come
+# from GLX and cannot import DMA-BUF handles: the driver draws the surface
+# straight onto the widget's X window instead.
+if PICA_VAAPI_X11
+pica_client_pica_client_SOURCES += \
+pica-client/vaapix11widget.cpp \
+pica-client/vaapix11widget.h
+
+nodist_pica_client_pica_client_SOURCES += moc_vaapix11widget.cpp
+
+pica_client_pica_client_CPPFLAGS += $(VAAPI_X11_CFLAGS)
+pica_client_pica_client_LDADD += $(VAAPI_X11_LIBS)
+MOCFLAGS += -DHAVE_VAAPI_X11
+endif
+
 pkgpicaclientdir = ${datarootdir}/pica-client
 dist_pkgpicaclient_DATA =  \
 dhparam4096.pem \

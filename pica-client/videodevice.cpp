@@ -215,6 +215,14 @@ void VideoDevice::configurePlayback(QString codec, int width, int height,
 	// place, so asking for GPU rendering turns on GPU decoding regardless.
 	m_useVaapi = useVaapi || useVaapiRender;
 	m_useVaapiRender = useVaapiRender;
+	// A renderer that failed during an earlier call says nothing about this
+	// one - it may well be a different window.
+	m_hwRenderDisabled.storeRelaxed(0);
+}
+
+void VideoDevice::disableHardwareRendering()
+{
+	m_hwRenderDisabled.storeRelaxed(1);
 }
 
 void VideoDevice::enqueueFrame(QByteArray encodedFrame)
@@ -806,7 +814,7 @@ void VideoDevice::Play()
 #ifdef HAVE_VAAPI
 			AVFrame *sw_frame = nullptr;
 
-			if (decodedOnGpu && m_useVaapiRender)
+			if (decodedOnGpu && m_useVaapiRender && !m_hwRenderDisabled.loadRelaxed())
 			{
 				// Zero copy: hand the surface itself over, holding a
 				// reference so it stays alive until the renderer is done.

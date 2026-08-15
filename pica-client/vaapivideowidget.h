@@ -31,33 +31,28 @@
 //
 // The surface is exported as DMA-BUF file descriptors, imported into EGL as
 // images, and bound to OpenGL textures - one for the luma plane and one for
-// the interleaved chroma plane of an NV12 frame - which a fragment shader
-// then converts to RGB while drawing. Nothing copies the picture; the GPU
-// keeps it where the decoder left it.
+// the interleaved chroma plane of an NV12 frame - which a fragment shader then
+// converts to RGB while drawing. Nothing copies the picture; the GPU keeps it
+// where the decoder left it. This needs an EGL context, which is what a
+// Wayland session gives, and what X11 gives when asked
+// (QT_XCB_GL_INTEGRATION=xcb_egl).
 //
-// The alternative, vaPutSurface() onto an X11 Drawable, was not an option
-// here: the client runs on Wayland, where there is no such drawable, and
-// Qt5X11Extras is not installed either. EGL works on both Wayland and X11.
-class VaapiVideoWidget : public QOpenGLWidget, protected QOpenGLFunctions
+// An X11 session where Qt uses GLX instead gives a context that cannot import
+// a DMA-BUF at all; VaapiX11Widget covers that case, and VaapiRenderWidget's
+// factory decides between the two.
+class VaapiVideoWidget : public QOpenGLWidget, protected QOpenGLFunctions, public VaapiRenderWidget
 {
 	Q_OBJECT
 public:
 	explicit VaapiVideoWidget(QWidget *parent = nullptr);
 	~VaapiVideoWidget() override;
 
-	// Whether the last frame could actually be drawn. False means the EGL
-	// import failed and nothing is being shown, so a caller can fall back to
-	// the software path rather than leave a blank widget.
-	bool isWorking() const { return m_working; }
+	virtual QWidget *widget() override { return this; }
+	virtual bool isWorking() const override { return m_working; }
 
 public slots:
-	// Takes the frame to draw next, replacing any previous one that has not
-	// been drawn yet - for live video the newest frame is the one that
-	// matters, which is the same policy the decode queue follows.
-	void setFrame(AVFramePtr frame);
-
-	// Drops the current frame and clears the widget.
-	void clearFrame();
+	virtual void setFrame(AVFramePtr frame) override;
+	virtual void clearFrame() override;
 
 signals:
 	// Raised once if the frame cannot be imported for drawing, carrying the
@@ -78,6 +73,9 @@ private:
 	// over. Not closing those descriptors leaks them once per frame, which
 	// exhausts the process's descriptors within minutes.
 	void releaseImports();
+
+	// Reports a failure that stops the widget drawing, once.
+	void reportFailure(const QString &message);
 
 	AVFramePtr m_frame;
 	QOpenGLShaderProgram *m_program;

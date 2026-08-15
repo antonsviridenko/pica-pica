@@ -499,12 +499,22 @@ static bool create_config_dir()
 
 int main(int argc, char *argv[])
 {
+#ifdef HAVE_VAAPI
+	// Before Qt opens its X connection, which is the only time Xlib will
+	// listen - see the comment on the function itself.
+	VaapiContext::initX11Threading();
+#endif
+
 	QApplication a(argc, argv);
 
 #ifdef HAVE_VAAPI
 	// Decoded hardware frames travel from the decoding thread to the widget
 	// drawing them through queued signals, which needs their type registered.
 	VaapiContext::registerMetaTypes();
+
+	// Settles how a decoded surface will be drawn in this session, which has
+	// to be known before the first one is created.
+	VaapiContext::detectX11Display();
 #endif
 
 #ifdef WIN32

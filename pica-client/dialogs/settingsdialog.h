@@ -34,7 +34,7 @@
 #include "../videodevice.h"
 #include "../toneplayer/toneplayer.h"
 #ifdef HAVE_VAAPI
-#include "../vaapivideowidget.h"
+#include "../vaapi.h"
 #endif
 
 class SettingsDialog : public QDialog
@@ -133,7 +133,7 @@ private:
 	QCheckBox *cbVaapiRendering;
 	// Shown in place of videoPreview while frames are being drawn straight
 	// from GPU memory; only one of the two is ever visible.
-	VaapiVideoWidget *videoPreviewGpu;
+	VaapiRenderWidget *videoPreviewGpu;
 #endif
 	VideoDevice *testCam;
 	VideoDevice *testDecoder;

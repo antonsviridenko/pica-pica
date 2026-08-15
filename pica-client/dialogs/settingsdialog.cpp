@@ -26,6 +26,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QDebug>
 #include <QVariant>
 #include <QListWidget>
 #include <QNetworkInterface>
@@ -249,10 +250,10 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videoTestStatus->setAlignment(Qt::AlignCenter);
 
 #ifdef HAVE_VAAPI
-	videoPreviewGpu = new VaapiVideoWidget(this);
-	videoPreviewGpu->setMinimumSize(320, 240);
-	videoPreviewGpu->hide();
-	connect(videoPreviewGpu, SIGNAL(renderingFailed(QString)), this, SLOT(videoTestRenderFailed(QString)));
+	videoPreviewGpu = VaapiRenderWidget::create(this);
+	videoPreviewGpu->widget()->setMinimumSize(320, 240);
+	videoPreviewGpu->widget()->hide();
+	connect(videoPreviewGpu->widget(), SIGNAL(renderingFailed(QString)), this, SLOT(videoTestRenderFailed(QString)));
 #endif
 
 	videodevLayout->addWidget(videoDev);
@@ -266,7 +267,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videodevLayout->addWidget(btVideoTest);
 	videodevLayout->addWidget(videoPreview);
 #ifdef HAVE_VAAPI
-	videodevLayout->addWidget(videoPreviewGpu);
+	videodevLayout->addWidget(videoPreviewGpu->widget());
 #endif
 	videodevLayout->addWidget(videoTestStatus);
 	videodevLayout->addStretch(1);
@@ -604,7 +605,10 @@ void SettingsDialog::videoTestCaptureStarted(QString codec, int width, int heigh
 	bool vaapiRendering = false;
 #ifdef HAVE_VAAPI
 	vaapiDecoding = cbVaapiDecoding->isChecked();
-	vaapiRendering = cbVaapiRendering->isChecked();
+	// Asking for frames to be kept in GPU memory once it is known that they
+	// cannot be drawn from there would only mean starting each test with a
+	// blank preview until it failed again.
+	vaapiRendering = cbVaapiRendering->isChecked() && !VaapiRenderWidget::renderingKnownBroken();
 #endif
 
 	QMetaObject::invokeMethod(testDecoder, "configurePlayback", Qt::QueuedConnection,
@@ -643,7 +647,7 @@ void SettingsDialog::stopVideoTest()
 	videoTestStatus->clear();
 #ifdef HAVE_VAAPI
 	videoPreviewGpu->clearFrame();
-	videoPreviewGpu->hide();
+	videoPreviewGpu->widget()->hide();
 	videoPreview->show();
 #endif
 }
@@ -689,12 +693,20 @@ void SettingsDialog::videoTestHwFrame(AVFramePtr frame)
 	if (!videoTestRunning)
 		return;
 
+	// The widget has given up on drawing; leave the preview area with the
+	// label and get the decoder to produce frames it can show.
+	if (!videoPreviewGpu->isWorking())
+	{
+		testDecoder->disableHardwareRendering();
+		return;
+	}
+
 	// Frames arriving here never went through system memory, so the label has
 	// nothing to show - the GL widget takes over the preview area.
-	if (videoPreviewGpu->isHidden())
+	if (videoPreviewGpu->widget()->isHidden())
 	{
 		videoPreview->hide();
-		videoPreviewGpu->show();
+		videoPreviewGpu->widget()->show();
 	}
 
 	videoTestStatus->setText(videoTestPathReport.isEmpty()
@@ -707,10 +719,17 @@ void SettingsDialog::videoTestHwFrame(AVFramePtr frame)
 void SettingsDialog::videoTestRenderFailed(QString message)
 {
 	// Drawing straight from GPU memory did not work out. The decoder is still
-	// running, so say so and leave the test going rather than killing it.
-	videoPreviewGpu->hide();
+	// running, so leave the test going rather than killing it: ask it to bring
+	// frames back into system memory, which the label can show. The reason
+	// stands in the label until the first of those frames replaces it.
+	qWarning() << message;
+
+	videoPreviewGpu->widget()->hide();
 	videoPreview->show();
 	videoPreview->setText(message);
+
+	// Direct call, for the same reason as in videoTestFragment().
+	testDecoder->disableHardwareRendering();
 }
 #endif
 

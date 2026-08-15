@@ -313,6 +313,7 @@ void AudioVideoCallController::start_call(QByteArray peer_id)
 	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
 #ifdef HAVE_VAAPI
 	connect(remotevideo, SIGNAL(hwFrameReady(AVFramePtr)), callwindow, SLOT(showRemoteHwFrame(AVFramePtr)));
+	connect(callwindow, SIGNAL(video_rendering_failed()), this, SLOT(video_rendering_failed()));
 #endif
 	callwindow->show();
 }
@@ -335,6 +336,7 @@ void AudioVideoCallController::call_from(QByteArray peer_id)
 	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
 #ifdef HAVE_VAAPI
 	connect(remotevideo, SIGNAL(hwFrameReady(AVFramePtr)), callwindow, SLOT(showRemoteHwFrame(AVFramePtr)));
+	connect(callwindow, SIGNAL(video_rendering_failed()), this, SLOT(video_rendering_failed()));
 #endif
 	callwindow->show();
 
@@ -467,6 +469,13 @@ void AudioVideoCallController::incoming_video_params(QByteArray peer_id, QString
 	bool vaapiDecoding = st.loadValue("video.vaapi_decoding", 0).toBool();
 	bool vaapiRendering = st.loadValue("video.vaapi_rendering", 0).toBool();
 
+#ifdef HAVE_VAAPI
+	// A call started after one where drawing GPU frames turned out not to work
+	// would otherwise begin with a blank video area all over again.
+	if (VaapiRenderWidget::renderingKnownBroken())
+		vaapiRendering = false;
+#endif
+
 	QMetaObject::invokeMethod(remotevideo, "configurePlayback", Qt::QueuedConnection,
 	                           Q_ARG(QString, codec), Q_ARG(int, (int)width), Q_ARG(int, (int)height),
 	                           Q_ARG(bool, vaapiDecoding), Q_ARG(bool, vaapiRendering));
@@ -488,4 +497,18 @@ void AudioVideoCallController::incoming_video_packet(QByteArray peer_id, quint16
 	// incoming_audio_packet().
 	remotevideo->enqueueFrame(frame);
 }
+
+#ifdef HAVE_VAAPI
+void AudioVideoCallController::video_rendering_failed()
+{
+	// The window cannot draw frames that stayed in GPU memory, so stop keeping
+	// them there: the decoder brings them down into system memory instead and
+	// the window's label shows them. Decoding itself is unaffected and the
+	// call carries on.
+	//
+	// Direct call rather than invokeMethod() - same reason as in
+	// incoming_video_packet(): remotevideo's thread is blocked inside Play().
+	remotevideo->disableHardwareRendering();
+}
+#endif
 

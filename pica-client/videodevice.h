@@ -102,6 +102,13 @@ public:
 	// video, showing the newest frame matters more than showing every frame.
 	void enqueueFrame(QByteArray encodedFrame);
 
+	// Stops keeping decoded frames in GPU memory, for when the renderer that
+	// was to draw them turns out not to be able to: decoding carries on, but
+	// frames come back through system memory and are emitted by frameReady()
+	// from then on. Safe to call from any thread, and called directly rather
+	// than queued for the same reason enqueueFrame() is.
+	void disableHardwareRendering();
+
 public slots:
 	// Blocking capture+encode loop: opens the configured camera, encodes
 	// captured frames, and emits packetReady() for each encoded frame, split
@@ -172,6 +179,10 @@ private:
 	bool m_useVaapiRender;
 
 	QAtomicInt m_abort;
+	// Set from another thread by disableHardwareRendering() while the decode
+	// loop is running, so it has to be read atomically rather than as a plain
+	// bool like the settings above, which are fixed before the loop starts.
+	QAtomicInt m_hwRenderDisabled;
 
 	QMutex m_queueMutex;
 	QWaitCondition m_queueCond;

@@ -32,6 +32,7 @@ extern "C" {
 
 #include <va/va_drmcommon.h>
 
+
 namespace
 {
 	// Extension entry points, resolved once at first use: they are not
@@ -109,6 +110,19 @@ VaapiVideoWidget::~VaapiVideoWidget()
 	doneCurrent();
 }
 
+void VaapiVideoWidget::reportFailure(const QString &message)
+{
+	m_working = false;
+	markRenderingBroken();
+
+	if (m_reportedFailure)
+		return;
+
+	m_reportedFailure = true;
+	qWarning() << message;
+	emit renderingFailed(message);
+}
+
 void VaapiVideoWidget::setFrame(AVFramePtr frame)
 {
 	if (!m_working)
@@ -131,16 +145,28 @@ void VaapiVideoWidget::initializeGL()
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glDisable(GL_DEPTH_TEST);
 
+	// Importing a surface as an EGL image needs an EGL context to import it
+	// into. eglGetCurrentDisplay() is the telling call: under GLX it answers
+	// EGL_NO_DISPLAY, and there is no display to create an image on.
+	if (eglGetCurrentContext() == EGL_NO_CONTEXT || eglGetCurrentDisplay() == EGL_NO_DISPLAY)
+	{
+#ifdef HAVE_VAAPI_X11
+		// An X11 session should have been given the other renderer, so the
+		// display cannot have been opened on an X connection either.
+		reportFailure(tr("The OpenGL context is not an EGL one and the VAAPI display was not "
+		                 "opened on an X connection, so decoded frames cannot be drawn"));
+#else
+		reportFailure(tr("The OpenGL context is not an EGL one, so decoded frames cannot be "
+		                 "drawn. An X11 session gives Qt a GLX context unless told otherwise; "
+		                 "rebuild with --enable-vaapi-x11, or start the client with "
+		                 "QT_XCB_GL_INTEGRATION=xcb_egl"));
+#endif
+		return;
+	}
+
 	if (!resolveEglExtensions())
 	{
-		m_working = false;
-		if (!m_reportedFailure)
-		{
-			m_reportedFailure = true;
-			QString msg = "EGL does not offer the extensions needed to draw GPU frames";
-			qWarning() << msg;
-			emit renderingFailed(msg);
-		}
+		reportFailure(tr("EGL does not offer the extensions needed to draw GPU frames"));
 		return;
 	}
 
@@ -149,14 +175,7 @@ void VaapiVideoWidget::initializeGL()
 	    !m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, kFragmentShader) ||
 	    !m_program->link())
 	{
-		m_working = false;
-		if (!m_reportedFailure)
-		{
-			m_reportedFailure = true;
-			QString msg = QString("Could not build the video shader: %1").arg(m_program->log());
-			qWarning() << msg;
-			emit renderingFailed(msg);
-		}
+		reportFailure(tr("Could not build the video shader: %1").arg(m_program->log()));
 		return;
 	}
 
@@ -298,6 +317,8 @@ bool VaapiVideoWidget::importFrame()
 		                                  EGL_LINUX_DMA_BUF_EXT, nullptr, attribs);
 		if (m_images[i] == EGL_NO_IMAGE_KHR)
 		{
+			qWarning() << QString("eglCreateImageKHR failed for plane %1: 0x%2")
+			              .arg(i).arg(eglGetError(), 0, 16);
 			releaseImports();
 			return false;
 		}
@@ -320,14 +341,7 @@ void VaapiVideoWidget::paintGL()
 
 	if (!importFrame())
 	{
-		m_working = false;
-		if (!m_reportedFailure)
-		{
-			m_reportedFailure = true;
-			QString msg = "Could not hand the decoded GPU frame to OpenGL for drawing";
-			qWarning() << msg;
-			emit renderingFailed(msg);
-		}
+		reportFailure(tr("Could not hand the decoded GPU frame to OpenGL for drawing"));
 		return;
 	}
 

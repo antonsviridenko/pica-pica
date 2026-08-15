@@ -24,7 +24,7 @@
 #include <QTimer>
 #include <QImage>
 #ifdef HAVE_VAAPI
-#include "vaapivideowidget.h"
+#include "vaapi.h"
 #endif
 
 class CallWindow : public QWidget
@@ -37,6 +37,12 @@ signals:
 	void accept_call_pressed();
 	void hang_call_pressed();
 	void callwindow_closed(CallWindow *sender_window);
+#ifdef HAVE_VAAPI
+	// Drawing frames straight out of GPU memory did not work on this system.
+	// The call controller answers by having them decoded into system memory
+	// instead, which the label below can show.
+	void video_rendering_failed();
+#endif
 private:
 	QByteArray m_peer_id;
 	bool is_incoming;
@@ -49,8 +55,9 @@ private:
 	QLabel *lbVideo;
 #ifdef HAVE_VAAPI
 	// Used instead of lbVideo when frames arrive still living in GPU memory;
-	// only one of the two is ever visible.
-	VaapiVideoWidget *videoGpu;
+	// only one of the two is ever visible. Which of the two renderers this is
+	// depends on the session - see VaapiRenderWidget::create().
+	VaapiRenderWidget *videoGpu;
 #endif
 	QTimer *callTimer;
 	int callElapsedSeconds;
@@ -69,6 +76,9 @@ private slots:
 	void accept();
 	void hang();
 	void update_call_timer();
+#ifdef HAVE_VAAPI
+	void gpu_rendering_failed(QString message);
+#endif
 };
 
 #endif

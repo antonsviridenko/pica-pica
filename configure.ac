@@ -92,6 +92,19 @@ AC_ARG_ENABLE([vaapi],
     AS_HELP_STRING([--disable-vaapi],
       [Disable VAAPI accelerated video encoding, decoding and rendering]))
 
+#checking if the X11 rendering path is wanted
+#Qt gives widgets a GLX context by default in an X11 session, and a GLX
+#context has no way to import the DMA-BUF handles a VA surface is exported
+#as - that path needs EGL. vaPutSurface() leaves OpenGL out of it altogether
+#and has the driver draw the surface straight onto an X11 window, which is
+#what makes hardware rendering work in such a session. Autodetected like
+#VAAPI itself, and pointless without it.
+AC_ARG_ENABLE([vaapi-x11],
+    AS_HELP_STRING([--enable-vaapi-x11],
+      [Enable vaPutSurface() rendering, for X11 sessions where Qt uses GLX rather than EGL (default: autodetect)])
+    AS_HELP_STRING([--disable-vaapi-x11],
+      [Disable vaPutSurface() rendering]))
+
 #at least one program must be enabled
 AS_IF([test "x$PICA_NODE_ENABLED" != "xyes" && test "x$PICA_CLIENT_ENABLED" != "xyes"  ],
   AC_MSG_ERROR(["Either pica-node or pica-client must be enabled"])
@@ -159,9 +172,32 @@ AS_IF([test "x$enable_vaapi" != "xno"], [
         [AC_MSG_WARN(["libva, libva-drm or EGL not found - building without VAAPI acceleration"])])
     ])
 ])
+
+#check for libva's X11 rendering support, needed to draw a decoded surface in
+#an X11 session, where Qt's OpenGL contexts are GLX rather than EGL ones.
+#libGL comes along because working out which of the two a session gives means
+#asking GLX whether it owns the context.
+AS_IF([test "x$enable_vaapi_x11" = "xyes" && test "x$PICA_VAAPI_ENABLED" != "xyes"],
+  [AC_MSG_ERROR(["X11 rendering was requested but VAAPI support is not enabled"])])
+
+AS_IF([test "x$PICA_VAAPI_ENABLED" = "xyes" && test "x$enable_vaapi_x11" != "xno"], [
+  PKG_CHECK_MODULES([VAAPI_X11], [libva-x11 x11 gl],
+    [
+      PICA_VAAPI_X11_ENABLED=yes
+      AC_DEFINE([HAVE_VAAPI_X11], [1], [Define to 1 if libva X11 rendering support is available])
+      AC_SUBST([VAAPI_X11_CFLAGS])
+      AC_SUBST([VAAPI_X11_LIBS])
+    ],
+    [
+      AS_IF([test "x$enable_vaapi_x11" = "xyes"],
+        [AC_MSG_ERROR(["X11 rendering was requested but libva-x11, libX11 or libGL was not found"])],
+        [AC_MSG_WARN(["libva-x11, libX11 or libGL not found - building without X11 rendering, hardware rendering will need an EGL session"])])
+    ])
+])
 ])
 
 AM_CONDITIONAL([PICA_VAAPI], [test "x$PICA_VAAPI_ENABLED" = "xyes"])
+AM_CONDITIONAL([PICA_VAAPI_X11], [test "x$PICA_VAAPI_X11_ENABLED" = "xyes"])
 
 AC_SUBST([PLATFORM_DEPS_CFLAGS])
 AC_SUBST([PLATFORM_DEPS_LIBS])

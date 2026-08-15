@@ -19,6 +19,7 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QCloseEvent>
+#include <QDebug>
 
 CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	: m_peer_id(peer_id), is_incoming(incoming)
@@ -39,9 +40,10 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	lbVideo->setMinimumSize(320, 240);
 	lbVideo->hide();
 #ifdef HAVE_VAAPI
-	videoGpu = new VaapiVideoWidget(this);
-	videoGpu->setMinimumSize(320, 240);
-	videoGpu->hide();
+	videoGpu = VaapiRenderWidget::create(this);
+	videoGpu->widget()->setMinimumSize(320, 240);
+	videoGpu->widget()->hide();
+	connect(videoGpu->widget(), SIGNAL(renderingFailed(QString)), this, SLOT(gpu_rendering_failed(QString)));
 #endif
 	callTimer = new QTimer(this);
 	callElapsedSeconds = 0;
@@ -49,7 +51,7 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	lv->addWidget(lbTimer);
 	lv->addWidget(lbVideo);
 #ifdef HAVE_VAAPI
-	lv->addWidget(videoGpu);
+	lv->addWidget(videoGpu->widget());
 #endif
 
 	lh->addWidget(pbAccept, Qt::AlignLeft);
@@ -109,15 +111,36 @@ void CallWindow::showRemoteHwFrame(AVFramePtr frame)
 	if (!frame)
 		return;
 
+	// The widget has given up on drawing - ask again for frames the label can
+	// show, and keep the video area with it.
+	if (!videoGpu->isWorking())
+	{
+		emit video_rendering_failed();
+		return;
+	}
+
 	// These frames hold a GPU surface rather than pixels, so the label cannot
 	// show them - the GL widget takes over the video area instead.
-	if (videoGpu->isHidden())
+	if (videoGpu->widget()->isHidden())
 	{
 		lbVideo->hide();
-		videoGpu->show();
+		videoGpu->widget()->show();
 	}
 
 	videoGpu->setFrame(frame);
+}
+
+void CallWindow::gpu_rendering_failed(QString message)
+{
+	// Nothing will ever appear in the GL widget now, so hand the video area
+	// back to the label and ask for frames it can actually show. Without this
+	// the rest of the call would be spent looking at an empty black rectangle.
+	qWarning() << message;
+
+	videoGpu->widget()->hide();
+	lbVideo->show();
+
+	emit video_rendering_failed();
 }
 #endif
 
