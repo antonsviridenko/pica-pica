@@ -1836,6 +1836,8 @@ static unsigned int procmsg_CALLFIN(unsigned char* buf, unsigned int nb, void *p
 	chan->call_state = PICA_CALL_STATE_IDLE;
 
 	callbacks.call_hangup_cb(chan->peer_id);
+	chan->call_audio_params_are_set = 0;
+	chan->call_video_params_are_set = 0;
 
 	return 1;
 }
