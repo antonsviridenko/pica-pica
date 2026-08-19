@@ -101,7 +101,10 @@ int PICA_do_signature(EVP_PKEY *privkey, void **datapointers, size_t *datalength
 	if (ret == 1)
 		ret = 1;
 	else
+	{
 		free(*sig);
+		*sig = NULL;
+	}
 
 sig_exit:
 	EVP_MD_CTX_destroy(mdctx);

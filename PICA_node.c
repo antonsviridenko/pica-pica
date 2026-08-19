@@ -62,7 +62,7 @@ typedef u_short uint16_t;
 
 time_t skynet_refresh_tmst;
 
-clock_t TMO_CCLINK_WAITACTIVE = 15; //CONF
+time_t TMO_CCLINK_WAITACTIVE = 15; //CONF
 
 char *my_addr;//TEMP CONF FIXME
 
@@ -768,7 +768,7 @@ unsigned int procmsg_MULTILOGIN_node(unsigned char* buf, unsigned int size, void
 
 		if (mp)
 		{
-			memcpy(mp, buf, size);
+			memcpy(mp->tail, buf + 2, size - 2);
 		}
 
 		c = c->next_multi;
@@ -1058,6 +1058,11 @@ unsigned int procmsg_NODELIST(unsigned char* buf, unsigned int size, void* ptr)
 					PICA_debug1("Received NODELIST item %.16s:%hu is in private range, skipping",
 					            inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port)
 					           );
+				}
+				if (listleft < PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
+				{
+					PICA_warn("Unexpected end of nodelist packet");
+					return 0;
 				}
 				listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 				break;
@@ -1757,7 +1762,7 @@ int PICA_node_init()
 		fclose(dh_file);
 	}
 	else
-		PICA_fatal("Unable to open DH parameters file %", nodecfg.dh_param_file);
+		PICA_fatal("Unable to open DH parameters file %s", nodecfg.dh_param_file);
 
 	ret = SSL_CTX_set_tmp_dh(anon_ctx, dh);
 
@@ -2044,6 +2049,14 @@ struct client *client_list_addnew(struct newconn *nc)
 
 	if (!ci)	return 0;
 
+	ci->r_buf = calloc(1, DEFAULT_BUF_SIZE);
+	if (!ci->r_buf)
+	{
+		free(ci);
+		return 0;
+	}
+	ci->buflen_r = DEFAULT_BUF_SIZE;
+
 	ci->ssl_comm = SSL_new (ctx);
 
 	if (!ci->ssl_comm)
@@ -2069,14 +2082,6 @@ struct client *client_list_addnew(struct newconn *nc)
 
 
 	SSL_set_fd(ci->ssl_comm, ci->sck_comm);
-
-	ci->r_buf = calloc(1, DEFAULT_BUF_SIZE);
-	if (!ci->r_buf)
-	{
-		free(ci);
-		return 0;
-	}
-	ci->buflen_r = DEFAULT_BUF_SIZE;
 
 	ci->tmst = time(0);
 
@@ -2249,6 +2254,14 @@ struct nodelink *nodelink_list_addnew(struct newconn *nc)
 	if (!nl)
 		return 0;
 
+	nl->r_buf = calloc(1, DEFAULT_BUF_SIZE);
+	if (!nl->r_buf)
+	{
+		free(nl);
+		return 0;
+	}
+	nl->buflen_r = DEFAULT_BUF_SIZE;
+
 	if (nodelink_list_end)
 	{
 		nodelink_list_end->next = nl;
@@ -2265,14 +2278,6 @@ struct nodelink *nodelink_list_addnew(struct newconn *nc)
 	nl->addr = nc->addr;
 	nl->anonssl = nc->anonssl;
 	nc->anonssl = NULL;
-
-	nl->r_buf = calloc(1, DEFAULT_BUF_SIZE);
-	if (!nl->r_buf)
-	{
-		free(nl);
-		return 0;
-	}
-	nl->buflen_r = DEFAULT_BUF_SIZE;
 
 	nl->tmst = time(0);
 
@@ -2528,7 +2533,7 @@ void process_timeouts_c2n()
 
 		if (kill_ptr)
 		{
-			PICA_info("Disconnecting user %u due to noreply timeout", kill_ptr -> id);
+			PICA_info("Disconnecting user %s due to noreply timeout", PICA_id_to_base64(kill_ptr ->id, NULL));
 			client_list_delete(kill_ptr);
 			kill_ptr = 0;
 		}
