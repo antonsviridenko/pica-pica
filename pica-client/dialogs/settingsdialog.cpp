@@ -278,6 +278,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	// own thread while running, exactly as they do during a call. They stay
 	// idle until the Test button is pressed.
 	videoTestRunning = false;
+	testVideoSeq = 0;
 
 	testCam = new VideoDevice();
 	testCam->moveToThread(&testCamThread);
@@ -572,6 +573,7 @@ void SettingsDialog::toggleVideoTest()
 	}
 
 	testAssembler.reset();
+	testVideoSeq = 0;
 	videoTestRunning = true;
 	btVideoTest->setText(tr("Stop ⏹"));
 	videoPreview->setText(tr("Starting..."));
@@ -643,6 +645,7 @@ void SettingsDialog::stopVideoTest()
 	testDecoder->Close();
 
 	testAssembler.reset();
+	testVideoSeq = 0;
 	videoTestRunning = false;
 	videoTestFormat.clear();
 	videoTestPathReport.clear();
@@ -664,8 +667,17 @@ void SettingsDialog::videoTestFragment(QByteArray data, bool is_last_fragment)
 	// The encoder emits fragments exactly as they would go onto the wire, so
 	// feed them through the same assembler the receiving end of a call uses.
 	// The sequence number is rebuilt here the way send_video_packet() builds
-	// it, the timestamp being constant since only frame boundaries matter.
-	quint16 seq = is_last_fragment ? VideoFrameAssembler::LastFragmentFlag : 0;
+	// it - the counter has to be kept as well, since the assembler uses it to
+	// tell a fragment that follows the previous one from one that comes after
+	// a loss. The timestamp is constant, as nothing here can lose a fragment
+	// and only frame boundaries matter.
+	quint16 seq = testVideoSeq & VideoFrameAssembler::SeqNumMask;
+
+	testVideoSeq = (testVideoSeq + 1) & VideoFrameAssembler::SeqNumMask;
+
+	if (is_last_fragment)
+		seq |= VideoFrameAssembler::LastFragmentFlag;
+
 	QByteArray frame = testAssembler.addFragment(seq, 0, data);
 
 	if (frame.isEmpty())

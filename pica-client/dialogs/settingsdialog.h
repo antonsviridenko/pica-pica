@@ -140,6 +140,9 @@ private:
 	QThread testCamThread;
 	QThread testDecoderThread;
 	VideoFrameAssembler testAssembler;
+	// Counter part of the sequence number handed to testAssembler, kept the
+	// same way AudioVideoCallController keeps it for a real call.
+	quint16 testVideoSeq;
 	bool videoTestRunning;
 
 	void stopVideoTest();
