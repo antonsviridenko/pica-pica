@@ -511,8 +511,12 @@ void SettingsDialog::audioTestFeedPacket()
 		return;
 	}
 
-	// Direct call, for the same reason as in the call controller.
-	testSpeaker->enqueuePacket(audioTestPackets.at(audioTestPlaybackPos++));
+	// Direct call, for the same reason as in the call controller. Nothing
+	// here loses or reorders packets, so the sequence numbers are simply the
+	// order they were recorded in.
+	testSpeaker->enqueuePacket((quint16)audioTestPlaybackPos,
+	                           audioTestPackets.at(audioTestPlaybackPos));
+	audioTestPlaybackPos++;
 }
 
 void SettingsDialog::audioTestPlaybackFinished()

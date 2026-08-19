@@ -49,7 +49,13 @@ public:
 	// Push a codec packet received from the network into the playback
 	// jitter buffer. Safe to call from any thread. Drops the oldest queued
 	// packet if the buffer is full, favoring low latency over completeness.
-	Q_INVOKABLE void enqueuePacket(QByteArray data);
+	//
+	// seq_num is the packet's 0x76 sequence number. Over a mediac2c
+	// connection packets can arrive out of order or twice, so the buffer is
+	// ordered by it, and a packet that arrives after one further along the
+	// stream has already been played is dropped rather than played out of
+	// place.
+	Q_INVOKABLE void enqueuePacket(quint16 seq_num, QByteArray data);
 
 public slots:
 	// Blocking capture+encode loop: opens the configured local input
@@ -96,7 +102,20 @@ private:
 	// incoming network packet) pushes into it.
 	QMutex m_queueMutex;
 	QWaitCondition m_queueCond;
-	QQueue<QByteArray> m_playQueue;
+
+	struct PlaybackPacket
+	{
+		quint16 seq;
+		QByteArray data;
+	};
+
+	// Kept ordered by sequence number, oldest first.
+	QList<PlaybackPacket> m_playQueue;
+	// Sequence number of the last packet handed to the decoder, once one has
+	// been; anything not newer than it has missed its turn.
+	quint16 m_lastPlayedSeq;
+	bool m_havePlayedSeq;
+
 	static const int kMaxQueueDepth = 8;
 
 	// Number of packets Play() waits to have buffered before writing the

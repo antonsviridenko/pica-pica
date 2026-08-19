@@ -18,6 +18,7 @@ SOURCES += main.cpp\
     callwindow.cpp \
     contacts.cpp \
     ../PICA_client.c \
+    ../PICA_media.c \
     ../PICA_msgproc.c \
     contactlistwidget.cpp \
     mediadevice.cpp \
@@ -56,6 +57,7 @@ HEADERS  += mainwindow.h \
     contacts.h \
     globals.h \
     ../PICA_client.h \
+    ../PICA_media.h \
     ../PICA_msgproc.h \
     contactlistwidget.h \
     mediadevice.h \

@@ -16,6 +16,7 @@
 */
 #include "videodevice.h"
 #include "../PICA_proto.h"
+#include "../PICA_media.h"
 
 #include <QFile>
 #include <QDebug>
@@ -62,10 +63,17 @@ static const int64_t kBitrate = 600000;
 // can resynchronize.
 static const int kGopSize = kFrameRate * 2;
 
-// Largest amount of encoded data one 0x77 message can carry: the protocol's
-// per-message payload cap, minus the sequence number + timestamp header that
-// every call media packet carries.
+// Largest amount of encoded data one 0x77 message can carry over a c2c or
+// directc2c connection: the protocol's per-message payload cap, minus the
+// sequence number + timestamp header that every call media packet carries.
+// Over a mediac2c connection the limit is the path MTU instead and is set
+// with setMaxFragmentSize() once that connection is up.
 static const int kMaxFragmentSize = PICA_PROTO_C2CMSG_MAXDATASIZE - PICA_PROTO_CALL_PACKET_HDRSIZE;
+
+// Largest encoded slice the software encoder is asked to produce: one that
+// still fits into a single datagram of a mediac2c connection, so that losing
+// a datagram costs a slice of the picture rather than a whole frame.
+static const int kSliceMaxSize = PICA_MEDIA_SAFE_PAYLOAD;
 
 static QString ff_errstr(int err)
 {
@@ -153,7 +161,8 @@ QStringList VideoDevice::CompressedFormats(const QString &device)
 }
 
 VideoFrameAssembler::VideoFrameAssembler()
-	: m_timestamp(0), m_inProgress(false)
+	: m_timestamp(0), m_inProgress(false), m_lastSeq(0),
+	  m_lastWasFrameEnd(false), m_haveLastSeq(false)
 {
 }
 
@@ -161,10 +170,49 @@ void VideoFrameAssembler::reset()
 {
 	m_buffer.clear();
 	m_inProgress = false;
+	m_haveLastSeq = false;
+	// The first fragment received is as likely to be the middle of a frame as
+	// its beginning, so assembly only starts after the first frame boundary.
+	m_lastWasFrameEnd = false;
 }
 
 QByteArray VideoFrameAssembler::addFragment(quint16 seq_num, quint32 timestamp, const QByteArray &data)
 {
+	const quint16 counter = seq_num & SeqNumMask;
+	const bool isLast = (seq_num & LastFragmentFlag) != 0;
+	bool contiguous = true;
+
+	// Over a mediac2c connection fragments can be lost, so a fragment is only
+	// accepted if it directly follows the previous one. When it does not,
+	// what is in the buffer is incomplete and everything up to the end of the
+	// current frame has to be skipped: a fragment may only begin a frame if
+	// the one before it ended a frame. Without that rule, losing a frame's
+	// first fragment would make its second fragment look like the beginning
+	// of a frame and hand the decoder a truncated one.
+	if (m_haveLastSeq)
+		contiguous = (counter == ((m_lastSeq + 1) & SeqNumMask));
+
+	m_lastSeq = counter;
+	m_haveLastSeq = true;
+
+	if (!contiguous)
+	{
+		// Resynchronize at the next frame boundary. This fragment can still
+		// start a frame itself, if the gap swallowed whole frames and it
+		// happens to be a first fragment - which is what a matching new
+		// timestamp on an empty buffer means.
+		m_buffer.clear();
+		m_inProgress = false;
+		m_lastWasFrameEnd = false;
+	}
+
+	if (!m_lastWasFrameEnd && !m_inProgress)
+	{
+		// Still in the middle of a frame whose beginning was lost.
+		m_lastWasFrameEnd = isLast;
+		return QByteArray();
+	}
+
 	// Fragments of one encoded frame all carry the same timestamp; a
 	// different one while a frame is still being assembled means the rest of
 	// that frame is never coming, so drop what was collected and start over.
@@ -174,20 +222,32 @@ QByteArray VideoFrameAssembler::addFragment(quint16 seq_num, quint32 timestamp, 
 	m_buffer.append(data);
 	m_timestamp = timestamp;
 	m_inProgress = true;
+	m_lastWasFrameEnd = isLast;
 
-	if (!(seq_num & LastFragmentFlag))
+	if (!isLast)
 		return QByteArray();
 
 	QByteArray frame = m_buffer;
-	reset();
+
+	m_buffer.clear();
+	m_inProgress = false;
 
 	return frame;
 }
 
 VideoDevice::VideoDevice(QObject *parent)
 	: QObject(parent), m_width(640), m_height(480), m_preferCompressed(false),
-	  m_useVaapi(false), m_useVaapiRender(false), m_abort(0)
+	  m_useVaapi(false), m_useVaapiRender(false), m_abort(0),
+	  m_maxFragmentSize(kMaxFragmentSize)
 {
+}
+
+void VideoDevice::setMaxFragmentSize(int size)
+{
+	if (size <= 0 || size > kMaxFragmentSize)
+		size = kMaxFragmentSize;
+
+	m_maxFragmentSize.storeRelaxed(size);
 }
 
 VideoDevice::~VideoDevice()
@@ -342,10 +402,14 @@ void VideoDevice::emitFragments(const unsigned char *data, int size)
 	// is flagged so the receiver knows the frame is complete (see the
 	// fragmentation notes in the protocol doc).
 	int offset = 0;
+	// Read once per frame rather than per fragment, so that a transport
+	// change in the middle of a frame cannot make the receiving side see a
+	// frame whose fragments were sized by two different rules.
+	const int maxFragment = m_maxFragmentSize.loadRelaxed();
 
 	while (offset < size)
 	{
-		int chunk = qMin(kMaxFragmentSize, size - offset);
+		int chunk = qMin(maxFragment, size - offset);
 		bool isLast = (offset + chunk >= size);
 
 		emit packetReady(QByteArray((const char *)data + offset, chunk), isLast);
@@ -519,6 +583,13 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 		// no out-of-band way to learn them and may start decoding mid-stream.
 		av_opt_set(enc_ctx->priv_data, "preset", "veryfast", 0);
 		av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
+
+		// Keeps every slice within one datagram of a mediac2c connection, so
+		// that a lost fragment costs a slice of the picture rather than the
+		// whole frame. Harmless when the media goes over TCP instead - it
+		// only splits frames into more NAL units than strictly necessary.
+		av_opt_set(enc_ctx->priv_data, "x264opts",
+		           QString("slice-max-size=%1").arg(kSliceMaxSize).toUtf8().constData(), 0);
 
 		if ((ret = avcodec_open2(enc_ctx, enc, nullptr)) < 0)
 		{

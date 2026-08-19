@@ -16,6 +16,7 @@
 */
 #include "PICA_security.h"
 #include "PICA_client.h"
+#include "PICA_media.h"
 #include "PICA_proto.h"
 #include "PICA_msgproc.h"
 #include "PICA_common.h"
@@ -84,6 +85,8 @@ static unsigned int procmsg_CALL_AUDIOPARAM(unsigned char*, unsigned int, void*)
 static unsigned int procmsg_CALL_VIDEOPARAM(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_CALL_AUDIO_PACKET(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_CALL_VIDEO_PACKET(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_MEDIA_PINGREQ(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_MEDIA_PINGREP(unsigned char*, unsigned int, void*);
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size);
@@ -142,6 +145,53 @@ struct PICA_msginfo c2c_init_messages[] =
 
 };
 
+/* What a datagram of a mediac2c connection can carry, see PICA_media.h */
+const struct PICA_msginfo  media_messages[] =
+{
+	{PICA_PROTO_CALL_AUDIO_PACKET, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CALL_AUDIO_PACKET},
+	{PICA_PROTO_CALL_VIDEO_PACKET, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CALL_VIDEO_PACKET},
+	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_MEDIA_PINGREQ},
+	{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREP_SIZE, procmsg_MEDIA_PINGREP}
+};
+
+unsigned int PICA_media_process_messages(unsigned char *buf, unsigned int *read_pos, struct PICA_c2c *c2c)
+{
+	return PICA_processdatastream(buf, read_pos, c2c, media_messages, MSGINFO_MSGSNUM(media_messages));
+}
+
+void PICA_media_transport_changed(struct PICA_c2c *c2c, int transport, const char *ciphersuitename)
+{
+	if (callbacks.call_media_transport_cb)
+		callbacks.call_media_transport_cb(c2c->peer_id, transport, ciphersuitename,
+		                                  PICA_media_max_payload(c2c));
+}
+
+int PICA_media_send_ping(struct PICA_c2c *c2c, int reply)
+{
+	unsigned char buf[PICA_PROTO_PINGREQ_SIZE];
+
+	buf[0] = buf[1] = reply ? PICA_PROTO_PINGREP : PICA_PROTO_PINGREQ;
+	RAND_pseudo_bytes(buf + 2, 2);
+
+	return PICA_media_send(c2c, buf, sizeof(buf));
+}
+
+static unsigned int procmsg_MEDIA_PINGREQ(unsigned char* buf, unsigned int nb, void* p)
+{
+	PICA_media_send_ping((struct PICA_c2c *)p, 1);
+
+	return 1;
+}
+
+static unsigned int procmsg_MEDIA_PINGREP(unsigned char* buf, unsigned int nb, void* p)
+{
+	/* Nothing to do: a ping reply is only interesting as a sign that the
+	 * connection still works, and receiving it already updated the time the
+	 * last datagram arrived at.
+	 */
+	return 1;
+}
+
 int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id)
 {
 	X509 *x;
@@ -187,7 +237,7 @@ int PICA_get_id_from_cert_string(const char *cert_pem, unsigned char *id)
 	return PICA_id_from_X509(x, id);
 }
 
-static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
+int PICA_verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 {
 	//return 1 for self-signed certificates
 	char    buf[256];
@@ -342,7 +392,7 @@ static int c2c_stage5_starttls(struct PICA_c2c *chnl)
 		return PICA_ERRSSL;
 	}
 
-	SSL_set_verify(chnl->ssl, SSL_VERIFY_PEER, verify_callback);
+	SSL_set_verify(chnl->ssl, SSL_VERIFY_PEER, PICA_verify_callback);
 	SSL_set_verify_depth(chnl->ssl, 1);//peer certificate and one CA
 
 	if (chnl->outgoing)
@@ -366,7 +416,7 @@ static int c2c_stage5_starttls(struct PICA_c2c *chnl)
 	return PICA_OK;
 }
 
-static int verify_peer_cert_common(X509 **peer_cert, SSL *ssl, const unsigned char *peer_id)
+int PICA_verify_peer_cert_common(X509 **peer_cert, SSL *ssl, const unsigned char *peer_id)
 {
 	unsigned char idbuf[PICA_ID_SIZE];
 	EVP_PKEY *pubkey;
@@ -426,7 +476,7 @@ static int verify_peer_cert_common(X509 **peer_cert, SSL *ssl, const unsigned ch
 
 static int c2c_verify_peer_cert(struct PICA_c2c *chnl)
 {
-	return verify_peer_cert_common(&chnl->peer_cert, chnl->ssl, chnl->peer_id);
+	return PICA_verify_peer_cert_common(&chnl->peer_cert, chnl->ssl, chnl->peer_id);
 }
 
 static int c2c_stage6_sendc2cconnreq(struct PICA_c2c *chnl)
@@ -454,6 +504,7 @@ static int c2c_start(struct PICA_c2c *chnl)
 	chnl->sck_data = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
 	IOCTLSETNONBLOCKINGSOCKET(chnl->sck_data, 1);
+	SETTCPNODELAY(chnl->sck_data);
 
 	{
 		struct sockaddr_in addr = chnl->conn->srv_addr;
@@ -588,6 +639,7 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 	case PICA_PROTO_DIRECTC2C_IPV4:
 		dc2c->sck = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 		IOCTLSETNONBLOCKINGSOCKET(dc2c->sck, 1);
+		SETTCPNODELAY(dc2c->sck);
 
 		memset(&dc2c->addr, 0, sizeof(dc2c->addr));
 		dc2c->addr.sin_family = AF_INET;
@@ -1412,6 +1464,16 @@ int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int p
 		goto error_ret_2;
 	}
 
+	/* The UDP port with the same number carries call media, see PICA_media.h.
+	 * Failing to open it is not fatal: direct connections still work and
+	 * calls keep their media on the c2c connection.
+	 */
+	if (PICA_media_listener_new(acc, public_port, local_port, &lst->media) != PICA_OK)
+	{
+		fprintf(stderr, "failed to open UDP port %i for call media\n", local_port);
+		lst->media = NULL;
+	}
+
 	return PICA_OK;
 
 error_ret_2: //(2)
@@ -1470,6 +1532,18 @@ int PICA_open_acc(const char *cert_file,
 		goto error_ret_2;
 	}
 
+	/* mediac2c connections, see PICA_media.h. Not fatal if it cannot be
+	 * created - calls then keep their media on the c2c connection.
+	 */
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	a->dtls_ctx = SSL_CTX_new(DTLS_method());
+
+	if (a->dtls_ctx)
+		SSL_CTX_set_min_proto_version(a->dtls_ctx, DTLS1_2_VERSION);
+#else
+	a->dtls_ctx = SSL_CTX_new(DTLSv1_2_method());
+#endif
+
 	/* Available since openssl 1.1.0
 	SSL_CTX_set_security_level(a->ctx, PICA_OPENSSL_SECURUTY_LEVEL);
 	*/
@@ -1493,10 +1567,22 @@ int PICA_open_acc(const char *cert_file,
 		goto error_ret_3;
 	}
 
+	/* The ciphersuites Pica Pica uses are all DHE, so the DTLS context needs
+	 * the parameters as well or it cannot take the server role.
+	 */
+	if (a->dtls_ctx && 1 != SSL_CTX_set_tmp_dh(a->dtls_ctx, dh))
+	{
+		SSL_CTX_free(a->dtls_ctx);
+		a->dtls_ctx = NULL;
+	}
+
 	DH_free(dh);
 
 	SSL_CTX_set_options(a->ctx, SSL_OP_SINGLE_DH_USE);
 	SSL_CTX_set_options(a->anon_ctx, SSL_OP_SINGLE_DH_USE);
+
+	if (a->dtls_ctx)
+		SSL_CTX_set_options(a->dtls_ctx, SSL_OP_SINGLE_DH_USE);
 
 	if (!PICA_get_id_from_cert_file(cert_file, a->id))
 	{
@@ -1548,9 +1634,34 @@ int PICA_open_acc(const char *cert_file,
 		goto error_ret_3;
 	}
 
+	/* The DTLS context authenticates the same way as a directc2c connection,
+	 * with the same certificate, key and ciphersuites. Anything going wrong
+	 * here only costs calls their UDP transport, so it is not reported as an
+	 * error - the media stays on the c2c connection instead.
+	 */
+	if (a->dtls_ctx)
+	{
+		if (password_cb)
+		{
+			SSL_CTX_set_default_passwd_cb(a->dtls_ctx, password_cb);
+			SSL_CTX_set_default_passwd_cb_userdata(a->dtls_ctx, a->id);
+		}
+
+		if (1 != SSL_CTX_use_certificate_file(a->dtls_ctx, cert_file, SSL_FILETYPE_PEM)
+		        || 1 != SSL_CTX_use_PrivateKey_file(a->dtls_ctx, pkey_file, SSL_FILETYPE_PEM)
+		        || 1 != SSL_CTX_set_cipher_list(a->dtls_ctx, PICA_TLS_CIPHERLIST))
+		{
+			fprintf(stderr, "failed to set up the DTLS context, calls will not use UDP\n");
+			SSL_CTX_free(a->dtls_ctx);
+			a->dtls_ctx = NULL;
+		}
+	}
+
 	return PICA_OK;
 
 error_ret_3:
+	if (a->dtls_ctx)
+		SSL_CTX_free(a->dtls_ctx);
 	SSL_CTX_free(a->anon_ctx);//(3)
 error_ret_2: //(2)
 	SSL_CTX_free(a->ctx);
@@ -1803,6 +1914,8 @@ static unsigned int procmsg_CALLANS(unsigned char* buf, unsigned int nb, void *p
 	chan->call_state = PICA_CALL_STATE_ACTIVE;
 	callbacks.call_picked_up_cb(chan->peer_id);
 
+	PICA_media_start(chan);
+
 	return 1;
 }
 
@@ -1834,6 +1947,8 @@ static unsigned int procmsg_CALLFIN(unsigned char* buf, unsigned int nb, void *p
 	}
 
 	chan->call_state = PICA_CALL_STATE_IDLE;
+
+	PICA_media_close(chan);
 
 	callbacks.call_hangup_cb(chan->peer_id);
 	chan->call_audio_params_are_set = 0;
@@ -1889,33 +2004,41 @@ static unsigned int procmsg_CALL_VIDEOPARAM(unsigned char* buf, unsigned int nb,
 	return 1;
 }
 
+/* A media packet is dropped rather than treated as a protocol error breaking
+ * the connection. It can legitimately arrive when the receiving side is not
+ * ready for it: over a mediac2c connection it can overtake the 0x74/0x75
+ * message describing its stream, which travels over the c2c connection, and
+ * it can also arrive after a call has already been hung up locally. A
+ * malformed packet is dropped for the same reason - over UDP it says nothing
+ * about the peer.
+ */
 static unsigned int procmsg_CALL_AUDIO_PACKET(unsigned char *buf, unsigned int nb, void* p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
 	if (chan->call_state != PICA_CALL_STATE_ACTIVE)
 	{
-		fprintf(stderr, "unexpected CALL_AUDIO_PACKET, no call in progress");
-		return 0;
+		fprintf(stderr, "unexpected CALL_AUDIO_PACKET, no call in progress\n");
+		return 1;
 	}
 
 	if (!chan->call_audio_params_are_set)
 	{
-		fprintf(stderr, "no AUDIOPARAM was set, can't process AUDIO_PACKET");
-		return 0;
+		fprintf(stderr, "no AUDIOPARAM was set, can't process AUDIO_PACKET\n");
+		return 1;
 	}
 
 
 	if (*(uint16_t*)(buf + 2) != (nb - 4))
 	{
-		return 0;
+		return 1;
 	}
 
 	uint16_t tail_size = *(uint16_t*)(buf + 2);
 
 	if (tail_size < PICA_PROTO_CALL_PACKET_HDRSIZE)
 	{
-		return 0;
+		return 1;
 	}
 
 	uint16_t seq_num = *(uint16_t*)(buf + 4);
@@ -1933,27 +2056,27 @@ static unsigned int procmsg_CALL_VIDEO_PACKET(unsigned char *buf, unsigned int n
 
 	if (chan->call_state != PICA_CALL_STATE_ACTIVE)
 	{
-		fprintf(stderr, "unexpected CALL_VIDEO_PACKET, no call in progress");
-		return 0;
+		fprintf(stderr, "unexpected CALL_VIDEO_PACKET, no call in progress\n");
+		return 1;
 	}
 
 	if (!chan->call_video_params_are_set)
 	{
-		fprintf(stderr, "no VIDEOPARAM was set, can't process VIDEO_PACKET");
-		return 0;
+		fprintf(stderr, "no VIDEOPARAM was set, can't process VIDEO_PACKET\n");
+		return 1;
 	}
 
 
 	if (*(uint16_t*)(buf + 2) != (nb - 4))
 	{
-		return 0;
+		return 1;
 	}
 
 	uint16_t tail_size = *(uint16_t*)(buf + 2);
 
 	if (tail_size < PICA_PROTO_CALL_PACKET_HDRSIZE)
 	{
-		return 0;
+		return 1;
 	}
 
 	uint16_t seq_num = *(uint16_t*)(buf + 4);
@@ -2096,7 +2219,7 @@ static int directc2c_stage2_starttls(struct PICA_directc2c *d, struct PICA_c2c *
 	d->ssl = SSL_new(c2c->acc->ctx);
 
 	SSL_set_fd(d->ssl, d->sck);
-	SSL_set_verify(d->ssl, SSL_VERIFY_PEER, verify_callback);
+	SSL_set_verify(d->ssl, SSL_VERIFY_PEER, PICA_verify_callback);
 	SSL_set_verify_depth(d->ssl, 1);
 
 	ret = SSL_connect(d->ssl);
@@ -2204,6 +2327,7 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
 	}
 
 	IOCTLSETNONBLOCKINGSOCKET(cid->sck_comm, 1);
+	SETTCPNODELAY(cid->sck_comm);
 
 	cid->state = PICA_C2N_STATE_CONNECTING;
 
@@ -2637,7 +2761,7 @@ static struct PICA_c2c * find_matching_c2c(struct PICA_c2n *c2n, struct PICA_dir
 static int directc2c_verify_peer_cert(struct PICA_directc2c *d, struct PICA_c2c *c2c)
 {
 	PICA_TRACEFUNC
-	return verify_peer_cert_common(&d->peer_cert, d->ssl, c2c->peer_id);
+	return PICA_verify_peer_cert_common(&d->peer_cert, d->ssl, c2c->peer_id);
 }
 
 static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
@@ -2658,7 +2782,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 		{
 			if (d->state == PICA_DIRECTC2C_CONNSTATE_ACTIVE)
 			{
-				if ((c2c = find_matching_c2c(c2n, d)) && (verify_peer_cert_common(&d->peer_cert, d->ssl, c2c->peer_id) == PICA_OK))
+				if ((c2c = find_matching_c2c(c2n, d)) && (PICA_verify_peer_cert_common(&d->peer_cert, d->ssl, c2c->peer_id) == PICA_OK))
 				{
 					if (c2c->direct)
 						PICA_close_directc2c(c2c->direct);
@@ -2807,7 +2931,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 	}
 }
 
-static void listener_add_connection(struct PICA_listener *lst, SOCKET s)
+static void listener_add_connection(struct PICA_listener *lst, SOCKET s, const struct sockaddr_in *peer_addr)
 {
 	PICA_TRACEFUNC
 	struct PICA_directc2c *nc;
@@ -2817,12 +2941,18 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET s)
 
 	nc->is_outgoing = PICA_DIRECTC2C_INCOMING;
 	nc->sck = s;
+	/* Kept for the media connection: it is the only place the peer's address
+	 * is known on this side, and datagrams arriving from anywhere else
+	 * cannot belong to a call with this peer. The port number is the peer's
+	 * outgoing TCP port and is not used.
+	 */
+	nc->addr = *peer_addr;
 	nc->ssl = SSL_new(lst->acc->ctx);
 	nc->state = PICA_DIRECTC2C_CONNSTATE_NEW;
 
 	SSL_set_fd(nc->ssl, nc->sck);
 
-	SSL_set_verify(nc->ssl, SSL_VERIFY_PEER, verify_callback);
+	SSL_set_verify(nc->ssl, SSL_VERIFY_PEER, PICA_verify_callback);
 	SSL_set_verify_depth(nc->ssl, 1);
 
 	ret = SSL_accept(nc->ssl);
@@ -2906,7 +3036,8 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 		if (s >= 0)
 		{
 			IOCTLSETNONBLOCKINGSOCKET(s, 1);
-			listener_add_connection(lst, s);
+			SETTCPNODELAY(s);
+			listener_add_connection(lst, s, &addr);
 		}
 	}
 
@@ -3029,6 +3160,8 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			ic2c = ic2c->next;
 		}
 
+		PICA_media_fdset(*ic2n, &rfds, &nfds);
+
 		ic2n++;
 	}
 
@@ -3111,6 +3244,9 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			{
 				process_directc2c(*ic2n, &rfds, &wfds);
 			}
+
+			//processing media connections of calls in progress
+			PICA_media_process(*ic2n, &rfds);
 		}
 		ic2n++;
 	}
@@ -3659,6 +3795,8 @@ int PICA_pickup_call(struct PICA_c2c *chn)
 
 	chn->call_state = PICA_CALL_STATE_ACTIVE;
 
+	PICA_media_start(chn);
+
 	return PICA_OK;
 }
 
@@ -3702,6 +3840,8 @@ int PICA_hangup_call(struct PICA_c2c *chn)
 	// release call resources??
 	// handle incoming last stream packets?
 	chn->call_state = PICA_CALL_STATE_IDLE;
+
+	PICA_media_close(chn);
 
 	return PICA_OK;
 }
@@ -3749,14 +3889,41 @@ int PICA_set_call_video_params(struct PICA_c2c *chn, const char *codec_name, uin
 	return PICA_OK;
 }
 
-int PICA_send_audio_packet(struct PICA_c2c *chn, uint16_t seq_num, uint32_t timestamp, const char *buf, unsigned int len)
+static int PICA_send_call_packet(struct PICA_c2c *chn, unsigned int msgid, uint16_t seq_num,
+                                 uint32_t timestamp, const char *buf, unsigned int len)
 {
 	struct PICA_proto_msg *mp;
 
 	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
 		return PICA_ERRCALLNOTINPROGRESS;
 
-	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_AUDIO_PACKET, len + 4 + PICA_PROTO_CALL_PACKET_HDRSIZE)))
+	if (len > PICA_media_max_payload(chn))
+		return PICA_ERRMSGSIZE;
+
+	if (PICA_media_is_active(chn))
+	{
+		/* Written to the socket here and now instead of being appended to
+		 * the write buffer the event loop drains: a datagram never blocks
+		 * for long, and waiting for the next pass of the event loop would
+		 * add more delay to every packet than the rest of the call path
+		 * costs together.
+		 */
+		unsigned char pkt[PICA_MEDIA_LINK_MTU];
+		unsigned int pktlen = 4 + PICA_PROTO_CALL_PACKET_HDRSIZE + len;
+
+		if (pktlen > sizeof(pkt))
+			return PICA_ERRMSGSIZE;
+
+		pkt[0] = pkt[1] = msgid;
+		*((uint16_t*)(pkt + 2)) = len + PICA_PROTO_CALL_PACKET_HDRSIZE;
+		*((uint16_t*)(pkt + 4)) = seq_num;
+		*((uint32_t*)(pkt + 4 + PICA_PROTO_CALL_PACKET_SEQNUM_SIZE)) = timestamp;
+		memcpy(pkt + 4 + PICA_PROTO_CALL_PACKET_HDRSIZE, buf, len);
+
+		return PICA_media_send(chn, pkt, pktlen);
+	}
+
+	if ((mp = c2c_writebuf_push(chn, msgid, len + 4 + PICA_PROTO_CALL_PACKET_HDRSIZE)))
 	{
 		*((uint16_t*)mp->tail) = len + PICA_PROTO_CALL_PACKET_HDRSIZE;
 		*((uint16_t*)(mp->tail + 2)) = seq_num;
@@ -3772,27 +3939,14 @@ int PICA_send_audio_packet(struct PICA_c2c *chn, uint16_t seq_num, uint32_t time
 	return PICA_OK;
 }
 
+int PICA_send_audio_packet(struct PICA_c2c *chn, uint16_t seq_num, uint32_t timestamp, const char *buf, unsigned int len)
+{
+	return PICA_send_call_packet(chn, PICA_PROTO_CALL_AUDIO_PACKET, seq_num, timestamp, buf, len);
+}
+
 int PICA_send_video_packet(struct PICA_c2c *chn, uint16_t seq_num, uint32_t timestamp, const char *buf, unsigned int len)
 {
-	struct PICA_proto_msg *mp;
-
-	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
-		return PICA_ERRCALLNOTINPROGRESS;
-
-	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_VIDEO_PACKET, len + 4 + PICA_PROTO_CALL_PACKET_HDRSIZE)))
-	{
-		*((uint16_t*)mp->tail) = len + PICA_PROTO_CALL_PACKET_HDRSIZE;
-		*((uint16_t*)(mp->tail + 2)) = seq_num;
-		*((uint32_t*)(mp->tail + 2 + PICA_PROTO_CALL_PACKET_SEQNUM_SIZE)) = timestamp;
-		memcpy(mp->tail + 2 + PICA_PROTO_CALL_PACKET_HDRSIZE, buf, len);
-
-	}
-	else
-	{
-		return PICA_ERRNOMEM;
-	}
-
-	return PICA_OK;
+	return PICA_send_call_packet(chn, PICA_PROTO_CALL_VIDEO_PACKET, seq_num, timestamp, buf, len);
 }
 
 void PICA_close_directc2c(struct PICA_directc2c *d)
@@ -3841,6 +3995,8 @@ void PICA_close_c2c(struct PICA_c2c *chn)
 	}
 
 //puts("PICA_close_c2c_chkp1");//debug
+
+	PICA_media_close(chn);
 
 	if (chn -> sendfile_stream)
 		fclose(chn -> sendfile_stream);
@@ -3915,6 +4071,10 @@ void PICA_close_acc(struct PICA_acc *a)
 void PICA_close_listener(struct PICA_listener *l)
 {
 	CLOSE(l->sck_listener);
+
+	if (l->media)
+		PICA_media_listener_close(l->media);
+
 	free(l->public_addr_dns);
 
 	while(l->accepted_connections)

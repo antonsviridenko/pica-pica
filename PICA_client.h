@@ -50,6 +50,7 @@ typedef u_short in_port_t;
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <signal.h>
@@ -149,6 +150,8 @@ typedef u_short in_port_t;
 
 struct PICA_c2n;
 struct PICA_c2c;
+struct PICA_media_channel;
+struct PICA_media_listener;
 
 struct PICA_acc
 {
@@ -158,6 +161,8 @@ struct PICA_acc
 	unsigned char id[PICA_ID_SIZE];
 	SSL_CTX* ctx;
 	SSL_CTX* anon_ctx;
+	/** used for mediac2c connections, see PICA_media.h */
+	SSL_CTX* dtls_ctx;
 	const char *pkey_file;
 	const char *cert_file;
 	int (*password_cb)(char *buf, int size, int rwflag, void *userdata);
@@ -304,7 +309,7 @@ struct PICA_c2c
 	FILE *recvfile_stream;
 
 	/** this flag should be set when connection
-	*  must be closed after sending last pushed packet
+	*  must be closed after sending the last pushed packet
 	*/
 	int disconnect_on_empty_write_buf;
 	int switched_to_directc2c_write;
@@ -316,6 +321,8 @@ struct PICA_c2c
 	enum PICA_call_state call_state;
 	int call_audio_params_are_set;
 	int call_video_params_are_set;
+	/** media connection of the call in progress, see PICA_media.h */
+	struct PICA_media_channel *media;
 };
 
 struct PICA_listener
@@ -330,6 +337,11 @@ struct PICA_listener
 	const char *public_addr_dns;
 
 	struct PICA_directc2c *accepted_connections;
+
+	/** listens on the UDP port with the same number, see PICA_media.h.
+	 * NULL if that port could not be opened.
+	 */
+	struct PICA_media_listener *media;
 };
 
 struct PICA_client_callbacks
@@ -427,6 +439,18 @@ struct PICA_client_callbacks
 	void (*call_audio_packet_cb)(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
 
 	void (*call_video_packet_cb)(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
+
+	/**
+	 * The media packets of the call in progress started or stopped being
+	 * carried over a mediac2c connection.
+	 * \param transport PICA_CALL_TRANSPORT_C2C or PICA_CALL_TRANSPORT_MEDIAC2C
+	 * \param ciphersuitename ciphersuite of the media connection, NULL when
+	 * the transport is not mediac2c
+	 * \param max_payload largest amount of data that can be passed to
+	 * PICA_send_audio_packet()/PICA_send_video_packet() from now on
+	 */
+	void (*call_media_transport_cb)(const unsigned char *peer_id, int transport,
+	                                const char *ciphersuitename, unsigned int max_payload);
 };
 
 

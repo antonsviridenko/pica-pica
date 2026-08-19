@@ -123,7 +123,9 @@ pica-client/dialogs/settingsdialog.h \
 pica-client/dialogs/nodesdialog.cpp \
 pica-client/dialogs/nodesdialog.h \
 PICA_client.c \
+PICA_media.c \
 PICA_client.h \
+PICA_media.h \
 PICA_msgproc.c \
 PICA_msgproc.h \
 PICA_common.h PICA_proto.h \

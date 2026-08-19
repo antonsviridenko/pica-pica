@@ -45,6 +45,8 @@ AudioVideoCallController::AudioVideoCallController(QObject *parent)
 	connect(skynet, SIGNAL(IncomingVideoParams(QByteArray,QString,quint16,quint16)), this, SLOT(incoming_video_params(QByteArray,QString,quint16,quint16)));
 	connect(skynet, SIGNAL(IncomingVideoPacket(QByteArray,quint16,quint32,QByteArray)), this, SLOT(incoming_video_packet(QByteArray,quint16,quint32,QByteArray)));
 
+	connect(skynet, SIGNAL(CallMediaTransportChanged(QByteArray,bool,QString,quint32)), this, SLOT(media_transport_changed(QByteArray,bool,QString,quint32)));
+
 	// Earpiece tones (ringback/busy/unreachable) and the incoming call bell
 	// are played by two TonePlayer instances, each living on its own
 	// QThread since TonePlayer::play() blocks the calling thread for the
@@ -208,6 +210,13 @@ void AudioVideoCallController::startVideoPipeline()
 	m_videoSeq = 0;
 	m_videoFrameTimestamp = 0;
 	m_videoFrameStarted = false;
+
+	// Datagram sized from the start, even though the call begins on the c2c
+	// connection where a 0x77 message could hold far more: a media connection
+	// may come up at any moment during the call, and frames whose fragments
+	// were cut before that would not fit into a datagram. Over TCP this only
+	// costs a few more message headers.
+	cam->setMaxFragmentSize(PICA_MEDIA_SAFE_PAYLOAD);
 
 	bool preferCompressed = st.loadValue("video.prefer_compressed", 0).toBool();
 	bool vaapiEncoding = st.loadValue("video.vaapi_encoding", 0).toBool();
@@ -408,7 +417,6 @@ void AudioVideoCallController::incoming_audio_params(QByteArray peer_id, QString
 
 void AudioVideoCallController::incoming_audio_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data)
 {
-	Q_UNUSED(seq_num);
 	Q_UNUSED(timestamp);
 
 	if (!is_active || peer_id != m_peer_id)
@@ -419,7 +427,7 @@ void AudioVideoCallController::incoming_audio_packet(QByteArray peer_id, quint16
 	// call from any thread; queuing it behind output's own blocking Play()
 	// call would mean it's never delivered, and Play() would sit forever
 	// pulling from an empty jitter buffer.
-	output->enqueuePacket(data);
+	output->enqueuePacket(seq_num, data);
 }
 
 void AudioVideoCallController::video_capture_started(QString codec, int width, int height)
@@ -458,6 +466,25 @@ void AudioVideoCallController::send_video_packet(QByteArray data, bool is_last_f
 	}
 
 	skynet->SendVideoPacket(m_peer_id, seq, m_videoFrameTimestamp, data);
+}
+
+void AudioVideoCallController::media_transport_changed(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload)
+{
+	if (peer_id != m_peer_id)
+		return;
+
+	// Fragments stay datagram sized for the whole call (see
+	// startVideoPipeline()); this only lowers the size further, for when the
+	// media connection turns out to carry less than was assumed. Direct call,
+	// not invokeMethod()/QueuedConnection - see the comment in
+	// stopAudioPipeline(): cam's thread is blocked inside Capture().
+	cam->setMaxFragmentSize(qMin((int)max_payload, (int)PICA_MEDIA_SAFE_PAYLOAD));
+
+	if (callwindow)
+		callwindow->setMediaTransport(direct_udp, ciphersuitename);
+
+	qDebug() << "call media transport:" << (direct_udp ? "direct UDP/DTLS" : "c2c connection")
+	         << ciphersuitename << "max payload" << max_payload;
 }
 
 void AudioVideoCallController::incoming_video_params(QByteArray peer_id, QString codec, quint16 width, quint16 height)

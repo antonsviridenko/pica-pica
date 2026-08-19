@@ -2671,6 +2671,10 @@ void process_listen_read(evutil_socket_t listener, short event, void *arg)
 			nc->state = PICA_NEWCONN_WAITANONTLSACCEPT;
 
 			IOCTLSETNONBLOCKINGSOCKET(s, 1);
+			/* the node relays c2c data, so Nagle delays here are added to
+			 * the delay of every message between the two clients
+			 */
+			SETTCPNODELAY(s);
 
 			PICA_debug1("accepted connection from %.16s, new socket %i", inet_ntoa(addr.sin_addr), s);//IPv6
 

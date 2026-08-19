@@ -44,7 +44,8 @@ public:
 
 	// Adds one received fragment. Returns the complete encoded frame once
 	// the fragment carrying the last fragment marker has been added, and an
-	// empty QByteArray while the frame is still incomplete.
+	// empty QByteArray while the frame is still incomplete or while waiting
+	// to resynchronize after a loss.
 	QByteArray addFragment(quint16 seq_num, quint32 timestamp, const QByteArray &data);
 
 	void reset();
@@ -53,6 +54,13 @@ private:
 	QByteArray m_buffer;
 	quint32 m_timestamp;
 	bool m_inProgress;
+	// Counter part of the sequence number of the last accepted fragment, and
+	// whether that fragment ended a frame. Together they say whether the
+	// fragment being added continues what came before it or whether
+	// something was lost on the way - see addFragment().
+	quint16 m_lastSeq;
+	bool m_lastWasFrameEnd;
+	bool m_haveLastSeq;
 };
 
 // Video counterpart of AudioDevice: a single instance is dedicated to one
@@ -101,6 +109,14 @@ public:
 	// thread. Drops the oldest queued frame if the buffer is full - for live
 	// video, showing the newest frame matters more than showing every frame.
 	void enqueueFrame(QByteArray encodedFrame);
+
+	// Largest amount of encoded data one fragment emitted by packetReady()
+	// may carry. It changes while a call is running: a media packet sent over
+	// a mediac2c connection has to fit into a single datagram, which is far
+	// less than a 0x77 message can hold over TCP. Safe to call from any
+	// thread, and called directly rather than queued for the same reason
+	// enqueueFrame() is - the capture loop it affects is already running.
+	void setMaxFragmentSize(int size);
 
 	// Stops keeping decoded frames in GPU memory, for when the renderer that
 	// was to draw them turns out not to be able to: decoding carries on, but
@@ -183,6 +199,9 @@ private:
 	// loop is running, so it has to be read atomically rather than as a plain
 	// bool like the settings above, which are fixed before the loop starts.
 	QAtomicInt m_hwRenderDisabled;
+	// Likewise set from another thread, by setMaxFragmentSize(), while the
+	// capture loop is running.
+	QAtomicInt m_maxFragmentSize;
 
 	QMutex m_queueMutex;
 	QWaitCondition m_queueCond;

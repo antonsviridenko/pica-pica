@@ -12,7 +12,7 @@ UH - user hash - the SHA224 hash of a user certificate in DER format, 28
 octets. It is used as a user identifier.
 
 Connections.
-There are 4 types of connections between Pica Pica nodes and clients.
+There are 5 types of connections between Pica Pica nodes and clients.
 
 -client to node (c2n) - a control connection from client to node
 
@@ -25,7 +25,28 @@ acting as a proxy
 using the IPv4/IPv6/DNS address of the accepting client previously
 communicated over a c2c connection.
 
-These connections use TCP transport. The first 3 connection types start
+-media client to client (mediac2c) - a direct connection between clients
+carrying the real time media of an audio/video call. It uses UDP transport
+and DTLS 1.2 with mutual certificate authentication.
+
+A mediac2c connection is established only while a call is in progress and
+only between clients that already have an established directc2c connection.
+It uses the address and port number the directc2c connection was made to,
+with UDP instead of TCP: the client that made the outgoing directc2c
+connection acts as the DTLS client and connects to that same address, the
+client that accepted it acts as the DTLS server and listens on the UDP port
+with the same number as its directc2c listening port. Each side verifies
+that the certificate presented by the peer hashes to the UH of the peer of
+the c2c connection the call belongs to, exactly as it does on a directc2c
+connection. No addresses are announced separately for this connection type
+and no additional protocol messages are needed to establish it.
+
+Media packets are carried over the mediac2c connection whenever it is
+established, and over the c2c or directc2c connection otherwise. There is
+no message announcing the change: the receiving side accepts media packets
+over either transport for the whole duration of a call.
+
+The first 4 connection types use TCP transport. The first 3 connection types start
 with a TLS 1.2 handshake using an anonymous Diffie-Hellman ciphersuite; the
 connecting host acts as the TLS client, the accepting host as the TLS server.
 After the connection type is identified by the accepting node, the anonymous
@@ -237,6 +258,9 @@ If the client is behind NAT and forwards an open port to its local address, the
 external port number must be specified in the address.
 Having received the announcement, the other client can create a connection to
 that address and close the connection through the node.
+The announced port numbers are used both for TCP directc2c connections and for
+UDP mediac2c connections, so a client behind NAT has to forward the port for
+both protocols.
 ====================================================
 Direct connection attempts failed.
 
@@ -309,7 +333,16 @@ Commands:
 
 
 Audio and Video Calls.
-Sent between clients over a c2c or directc2c connection.
+The call control messages (0x70 - 0x75) are sent between clients over a c2c or
+directc2c connection.
+The media packets (0x76, 0x77) are sent over a mediac2c connection when one is
+established, and over the c2c or directc2c connection otherwise. Over a
+mediac2c connection every datagram contains exactly one message, and messages
+can be lost, reordered or duplicated; the receiving side must be prepared for
+that and must not treat a malformed or unexpected packet as a protocol error
+breaking the connection. In particular, a media packet can arrive before the
+0x74 or 0x75 message describing the stream it belongs to, because those travel
+over a different connection; such a packet is discarded.
 ====================================================
 Call request (ring)
 
@@ -366,11 +399,9 @@ length - covers everything following it: the 2-octet sequence number, the
 4-octet timestamp and the data, i.e. data length + 6.
 
 sequence number - incremented by one for every audio packet sent over this
-call, wraps around at 65536. Since c2c/directc2c connections are carried
-over TCP, packets already arrive in order and without loss; the sequence
-number's purpose is to let the receiving side detect encoder-side gaps (e.g.
-a dropped capture buffer) and, in the future, to support delivery over an
-unordered/lossy transport (e.g. UDP).
+call, wraps around at 65536. It lets the receiving side detect encoder-side
+gaps (e.g. a dropped capture buffer) and, over a mediac2c connection, put
+the received packets back in order, detect losses and discard duplicates.
 
 timestamp - the capture timestamp of the packet's first sample, in
 milliseconds, relative to the moment the call became active (the 0x71
@@ -409,15 +440,36 @@ fragment marker bit (0x8000) set in its sequence number; every preceding
 fragment of the same frame has that bit cleared. A frame that fits into a
 single message is sent as one message with the marker bit set.
 
-The receiving side concatenates the data of the received fragments in the
-order they arrive, and passes the result to the video decoder once a message
-with the marker bit set has been received.
+Over a c2c or directc2c connection a single 0x77 message can carry up to
+65526 octets of data. Over a mediac2c connection the whole message has to
+fit into one datagram, so the amount of data a fragment carries is limited
+by the path MTU instead, and an encoded frame is normally split into many
+more fragments.
+
+The receiving side concatenates the data of the received fragments and
+passes the result to the video decoder once a message with the marker bit
+set has been received.
+
+Since fragments can be lost over a mediac2c connection, the receiving side
+must also check that the fragments it concatenates are consecutive: a
+fragment may only start a new frame if the previously accepted message had
+the last fragment marker bit set and the counter part of the sequence
+number of the new one follows it without a gap. If a gap is detected, the
+partially assembled frame is discarded and the receiving side skips
+fragments until a message with the last fragment marker bit set is
+received, resuming assembly with the message following it. Without this
+rule, losing the first fragment of a frame would make the receiving side
+treat the second one as the beginning of a frame and pass a truncated frame
+to the decoder.
 ====================================================
 
 
 Ping.
 Can be sent by either side, both over the c2n control connection and over a
 connection between clients.
+Over a mediac2c connection it is also used as a keepalive, to hold open the
+NAT and firewall state the connection depends on while neither side is
+sending media, and to detect that the connection has stopped working.
 ====================================================
 Ping request.
 

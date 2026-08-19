@@ -173,6 +173,16 @@ int PICA_upnp_autoconfigure_ipv4(int public_port, int local_port, char *public_i
 	else
 		ret = 1;
 
+	/* The port with the same number carries call media over UDP, see
+	 * PICA_media.h. Failing to map it only costs calls their UDP transport,
+	 * so it does not change the result reported for the TCP mapping.
+	 */
+	if (UPNPCOMMAND_SUCCESS != UPNP_AddPortMapping(urls.controlURL, data.first.servicetype,
+					ppstr, lpstr, lanaddr, "Pica Pica media", "UDP", 0, "0"))
+	{
+		fprintf(stderr, "failed to forward UDP port %s for call media\n", ppstr);
+	}
+
 	freeUPNPDevlist(devlist);
 	FreeUPNPUrls(&urls);
 	return ret;

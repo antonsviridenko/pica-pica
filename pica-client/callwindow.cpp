@@ -35,6 +35,9 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	lbTimer = new QLabel(this);
 	lbTimer->setAlignment(Qt::AlignCenter);
 	lbTimer->hide();
+	lbTransport = new QLabel(this);
+	lbTransport->setAlignment(Qt::AlignCenter);
+	lbTransport->hide();
 	lbVideo = new QLabel(this);
 	lbVideo->setAlignment(Qt::AlignCenter);
 	lbVideo->setMinimumSize(320, 240);
@@ -49,6 +52,7 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	callElapsedSeconds = 0;
 
 	lv->addWidget(lbTimer);
+	lv->addWidget(lbTransport);
 	lv->addWidget(lbVideo);
 #ifdef HAVE_VAAPI
 	lv->addWidget(videoGpu->widget());
@@ -90,6 +94,17 @@ void CallWindow::call_ended()
 {
 	callTimer->stop();
 	pbHang->setDisabled(true);
+	lbTransport->hide();
+}
+
+void CallWindow::setMediaTransport(bool direct_udp, QString ciphersuitename)
+{
+	if (direct_udp)
+		lbTransport->setText(tr("🔐 media: direct UDP, %1").arg(ciphersuitename));
+	else
+		lbTransport->setText(tr("media: through the chat connection"));
+
+	lbTransport->show();
 }
 
 void CallWindow::showRemoteFrame(QImage frame)

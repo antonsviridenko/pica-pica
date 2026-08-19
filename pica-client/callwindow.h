@@ -50,6 +50,9 @@ private:
 	QPushButton *pbCall;
 	QPushButton *pbHang;
 	QLabel *lbTimer;
+	// How the call's media is being carried, and under which ciphersuite.
+	// Hidden until that is known.
+	QLabel *lbTransport;
 	// Displays the remote side's video. Stays hidden until the first frame
 	// arrives, so an audio-only call keeps the compact window it had before.
 	QLabel *lbVideo;
@@ -67,6 +70,9 @@ private:
 public slots:
 	void call_started();
 	void call_ended();
+	// direct_udp tells whether the media is being carried over a direct
+	// mediac2c connection or over the c2c connection the call was set up on.
+	void setMediaTransport(bool direct_udp, QString ciphersuitename);
 	void showRemoteFrame(QImage frame);
 #ifdef HAVE_VAAPI
 	void showRemoteHwFrame(AVFramePtr frame);

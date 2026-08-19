@@ -19,6 +19,7 @@
 
 #include "nodes.h"
 #include "../PICA_client.h"
+#include "../PICA_media.h"
 #include "../PICA_proto.h"
 #include "accounts.h"
 #include <QObject>
@@ -95,6 +96,12 @@ signals:
 
 	void IncomingVideoParams(QByteArray peer_id, QString codec, quint16 width, quint16 height);
 	void IncomingVideoPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	/** The media packets of the call started or stopped being carried over a
+	 *  direct UDP (mediac2c) connection. max_payload is the largest amount of
+	 *  data one media packet can carry from now on.
+	 */
+	void CallMediaTransportChanged(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload);
 private:
 	// Constructed in init(), once this SkyNet instance is running on its
 	// own network thread and that thread's dedicated QSqlDatabase
@@ -118,6 +125,7 @@ private:
 	int event_loop_timer_id;
 	int file_transfer_timer_id;
 	int c2c_reconnect_timer_id;
+	int call_timer_id;
 
 	void timerEvent(QTimerEvent * e);
 
@@ -132,6 +140,13 @@ private:
 	void active_filetransfers_down();
 	void active_filetransfers_reset();
 	quint32 active_filetransfers;
+
+	/* Only one call can be in progress at a time, so this is a flag and not
+	 * a counter like active_filetransfers.
+	 */
+	void call_active_set(bool active, QByteArray peer);
+	bool call_active;
+	QByteArray call_active_peer;
 
 	void continue_start_call();
 	// check if there is a call waiting to be initiated with peer_id
@@ -173,6 +188,8 @@ private:
 
 	void emit_IncomingVideoParams(QByteArray peer_id, QString codec, quint16 width, quint16 height);
 	void emit_IncomingVideoPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void emit_CallMediaTransportChanged(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload);
 
 	static void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type);
 
@@ -231,6 +248,8 @@ private:
 	static void call_audio_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
 
 	static void call_video_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
+
+	static void call_media_transport_cb(const unsigned char *peer_id, int transport, const char *ciphersuitename, unsigned int max_payload);
 
 private slots:
 	void nodelink_activated(PICA_c2n *c2n);

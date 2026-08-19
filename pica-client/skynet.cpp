@@ -70,7 +70,8 @@ SkyNet::SkyNet()
 		call_audio_params_cb,
 		call_video_params_cb,
 		call_audio_packet_cb,
-		call_video_packet_cb
+		call_video_packet_cb,
+		call_media_transport_cb
 
 	};
 
@@ -84,6 +85,8 @@ SkyNet::SkyNet()
 	connect(this, SIGNAL(MultiloginMessageReceived(quint64,QString,quint16)), this, SLOT(multilogin_event(quint64,QString,quint16)), Qt::QueuedConnection);
 
 	file_transfer_timer_id = 0;
+	call_timer_id = 0;
+	call_active = false;
 
 }
 
@@ -135,6 +138,43 @@ void SkyNet::active_filetransfers_down()
 	{
 		killTimer(file_transfer_timer_id);
 		file_transfer_timer_id = 0;
+	}
+}
+
+void SkyNet::call_active_set(bool active, QByteArray peer)
+{
+	if (active)
+	{
+		call_active_peer = peer;
+	}
+	else
+	{
+		// A c2c connection to some other contact going down says nothing
+		// about the call in progress.
+		if (!peer.isEmpty() && !call_active_peer.isEmpty() && peer != call_active_peer)
+			return;
+
+		call_active_peer.clear();
+	}
+
+	if (active == call_active)
+		return;
+
+	call_active = active;
+
+	// Same trick as active_filetransfers_up(): a zero interval timer is not
+	// a busy loop here, because PICA_event_loop() spends its time blocked
+	// inside select(). Without it the network thread only enters select()
+	// once per event_loop_timer_id tick, and an incoming media packet waits
+	// for the rest of that interval before it is read.
+	if (active && call_timer_id == 0)
+	{
+		call_timer_id = startTimer(0);
+	}
+	else if (!active && call_timer_id != 0)
+	{
+		killTimer(call_timer_id);
+		call_timer_id = 0;
 	}
 }
 
@@ -379,7 +419,8 @@ void SkyNet::reconnect_c2c()
 
 void SkyNet::timerEvent(QTimerEvent *e)
 {
-	if (e->timerId() == file_transfer_timer_id || e->timerId() == event_loop_timer_id)
+	if (e->timerId() == file_transfer_timer_id || e->timerId() == event_loop_timer_id
+	        || e->timerId() == call_timer_id)
 	{
 		if (connecting_nodes.size() > 0 || self_aware)
 		{
@@ -396,7 +437,12 @@ void SkyNet::timerEvent(QTimerEvent *e)
 
 			nodelinks.append(NULL);
 
-			ret = PICA_event_loop(nodelinks.data(), 25);
+			// A shorter select() timeout while a call is in progress: the
+			// audio and video threads hand their packets over with a queued
+			// invokeMethod(), and Qt cannot deliver those to this thread
+			// while it sits inside select(). The timeout is therefore the
+			// worst case delay added to every outgoing media packet.
+			ret = PICA_event_loop(nodelinks.data(), call_active ? 5 : 25);
 
 			while(!connected_nodes_to_close.empty())
 			{
@@ -561,6 +607,7 @@ void SkyNet::do_Exit()
 	self_aware = false;
 
 	active_filetransfers_reset();
+	call_active_set(false, QByteArray());
 
 	msgqueues.clear();
 
@@ -812,6 +859,8 @@ void SkyNet::do_AcceptCall(QByteArray from)
 
 		if (ret != PICA_OK)
 			emit CallFailed(from, QString(tr("Failed to pickup the call: %1")).arg(ret));
+		else
+			call_active_set(true, from);
 
 		return;
 	}
@@ -836,6 +885,8 @@ void SkyNet::do_RejectCall(QByteArray from)
 		if (ret != PICA_OK)
 			emit CallFailed(from, QString(tr("Failed to reject the call: %1")).arg(ret));
 
+		call_active_set(false, from);
+
 		return;
 	}
 
@@ -858,6 +909,8 @@ void SkyNet::do_HangupCall(QByteArray with)
 
 		if (ret != PICA_OK)
 			emit CallFailed(with, QString(tr("Failed to hang up the call: %1")).arg(ret));
+
+		call_active_set(false, with);
 
 		return;
 	}
@@ -1229,6 +1282,11 @@ void SkyNet::emit_IncomingVideoPacket(QByteArray peer_id, quint16 seq_num, quint
 	emit IncomingVideoPacket(peer_id, seq_num, timestamp, data);
 }
 
+void SkyNet::emit_CallMediaTransportChanged(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload)
+{
+	emit CallMediaTransportChanged(peer_id, direct_udp, ciphersuitename, max_payload);
+}
+
 //callbacks
 
 void SkyNet::newmsg_cb(const unsigned char *peer_id, const char *msgbuf, unsigned int nb, int type)
@@ -1297,6 +1355,8 @@ void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
 
 	skynet->emit_c2cClosed(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString(tr("Disconnected")));
+	/* a call carried by this connection cannot continue */
+	skynet->call_active_set(false, QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
 void SkyNet::nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port)
@@ -1450,17 +1510,26 @@ void SkyNet::incoming_call_cb(const unsigned char *peer_id)
 
 void SkyNet::call_picked_up_cb(const unsigned char *peer_id)
 {
-	skynet->emit_CallAccepted(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+
+	skynet->call_active_set(true, peer);
+	skynet->emit_CallAccepted(peer);
 }
 
 void SkyNet::call_rejected_cb(const unsigned char *peer_id)
 {
-	skynet->emit_CallRejected(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+
+	skynet->call_active_set(false, peer);
+	skynet->emit_CallRejected(peer);
 }
 
 void SkyNet::call_hangup_cb(const unsigned char *peer_id)
 {
-	skynet->emit_CallHungup(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+
+	skynet->call_active_set(false, peer);
+	skynet->emit_CallHungup(peer);
 }
 
 void SkyNet::call_audio_params_cb(const unsigned char *peer_id, const char *codec, uint16_t sample_rate)
@@ -1481,4 +1550,18 @@ void SkyNet::call_audio_packet_cb(const unsigned char *peer_id, uint16_t seq_num
 void SkyNet::call_video_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data)
 {
 	skynet->emit_IncomingVideoPacket(QByteArray((const char*)peer_id, PICA_ID_SIZE), seq_num, timestamp, QByteArray(pkt_data, size));
+}
+
+void SkyNet::call_media_transport_cb(const unsigned char *peer_id, int transport, const char *ciphersuitename, unsigned int max_payload)
+{
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+	bool direct_udp = (transport == PICA_CALL_TRANSPORT_MEDIAC2C);
+
+	skynet->emit_ConnectionStatusUpdated(peer, direct_udp
+	                                     ? QString("🔐: %1 media").arg(ciphersuitename)
+	                                     : QString(tr("call media over the c2c connection")));
+
+	skynet->emit_CallMediaTransportChanged(peer, direct_udp,
+	                                       ciphersuitename ? QString::fromLatin1(ciphersuitename) : QString(),
+	                                       max_payload);
 }

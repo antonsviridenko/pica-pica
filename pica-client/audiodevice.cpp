@@ -110,7 +110,8 @@ static SwrContext *makeMonoResampler(AVSampleFormat inFmt, int inRate, AVSampleF
 }
 
 AudioDevice::AudioDevice(QObject *parent)
-	: QObject(parent), m_sampleRate(48000), m_abort(0)
+	: QObject(parent), m_sampleRate(48000), m_abort(0),
+	  m_lastPlayedSeq(0), m_havePlayedSeq(false)
 {
 }
 
@@ -133,14 +134,48 @@ void AudioDevice::configurePlayback(QString deviceName, QString codec, int sampl
 	m_sampleRate = sampleRate;
 }
 
-void AudioDevice::enqueuePacket(QByteArray data)
+// Difference between two sequence numbers, correct across the point where
+// they wrap around: positive if a comes after b.
+static inline int seq_diff(quint16 a, quint16 b)
+{
+	return (qint16)(a - b);
+}
+
+void AudioDevice::enqueuePacket(quint16 seq_num, QByteArray data)
 {
 	QMutexLocker locker(&m_queueMutex);
+	int i;
+
+	// Too late to be of any use - the audio it belongs to has already been
+	// played. This also throws away duplicates of packets already played.
+	if (m_havePlayedSeq && seq_diff(seq_num, m_lastPlayedSeq) <= 0)
+		return;
+
+	// Insertion point, and duplicates of packets still waiting.
+	for (i = m_playQueue.size(); i > 0; i--)
+	{
+		int d = seq_diff(seq_num, m_playQueue[i - 1].seq);
+
+		if (d == 0)
+			return;
+
+		if (d > 0)
+			break;
+	}
 
 	while (m_playQueue.size() >= kMaxQueueDepth)
-		m_playQueue.dequeue();
+	{
+		m_playQueue.removeFirst();
 
-	m_playQueue.enqueue(data);
+		if (i > 0)
+			i--;
+		else
+			return; // the packet just dropped was this one's place
+	}
+
+	PlaybackPacket p = { seq_num, data };
+	m_playQueue.insert(i, p);
+
 	m_queueCond.wakeAll();
 }
 
@@ -151,6 +186,8 @@ void AudioDevice::Close()
 	{
 		QMutexLocker locker(&m_queueMutex);
 		m_playQueue.clear();
+		/* the next call starts its own numbering */
+		m_havePlayedSeq = false;
 	}
 	m_queueCond.wakeAll();
 }
@@ -502,7 +539,11 @@ void AudioDevice::Play()
 			if (m_playQueue.isEmpty())
 				continue;
 
-			pktData = m_playQueue.dequeue();
+			PlaybackPacket p = m_playQueue.takeFirst();
+
+			pktData = p.data;
+			m_lastPlayedSeq = p.seq;
+			m_havePlayedSeq = true;
 		}
 
 		AVPacket *in_pkt = av_packet_alloc();
