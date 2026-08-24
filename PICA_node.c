@@ -1741,11 +1741,29 @@ int PICA_node_init()
 
 
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	ctx = SSL_CTX_new(TLS_method());
+	anon_ctx = SSL_CTX_new(TLS_method());
+#else
 	ctx = SSL_CTX_new(TLSv1_2_method());
 	anon_ctx = SSL_CTX_new(TLSv1_2_method());
+#endif
 
 	if (!ctx || !anon_ctx)
 		PICA_fatal("unable to create SSL_CTX object");
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	/* TLS_method() on its own would negotiate the highest version both ends
+	 * know. Narrowing it back to 1.2 is what keeps this the same protocol
+	 * TLSv1_2_method() used to give - see PICA_TLS_MINVERSION for why the
+	 * ceiling matters as much as the floor.
+	 */
+	if (!SSL_CTX_set_min_proto_version(ctx, PICA_TLS_MINVERSION) ||
+	    !SSL_CTX_set_max_proto_version(ctx, PICA_TLS_MAXVERSION) ||
+	    !SSL_CTX_set_min_proto_version(anon_ctx, PICA_TLS_MINVERSION) ||
+	    !SSL_CTX_set_max_proto_version(anon_ctx, PICA_TLS_MAXVERSION))
+		PICA_fatal("failed to restrict the TLS version range to 1.2");
+#endif
 
 	ret = SSL_CTX_set_cipher_list(ctx, PICA_TLS_CIPHERLIST);
 

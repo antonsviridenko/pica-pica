@@ -1516,7 +1516,11 @@ int PICA_open_acc(const char *cert_file,
 	a->cert_file = strdup(cert_file);
 	a->password_cb = password_cb;
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	a->ctx = SSL_CTX_new(TLS_method());//(2)
+#else
 	a->ctx = SSL_CTX_new(TLSv1_2_method());//(2)
+#endif
 
 	if (!a->ctx)
 	{
@@ -1524,13 +1528,33 @@ int PICA_open_acc(const char *cert_file,
 		goto error_ret_1;
 	}
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	a->anon_ctx = SSL_CTX_new(TLS_method());//(3)
+#else
 	a->anon_ctx = SSL_CTX_new(TLSv1_2_method());//(3)
+#endif
 
 	if (!a->anon_ctx)
 	{
 		ret_err = PICA_ERRSSL;
 		goto error_ret_2;
 	}
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	/* TLS_method() on its own would negotiate the highest version both ends
+	 * know. Narrowing it back to 1.2 is what keeps this the same protocol
+	 * TLSv1_2_method() used to give - see PICA_TLS_MINVERSION for why the
+	 * ceiling matters as much as the floor.
+	 */
+	if (!SSL_CTX_set_min_proto_version(a->ctx, PICA_TLS_MINVERSION) ||
+	    !SSL_CTX_set_max_proto_version(a->ctx, PICA_TLS_MAXVERSION) ||
+	    !SSL_CTX_set_min_proto_version(a->anon_ctx, PICA_TLS_MINVERSION) ||
+	    !SSL_CTX_set_max_proto_version(a->anon_ctx, PICA_TLS_MAXVERSION))
+	{
+		ret_err = PICA_ERRSSL;
+		goto error_ret_3;
+	}
+#endif
 
 	/* mediac2c connections, see PICA_media.h. Not fatal if it cannot be
 	 * created - calls then keep their media on the c2c connection.
