@@ -18,6 +18,7 @@
 #define AUDIODEVICE_H
 
 #include "mediadevice.h"
+#include "echocanceller.h"
 #include <QObject>
 #include <QString>
 #include <QByteArray>
@@ -25,6 +26,8 @@
 #include <QMutex>
 #include <QWaitCondition>
 #include <QAtomicInt>
+
+class NativeAudioBackend;
 
 // A single AudioDevice instance is dedicated to one direction - either
 // capture+encode (via Capture(), fed from a local hardware input device) or
@@ -41,10 +44,21 @@ public:
 	~AudioDevice();
 
 	// Configure before invoking Capture()/Play(). deviceName is a platform
-	// device identifier as accepted by the FFmpeg driver named by
-	// PlatformDriverName() (e.g. an ALSA PCM name), or "default".
+	// device identifier as accepted by the driver named by
+	// PlatformDriverName() (e.g. an ALSA PCM name, a PulseAudio source name,
+	// a WASAPI endpoint id, a CoreAudio device UID), or "default".
 	Q_INVOKABLE void configureCapture(QString deviceName, QString codec, int sampleRate);
 	Q_INVOKABLE void configurePlayback(QString deviceName, QString codec, int sampleRate);
+
+	// Give this device the call's echo canceller. The capture direction runs
+	// the microphone signal through it, the playback direction feeds it the
+	// far end signal; both directions of one call must be given the same
+	// object or there is nothing to cancel against.
+	//
+	// Ignored when the platform is doing its own cancellation - see
+	// AudioVideoCallController::startAudioPipeline(), which is where that is
+	// decided.
+	void setEchoCanceller(EchoCancellerPtr ec);
 
 	// Push a codec packet received from the network into the playback
 	// jitter buffer. Safe to call from any thread. Drops the oldest queued
@@ -81,14 +95,53 @@ signals:
 
 	void errorOccurred(QString message);
 
+	// Emitted once a device is open, describing the format it settled on.
+	// Counterpart of VideoDevice::accelerationInUse().
+	void deviceFormatInUse(QString description);
+
 public:
 	virtual QList<MediaDeviceInfo> Enumerate(enum MediaDeviceStreamDirection dir);
 
-	// Name of the FFmpeg libavdevice muxer/demuxer for the host platform's
-	// native audio API (e.g. "alsa" on Linux, "audiotoolbox" on macOS,
-	// "dsound" on Windows). Shared by every component that opens an audio
-	// device through FFmpeg (capture, playback, TonePlayer).
-	static QString PlatformDriverName();
+	// Name of the driver to use for one direction of audio.
+	//
+	// Two kinds of name come back. A bare name - "alsa", "pulse", "oss" - is
+	// an FFmpeg libavdevice muxer/demuxer, opened through libavformat the way
+	// the rest of this codebase opens things. A name starting with
+	// "platform-" is not an FFmpeg driver at all: what follows the prefix
+	// names a platform audio API that the caller has to drive itself through
+	// NativeAudioBackend, because libavdevice cannot express what we need
+	// from it.
+	//
+	// That is how Windows and macOS are handled. Both provide acoustic echo
+	// cancellation, but only to streams that declare themselves part of a
+	// voice call - AudioCategory_Communications on WASAPI, the
+	// VoiceProcessingIO audio unit on CoreAudio - and libavdevice's
+	// and "audiotoolbox" wrappers have no way to ask for either. Rather than
+	// open the sound card the plain way and then cancel the echo ourselves on
+	// platforms that would have done a better job of it below us, we talk to
+	// those APIs directly.
+	//
+	// The direction matters because the answer can differ between them: it is
+	// the capture side that Windows attaches its processing to, and on Linux
+	// the two directions can sit on different servers.
+	static QString PlatformDriverName(enum MediaDeviceStreamDirection dir);
+
+	// True if the driver name is a "platform-<api>" one rather than an FFmpeg
+	// driver, and the API name out of such a string.
+	static bool IsPlatformDriver(const QString &driver);
+	static QString PlatformApiName(const QString &driver);
+
+	// The FFmpeg driver Linux should use, "alsa" or "pulse", from the
+	// "audio.driver" setting. Meaningless on the other platforms, which have
+	// exactly one audio API worth using.
+	//
+	// The value is cached in a process wide variable rather than read from
+	// the settings database on demand, because Capture() and Play() run on
+	// their own threads and a QSqlDatabase connection belongs to the thread
+	// that opened it. Call the setter from the GUI thread at startup and
+	// whenever the setting changes.
+	static void SetLinuxDriverName(const QString &driver);
+	static QString LinuxDriverName();
 
 private:
 	QString m_deviceName;
@@ -96,6 +149,18 @@ private:
 	int m_sampleRate;
 
 	QAtomicInt m_abort;
+
+	// Shared with the other direction of the same call, and held by shared
+	// pointer because AudioVideoCallController tears a call down without
+	// joining either thread.
+	EchoCancellerPtr m_echoCanceller;
+
+	// The FFmpeg and the native halves of each direction. Which one runs is
+	// decided by PlatformDriverName().
+	void captureFFmpeg(const QString &driver);
+	void captureNative(const QString &api);
+	void playFFmpeg(const QString &driver);
+	void playNative(const QString &api);
 
 	// Jitter buffer for the playback direction: Play() blocks pulling from
 	// here, enqueuePacket() (called from the controller on delivery of an
@@ -115,6 +180,13 @@ private:
 	// been; anything not newer than it has missed its turn.
 	quint16 m_lastPlayedSeq;
 	bool m_havePlayedSeq;
+
+	// Shared by both playback paths. waitForPreroll() blocks until the jitter
+	// buffer has a cushion or the call ends; nextPacket() pops the next
+	// packet, returning false once Close() has been called and nothing is
+	// left. A true return with an empty *out is a spurious wakeup - carry on.
+	void waitForPreroll();
+	bool nextPacket(QByteArray *out);
 
 	static const int kMaxQueueDepth = 8;
 

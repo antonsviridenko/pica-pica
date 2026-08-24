@@ -72,6 +72,19 @@ private:
     // Set the sequence, clear any pending stop request and play it.
     void playSequence(const QVector<Tone> &sequence);
 
+    // The two ways of getting samples to the speaker, picked apart by
+    // AudioDevice::PlatformDriverName(PLAYBACK) - see the comment on it.
+    // Tones always ask for a plain stream rather than a call one: a ringtone
+    // is not a call, and on macOS asking for the voice processing would open
+    // the microphone to play it.
+    void playFFmpeg(const QString &driver);
+    void playNative(const QString &api);
+
+    // Fills out with nb_samples frames of a sine at the tone's frequency
+    // (silence when it is zero), carrying phase across calls so consecutive
+    // blocks of one tone do not click at the seam.
+    void renderBlock(const Tone &t, double &phase, int nb_samples, int channels, qint16 *out);
+
     QVector<Tone> m_sequence;
     QAtomicInt m_abort;
     QString m_deviceName;

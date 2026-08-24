@@ -37,6 +37,7 @@
 #include "dhparam.h"
 #include "settings.h"
 #include "dialogs/settingsdialog.h"
+#include "audiodevice.h"
 
 
 //globals
@@ -447,6 +448,15 @@ static bool create_config_dir()
 		update_database();
 
 	QFile::setPermissions(config_dbname, QFile::ReadOwner | QFile::WriteOwner);
+
+	// Publish the audio driver choice to the audio threads while we are still
+	// the only thread and the settings database is reachable - see
+	// AudioDevice::SetLinuxDriverName() for why it cannot be read on demand.
+	{
+		Settings audiost(config_dbname);
+		AudioDevice::SetLinuxDriverName(audiost.loadValue("audio.driver", "alsa").toString());
+	}
+
 	/*if (!QFile::exists(config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE))
 	{
 	    OpenSSLTool osslt;

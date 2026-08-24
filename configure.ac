@@ -92,6 +92,14 @@ AC_ARG_ENABLE([vaapi],
     AS_HELP_STRING([--disable-vaapi],
       [Disable VAAPI accelerated video encoding, decoding and rendering]))
 
+#checking if PulseAudio device enumeration is wanted. Only affects what the
+#settings dialog can list; see the check further down.
+AC_ARG_ENABLE([pulse],
+    AS_HELP_STRING([--enable-pulse],
+      [Enable listing of PulseAudio/PipeWire capture and playback devices (default: autodetect)])
+    AS_HELP_STRING([--disable-pulse],
+      [Disable listing of PulseAudio/PipeWire devices]))
+
 #checking if the X11 rendering path is wanted
 #Qt gives widgets a GLX context by default in an X11 session, and a GLX
 #context has no way to import the DMA-BUF handles a VA surface is exported
@@ -134,7 +142,21 @@ AS_CASE([$host],
 		[
 		PKG_CHECK_MODULES([PLATFORM_DEPS],["alsa"])
 		],
-	[*-w64-mingw*], [QT_DEPENDENCIES_LIBS="$QT_DEPENDENCIES_LIBS -mwindows"],
+	[*-w64-mingw*],
+		[
+		QT_DEPENDENCIES_LIBS="$QT_DEPENDENCIES_LIBS -mwindows"
+		#the WASAPI backend is COM: ole32 for CoCreateInstance and the
+		#task allocator, oleaut32 for PROPVARIANT.
+		PLATFORM_DEPS_LIBS="$PLATFORM_DEPS_LIBS -lole32 -loleaut32"
+		],
+	[*-apple-darwin*],
+		[
+		#the CoreAudio backend: the HAL for device enumeration,
+		#AudioUnit/AudioToolbox for the VoiceProcessingIO unit that does
+		#the echo cancellation, CoreFoundation for the CFString handling
+		#the HAL's names come back as.
+		PLATFORM_DEPS_LIBS="$PLATFORM_DEPS_LIBS -framework CoreAudio -framework AudioUnit -framework AudioToolbox -framework CoreFoundation"
+		],
 	[]
 )
 AC_SUBST([QT_DEPENDENCIES_CFLAGS])
@@ -154,6 +176,35 @@ AS_IF([test "x$OPENSSL_TOOL" != xyes],[AC_MSG_WARN(["openssl command line tool n
 PKG_CHECK_MODULES([FFMPEG],["libavcodec libavdevice libavformat libavutil libswresample libswscale"])
 AC_SUBST([FFMPEG_CFLAGS])
 AC_SUBST([FFMPEG_LIBS])
+
+#check for speexdsp, which provides the acoustic echo cancellation used in
+#calls. Not optional: on Linux there is no other cancellation in the picture
+#at all, and on the platforms that have their own it is still the fallback for
+#the endpoints and drivers that turn out not to.
+PKG_CHECK_MODULES([SPEEXDSP],[speexdsp])
+AC_SUBST([SPEEXDSP_CFLAGS])
+AC_SUBST([SPEEXDSP_LIBS])
+
+#check for libpulse, used only to list PulseAudio sources and sinks in the
+#settings dialog - playing and capturing through PulseAudio goes via FFmpeg's
+#own "pulse" device and needs nothing from us. Without it the "PulseAudio /
+#PipeWire" driver still works, but offers only the server's default device.
+AS_IF([test "x$enable_pulse" != "xno"], [
+  PKG_CHECK_MODULES([PULSE], [libpulse],
+    [
+      PICA_PULSE_ENABLED=yes
+      AC_DEFINE([HAVE_LIBPULSE], [1], [Define to 1 if PulseAudio device enumeration is available])
+      AC_SUBST([PULSE_CFLAGS])
+      AC_SUBST([PULSE_LIBS])
+    ],
+    [
+      AS_IF([test "x$enable_pulse" = "xyes"],
+        [AC_MSG_ERROR(["PulseAudio support was requested but libpulse was not found"])],
+        [AC_MSG_WARN(["libpulse not found - the PulseAudio driver will only offer the default device"])])
+    ])
+])
+
+AM_CONDITIONAL([PICA_PULSE], [test "x$PICA_PULSE_ENABLED" = "xyes"])
 
 #check for VAAPI libraries, unless explicitly disabled
 #libva is the accelerator itself, libva-drm opens it through a DRM render node,

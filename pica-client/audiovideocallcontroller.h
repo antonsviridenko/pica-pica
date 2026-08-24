@@ -73,6 +73,11 @@ private:
 	QThread cam_thread;
 	QThread remotevideo_thread;
 
+	// Acoustic echo cancellation for the current call, shared by microphone
+	// and output. Null when it is switched off in the settings, when
+	// speexdsp could not start one, or between calls.
+	EchoCancellerPtr m_echoCanceller;
+
 	// Sequence number / capture-clock timestamp stamped onto outgoing
 	// 0x76 audio packets (see PICA_PROTO_CALL_PACKET_HDRSIZE).
 	quint16 m_audioSeq;

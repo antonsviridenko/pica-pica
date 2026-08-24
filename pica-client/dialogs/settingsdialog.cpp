@@ -44,6 +44,13 @@ static const int kAudioTestSampleRate = 48000;
 // replays the recording at its natural rate.
 static const int kAudioTestPacketMs = 20;
 
+// How long to wait for the microphone to produce its first packet before
+// giving up on it. Opening a capture device is not instant - on Windows,
+// COM plus WASAPI endpoint activation can take the better part of a second -
+// so the recording window below is only started once audio is actually
+// arriving, and this is the separate limit on getting that far at all.
+static const int kAudioTestStartTimeoutMs = 4000;
+
 // Grace period after the last packet has been handed over, for the jitter
 // buffer and the sound card's own buffer to drain before closing the device.
 static const int kAudioTestDrainMs = 500;
@@ -141,6 +148,31 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	multilogintab->setLayout(multiloginlayout);
 
 // Audio Devices
+	audioDriver = nullptr;
+#ifdef Q_OS_LINUX
+	QLabel *lbAudioDriver = new QLabel(tr("Audio system"));
+
+	// ALSA is always there; PulseAudio is what a desktop session normally
+	// runs (PipeWire included, through its PulseAudio interface) and is the
+	// one that can hand us a device with the echo already cancelled.
+	audioDriver = new QComboBox(this);
+	audioDriver->addItem(tr("ALSA"), QStringLiteral("alsa"));
+	audioDriver->addItem(tr("PulseAudio / PipeWire"), QStringLiteral("pulse"));
+
+	// Set before the device lists are filled, since Enumerate() asks it which
+	// driver's names to go looking for.
+	{
+		Settings drvst(config_dbname);
+		QString drv = drvst.loadValue("audio.driver", "alsa").toString();
+		AudioDevice::SetLinuxDriverName(drv);
+		int drvItem = audioDriver->findData(drv);
+		if (drvItem >= 0)
+			audioDriver->setCurrentIndex(drvItem);
+	}
+
+	connect(audioDriver, SIGNAL(currentIndexChanged(int)), this, SLOT(audioDriverChanged(int)));
+#endif
+
 	QLabel *lbAudioCaptureDev = new QLabel(tr("Microphone Device 🎙️"));
 	QLabel *lbAudioPlaybackDev = new QLabel(tr("Playback device 🎧"));
 	QLabel *lbAudioRingDev = new QLabel(tr("Ring device 🔔☎️"));
@@ -163,6 +195,12 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	audioTestStatus = new QLabel(this);
 	audioTestStatus->setAlignment(Qt::AlignCenter);
 
+	cbEchoCancel = new QCheckBox(tr("Cancel acoustic echo"), this);
+	cbEchoCancel->setToolTip(tr("Removes the sound of the other person coming back out of your "
+	                            "microphone, which is what makes them hear themselves when you "
+	                            "are on speakers. Has no effect where the operating system "
+	                            "already does it."));
+
 	btRingTest = new QPushButton(tr("Test ring 🔔"), this);
 	connect(btRingTest, SIGNAL(clicked()), this, SLOT(toggleRingTest()));
 
@@ -171,10 +209,15 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	// The microphone test covers the capture and playback devices, so it sits
 	// with them, above the unrelated ring device below.
+#ifdef Q_OS_LINUX
+	audiodevlayout->addWidget(lbAudioDriver);
+	audiodevlayout->addWidget(audioDriver);
+#endif
 	audiodevlayout->addWidget(lbAudioCaptureDev);
 	audiodevlayout->addWidget(audioCaptureDev);
 	audiodevlayout->addWidget(lbAudioPlaybackDev);
 	audiodevlayout->addWidget(audioPlaybackDev);
+	audiodevlayout->addWidget(cbEchoCancel);
 	audiodevlayout->addWidget(btAudioTest);
 	audiodevlayout->addWidget(audioTestStatus);
 	audiodevlayout->addWidget(lbAudioRingDev);
@@ -196,6 +239,12 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	connect(audioTestRecordTimer, SIGNAL(timeout()), this, SLOT(audioTestRecordingFinished()));
 
 	audioTestPlaybackTimer = new QTimer(this);
+	// A coarse timer is no use at this interval. Windows' default system
+	// timer granularity is 15.6 ms, so a coarse 20 ms timer really fires
+	// about every 31 ms; PreciseTimer asks for a multimedia timer instead.
+	// audioTestFeedPacket() does not rely on this being exact, but the closer
+	// it is the smoother the playback.
+	audioTestPlaybackTimer->setTimerType(Qt::PreciseTimer);
 	connect(audioTestPlaybackTimer, SIGNAL(timeout()), this, SLOT(audioTestFeedPacket()));
 
 	audioTestDrainTimer = new QTimer(this);
@@ -206,11 +255,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	testMic->moveToThread(&testMicThread);
 	connect(testMic, SIGNAL(packetReady(QByteArray)), this, SLOT(audioTestPacket(QByteArray)));
 	connect(testMic, SIGNAL(errorOccurred(QString)), this, SLOT(audioTestError(QString)));
+	connect(testMic, SIGNAL(deviceFormatInUse(QString)), this, SLOT(audioTestPath(QString)));
 	testMicThread.start();
 
 	testSpeaker = new AudioDevice();
 	testSpeaker->moveToThread(&testSpeakerThread);
 	connect(testSpeaker, SIGNAL(errorOccurred(QString)), this, SLOT(audioTestError(QString)));
+	connect(testSpeaker, SIGNAL(deviceFormatInUse(QString)), this, SLOT(audioTestPath(QString)));
 	testSpeakerThread.start();
 
 	ringTestRunning = false;
@@ -428,6 +479,7 @@ void SettingsDialog::toggleAudioTest()
 
 	audioTestPackets.clear();
 	audioTestPlaybackPos = 0;
+	audioTestPathReport.clear();
 	audioTestState = AudioTestRecording;
 	btAudioTest->setText(tr("Stop ⏹"));
 	audioTestStatus->setText(tr("Recording, say something..."));
@@ -437,7 +489,11 @@ void SettingsDialog::toggleAudioTest()
 	                           Q_ARG(int, kAudioTestSampleRate));
 	QMetaObject::invokeMethod(testMic, "Capture", Qt::QueuedConnection);
 
-	audioTestRecordTimer->start(kAudioTestRecordMs);
+	// Only a watchdog for the device failing to open at all. The recording
+	// window proper starts in audioTestPacket(), when the first packet shows
+	// up - otherwise the device's startup time comes out of the five seconds
+	// and the user gets a noticeably short recording.
+	audioTestRecordTimer->start(kAudioTestStartTimeoutMs);
 }
 
 void SettingsDialog::audioTestPacket(QByteArray data)
@@ -446,6 +502,11 @@ void SettingsDialog::audioTestPacket(QByteArray data)
 	// phase ended are not part of the recording.
 	if (audioTestState != AudioTestRecording)
 		return;
+
+	// First packet: the microphone is live, so start the recording window now
+	// rather than when the device was merely asked to open.
+	if (audioTestPackets.isEmpty())
+		audioTestRecordTimer->start(kAudioTestRecordMs);
 
 	audioTestPackets.append(data);
 }
@@ -484,7 +545,22 @@ void SettingsDialog::startAudioTestPlayback()
 
 	audioTestState = AudioTestPlaying;
 	audioTestPlaybackPos = 0;
-	audioTestStatus->setText(tr("Playing back..."));
+
+	// The packet count is worth showing, not just decoration. Capture emits
+	// one packet per kAudioTestPacketMs of audio it actually received, so a
+	// count well under kAudioTestRecordMs/kAudioTestPacketMs means the
+	// recording lost samples on the way in, and anything wrong with the sound
+	// is a capture problem. A full count with bad sound means the samples all
+	// arrived and something downstream is mangling them.
+	QString summary = tr("Playing back %1 of %2 packets (%3 s)...")
+	                  .arg(audioTestPackets.size())
+	                  .arg(kAudioTestRecordMs / kAudioTestPacketMs)
+	                  .arg(audioTestPackets.size() * kAudioTestPacketMs / 1000.0, 0, 'f', 1);
+
+	if (!audioTestPathReport.isEmpty())
+		summary += QLatin1String("\n") + audioTestPathReport;
+
+	audioTestStatus->setText(summary);
 
 	QMetaObject::invokeMethod(testSpeaker, "configurePlayback", Qt::QueuedConnection,
 	                           Q_ARG(QString, dev), Q_ARG(QString, QStringLiteral("opus")),
@@ -495,6 +571,7 @@ void SettingsDialog::startAudioTestPlayback()
 	// once: AudioDevice's jitter buffer holds only a few packets and drops
 	// the oldest when full, so dumping the whole recording into it would
 	// discard everything but the tail.
+	audioTestPlaybackClock.start();
 	audioTestPlaybackTimer->start(kAudioTestPacketMs);
 }
 
@@ -503,21 +580,37 @@ void SettingsDialog::audioTestFeedPacket()
 	if (audioTestState != AudioTestPlaying)
 		return;
 
+	// Pace against the clock, not against the number of times this has been
+	// called. A QTimer asked for 20 ms does not necessarily deliver every
+	// 20 ms - on Windows the system timer granularity is 15.6 ms, so even a
+	// precise timer can run late - and handing over one packet per tick
+	// regardless would play the recording back at whatever rate the timer
+	// happened to run at. Late ticks stretched it out and left the sound card
+	// with nothing to play in between, which sounded like the recording was
+	// both slowed down and chopped up.
+	//
+	// The real call path has no equivalent problem: there the packets are
+	// paced by the peer sending them, not by a timer here.
+	const qint64 due = audioTestPlaybackClock.elapsed() / kAudioTestPacketMs + 1;
+
+	while (audioTestPlaybackPos < audioTestPackets.size() &&
+	       (qint64)audioTestPlaybackPos < due)
+	{
+		// Direct call, for the same reason as in the call controller. Nothing
+		// here loses or reorders packets, so the sequence numbers are simply
+		// the order they were recorded in.
+		testSpeaker->enqueuePacket((quint16)audioTestPlaybackPos,
+		                           audioTestPackets.at(audioTestPlaybackPos));
+		audioTestPlaybackPos++;
+	}
+
 	if (audioTestPlaybackPos >= audioTestPackets.size())
 	{
 		audioTestPlaybackTimer->stop();
 		// Let what is already queued, plus the sound card's own buffer, play
 		// out before tearing the playback device down.
 		audioTestDrainTimer->start(kAudioTestDrainMs);
-		return;
 	}
-
-	// Direct call, for the same reason as in the call controller. Nothing
-	// here loses or reorders packets, so the sequence numbers are simply the
-	// order they were recorded in.
-	testSpeaker->enqueuePacket((quint16)audioTestPlaybackPos,
-	                           audioTestPackets.at(audioTestPlaybackPos));
-	audioTestPlaybackPos++;
 }
 
 void SettingsDialog::audioTestPlaybackFinished()
@@ -545,6 +638,16 @@ void SettingsDialog::stopAudioTest()
 	audioTestState = AudioTestIdle;
 	btAudioTest->setText(tr("Test 🎙️"));
 	audioTestStatus->clear();
+}
+
+void SettingsDialog::audioTestPath(QString description)
+{
+	if (description.isEmpty())
+		return;
+
+	if (!audioTestPathReport.isEmpty())
+		audioTestPathReport += QLatin1String("\n");
+	audioTestPathReport += description;
 }
 
 void SettingsDialog::audioTestError(QString message)
@@ -783,6 +886,22 @@ void SettingsDialog::fillVideoDevices()
 		fillDevicesComboBox(videoDev, &vd, CAPTURE);
 }
 
+void SettingsDialog::audioDriverChanged(int index)
+{
+	Q_UNUSED(index)
+
+	if (!audioDriver)
+		return;
+
+	// Take effect straight away rather than on OK, so the device lists below
+	// show the right names and the Test button uses them.
+	AudioDevice::SetLinuxDriverName(audioDriver->itemData(audioDriver->currentIndex()).toString());
+
+	fillAudioCaptureDevices();
+	fillAudioPlaybackDevices();
+	fillAudioRingDevices();
+}
+
 void SettingsDialog::fillAudioCaptureDevices()
 {
 	AudioDevice acd;
@@ -934,6 +1053,8 @@ void SettingsDialog::loadSettings()
 	if (audioPlaybackDevItem >= 0)
 		audioPlaybackDev->setCurrentIndex(audioPlaybackDevItem);
 
+	cbEchoCancel->setChecked(st.loadValue("audio.echo_cancel", 1).toBool());
+
 	QString audioRingDevVal = st.loadValue("audio.ring_device", "default").toString();
 	int audioRingDevItem = audioRingDev->findData(audioRingDevVal);
 	if (audioRingDevItem >= 0)
@@ -986,4 +1107,12 @@ void SettingsDialog::storeSettings()
 	st.storeValue("audio.capture_device", audioCaptureDev->itemData(audioCaptureDev->currentIndex()).toString());
 	st.storeValue("audio.playback_device", audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString());
 	st.storeValue("audio.ring_device", audioRingDev->itemData(audioRingDev->currentIndex()).toString());
+	st.storeValue("audio.echo_cancel", cbEchoCancel->isChecked() ? "1" : "0");
+
+	if (audioDriver)
+	{
+		QString drv = audioDriver->itemData(audioDriver->currentIndex()).toString();
+		st.storeValue("audio.driver", drv);
+		AudioDevice::SetLinuxDriverName(drv);
+	}
 }

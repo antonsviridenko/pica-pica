@@ -29,6 +29,7 @@
 #include <QImage>
 #include <QList>
 #include <QTimer>
+#include <QElapsedTimer>
 #include "../mediadevice.h"
 #include "../audiodevice.h"
 #include "../videodevice.h"
@@ -68,6 +69,19 @@ private:
 	QComboBox *audioCaptureDev;
 	QComboBox *audioPlaybackDev;
 	QComboBox *audioRingDev;
+
+	// Which audio API to go through. Only Linux has a choice worth offering
+	// (ALSA or PulseAudio, the latter covering PipeWire's PulseAudio
+	// interface too), so elsewhere this stays null and no widget is built.
+	// The member and its slot are declared unconditionally all the same:
+	// moc runs its own preprocessor and would not see a platform #ifdef, so
+	// a slot hidden behind one ends up declared but never generated.
+	QComboBox *audioDriver;
+
+	// Whether to run our own acoustic echo cancellation. Ignored when the
+	// platform provides one - see AudioDevice::PlatformDriverName().
+	QCheckBox *cbEchoCancel;
+
 	QComboBox *videoDev;
 	QPushButton *videoDevRefresh;
 
@@ -92,6 +106,9 @@ private:
 	};
 
 	AudioTestState audioTestState;
+	// What the microphone and playback devices reported negotiating, shown
+	// with the result. Same idea as videoTestPathReport.
+	QString audioTestPathReport;
 	// The recording, as encoded packets, and how far playback has fed it.
 	QList<QByteArray> audioTestPackets;
 	int audioTestPlaybackPos;
@@ -100,6 +117,9 @@ private:
 	// fire into the next one.
 	QTimer *audioTestRecordTimer;
 	QTimer *audioTestPlaybackTimer;
+	// Playback is paced against this rather than against the number of times
+	// the timer has fired - see audioTestFeedPacket().
+	QElapsedTimer audioTestPlaybackClock;
 	QTimer *audioTestDrainTimer;
 
 	void stopAudioTest();
@@ -161,6 +181,9 @@ private slots:
 	void toggleIncomingConnections(bool checked);
 	void toggleMultipleLogins(bool checked);
 	void fillVideoDevices();
+	// Device names are driver specific, so all three lists have to be filled
+	// again when the driver changes. Only ever connected on Linux.
+	void audioDriverChanged(int index);
 	void fillAudioCaptureDevices();
 	void fillAudioPlaybackDevices();
 	void fillAudioRingDevices();
@@ -175,6 +198,7 @@ private slots:
 	void audioTestFeedPacket();
 	void audioTestPlaybackFinished();
 	void audioTestError(QString message);
+	void audioTestPath(QString description);
 
 	void toggleVideoTest();
 	void videoTestCaptureStarted(QString codec, int width, int height);

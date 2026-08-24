@@ -16,8 +16,10 @@
 */
 #include "toneplayer.h"
 #include "../audiodevice.h"
+#include "../nativeaudio.h"
 
 #include <QDebug>
+#include <QVector>
 #include <cmath>
 
 // FFmpeg headers
@@ -153,6 +155,29 @@ static QString ff_errstr(int err)
     return QString::fromLocal8Bit(buf);
 }
 
+void TonePlayer::renderBlock(const Tone &t, double &phase, int nb_samples, int channels, qint16 *out)
+{
+    const double two_pi = 2.0 * M_PI;
+    double phase_inc = 0.0;
+
+    if (t.frequency > 0.0)
+        phase_inc = two_pi * t.frequency / double(m_sampleRate);
+
+    for (int i = 0; i < nb_samples; ++i) {
+        double sampleVal = 0.0;
+        if (t.frequency > 0.0) {
+            sampleVal = sin(phase) * m_volume;
+            phase += phase_inc;
+            if (phase > 1e9 || phase < -1e9) phase = fmod(phase, two_pi);
+        }
+
+        int16_t ival = static_cast<int16_t>(qBound(-1.0, sampleVal, 1.0) * 32767.0);
+        for (int ch = 0; ch < channels; ++ch) {
+            out[i * channels + ch] = ival;
+        }
+    }
+}
+
 void TonePlayer::play()
 {
     if (m_sequence.isEmpty()) {
@@ -160,6 +185,87 @@ void TonePlayer::play()
         return;
     }
 
+    const QString driver = AudioDevice::PlatformDriverName(PLAYBACK);
+
+    if (AudioDevice::IsPlatformDriver(driver))
+        playNative(AudioDevice::PlatformApiName(driver));
+    else
+        playFFmpeg(driver);
+}
+
+void TonePlayer::playNative(const QString &api)
+{
+    NativeAudioBackend *backend = NativeAudioBackend::create(api);
+    if (!backend) {
+        QString msg = QString("No '%1' audio backend in this build").arg(api);
+        qWarning() << msg;
+        emit errorOccured(msg);
+        emit finishedPlaying();
+        return;
+    }
+
+    QString err;
+    if (!backend->openPlayback(m_deviceName, m_sampleRate, m_channels, NativeAudioPlain, &err)) {
+        qWarning() << err;
+        emit errorOccured(err);
+        delete backend;
+        emit finishedPlaying();
+        return;
+    }
+
+    // 20 ms a time, so stop() is acted on promptly without the write loop
+    // spinning.
+    const int blockFrames = m_sampleRate / 50;
+    QVector<qint16> block(blockFrames * m_channels);
+    double phase = 0.0;
+
+    for (int idx = 0; idx < m_sequence.size(); ++idx) {
+        if (m_abort.loadRelaxed()) break;
+
+        const Tone &t = m_sequence[idx];
+        if (t.frequency == 0.0 && t.duration_ms == 0)
+            break;
+        if (t.duration_ms <= 0)
+            continue;
+
+        int64_t total_samples = (int64_t)qRound((m_sampleRate * t.duration_ms) / 1000.0);
+        int64_t samples_written = 0;
+
+        while (samples_written < total_samples) {
+            if (m_abort.loadRelaxed()) break;
+
+            int nb_samples = blockFrames;
+            if (nb_samples > (int)(total_samples - samples_written))
+                nb_samples = int(total_samples - samples_written);
+
+            renderBlock(t, phase, nb_samples, m_channels, block.data());
+
+            if (backend->write(block.constData(), nb_samples * m_channels, 200) < 0) {
+                qWarning() << "Native tone playback write failed";
+                samples_written = total_samples;
+                idx = m_sequence.size();
+                break;
+            }
+
+            samples_written += nb_samples;
+        }
+    }
+
+    // Let what is still sitting in the device buffer be heard rather than
+    // being cut off by close(). One buffer's worth is the most it can be.
+    if (!m_abort.loadRelaxed()) {
+        memset(block.data(), 0, block.size() * sizeof(qint16));
+        backend->write(block.constData(), block.size(), 200);
+    }
+
+    backend->close();
+    delete backend;
+
+    emit finishedPlaying();
+}
+
+void TonePlayer::playFFmpeg(const QString &driver)
+{
     avdevice_register_all();
 #if LIBAVFORMAT_VERSION_MAJOR < 58
     av_register_all();
@@ -169,10 +275,10 @@ void TonePlayer::play()
     AVFormatContext *oc = nullptr;
     const QByteArray deviceUtf8 = m_deviceName.toUtf8();
     const char *device = deviceUtf8.constData();
-    const QByteArray driverUtf8 = AudioDevice::PlatformDriverName().toUtf8();
-    const char *driver = driverUtf8.constData();
+    const QByteArray driverUtf8 = driver.toUtf8();
+    const char *driverName = driverUtf8.constData();
 
-    int ret = avformat_alloc_output_context2(&oc, nullptr, driver, device);
+    int ret = avformat_alloc_output_context2(&oc, nullptr, driverName, device);
     if (ret < 0 || !oc) {
         QString msg = QString("Could not allocate '%1' output context: %2").arg(driver, ff_errstr(ret));
         qWarning() << msg;
@@ -306,7 +412,6 @@ void TonePlayer::play()
 
     int64_t pts = 0;
     double phase = 0.0;
-    const double two_pi = 2.0 * M_PI;
 
 #if TP_HAVE_CH_LAYOUT
     int chs = codecCtx->ch_layout.nb_channels;
@@ -328,11 +433,6 @@ void TonePlayer::play()
         int64_t total_samples = (int64_t)qRound((m_sampleRate * t.duration_ms) / 1000.0);
         int64_t samples_written = 0;
 
-        double phase_inc = 0.0;
-        if (t.frequency > 0.0) {
-            phase_inc = two_pi * t.frequency / double(m_sampleRate);
-        }
-
         while (samples_written < total_samples) {
             if (m_abort.loadRelaxed()) break;
 
@@ -348,23 +448,7 @@ void TonePlayer::play()
             }
             frame->nb_samples = nb_samples;
 
-            int16_t *out = reinterpret_cast<int16_t*>(frame->data[0]);
-
-            for (int i = 0; i < nb_samples; ++i) {
-                double sampleVal = 0.0;
-                if (t.frequency > 0.0) {
-                    sampleVal = sin(phase) * m_volume;
-                    phase += phase_inc;
-                    if (phase > 1e9 || phase < -1e9) phase = fmod(phase, two_pi);
-                } else {
-                    sampleVal = 0.0;
-                }
-
-                int16_t ival = static_cast<int16_t>(qBound(-1.0, sampleVal, 1.0) * 32767.0);
-                for (int ch = 0; ch < chs; ++ch) {
-                    out[i * chs + ch] = ival;
-                }
-            }
+            renderBlock(t, phase, nb_samples, chs, reinterpret_cast<int16_t*>(frame->data[0]));
 
             frame->pts = pts;
             pts += frame->nb_samples;

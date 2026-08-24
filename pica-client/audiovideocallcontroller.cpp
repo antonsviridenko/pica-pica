@@ -155,6 +155,29 @@ void AudioVideoCallController::startAudioPipeline()
 	m_audioSeq = 0;
 	m_callClock.start();
 
+	// One canceller for the call, shared by both directions: the playback
+	// side feeds it what it is about to play, the capture side subtracts the
+	// echo of that from the microphone. Ownership is shared because
+	// stopAudioPipeline() does not join either thread, so this has to outlive
+	// whichever of them returns last.
+	//
+	// It is created even on the platforms that cancel for us, because whether
+	// they really will is not known until the capture stream has been opened
+	// - see AudioDevice::captureNative(), which drops it once the backend
+	// says the platform has the job in hand.
+	if (st.loadValue("audio.echo_cancel", 1).toBool())
+		m_echoCanceller = EchoCancellerPtr(new EchoCanceller(48000));
+	else
+		m_echoCanceller.clear();
+
+	if (m_echoCanceller && !m_echoCanceller->isValid())
+		m_echoCanceller.clear();
+
+	// Set before the blocking loops are started, so the queued Capture()/
+	// Play() calls below are what publishes it to those threads.
+	microphone->setEchoCanceller(m_echoCanceller);
+	output->setEchoCanceller(m_echoCanceller);
+
 	// Declare our outgoing codec to the peer, then start capturing and
 	// encoding right away - the peer's decoder is only ready once it has
 	// processed this 0x74 message, but since the call is carried over TCP,
@@ -182,6 +205,11 @@ void AudioVideoCallController::stopAudioPipeline()
 	// exit after a call).
 	microphone->Close();
 	output->Close();
+
+	// Drop our reference. The two audio threads still hold theirs until they
+	// come out of Capture()/Play(), and the canceller goes away with the last
+	// of them.
+	m_echoCanceller.clear();
 }
 
 void AudioVideoCallController::startVideoPipeline()

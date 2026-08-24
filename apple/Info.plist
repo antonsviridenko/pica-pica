@@ -5,7 +5,7 @@
 
   <key>CFBundleName</key>
   <string>Pica Pica Messenger</string>
-  
+
   <key>CFBundleDisplayName</key>
   <string>Pica Pica Messenger</string>
 
@@ -32,6 +32,38 @@
 
   <key>CFBundleIdentifier</key>
   <string>im.picapica.pica-client</string>
+
+  <!--
+    Without these two, macOS 10.14 and later kills the process the moment it
+    opens the microphone or the camera rather than asking the user - so audio
+    and video calls do not merely fail, they take the application with them.
+    The strings are what the permission prompt shows as the reason.
+
+    NSMicrophoneUsageDescription covers the capture side of a call, which on
+    this platform means the VoiceProcessingIO audio unit (see
+    nativeaudio_coreaudio.cpp). Note that the unit captures and renders
+    together, so this is also needed for call playback - though not for
+    ringtones, which deliberately use a plain output unit.
+  -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Pica Pica needs the microphone so the person you are calling can hear you.</string>
+
+  <key>NSCameraUsageDescription</key>
+  <string>Pica Pica needs the camera so the person you are calling can see you.</string>
+
+  <!--
+    Qt draws through its own windows rather than the system's, so the app has
+    to say it is high resolution capable or macOS scales a low resolution
+    backing store up and everything looks soft on a Retina display.
+  -->
+  <key>NSHighResolutionCapable</key>
+  <true/>
+
+  <key>LSMinimumSystemVersion</key>
+  <string>10.13</string>
+
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
 
 </dict>
 </plist>

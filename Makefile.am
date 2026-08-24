@@ -103,6 +103,13 @@ pica-client/mediadevice.cpp \
 pica-client/mediadevice.h \
 pica-client/audiodevice.cpp \
 pica-client/audiodevice.h \
+pica-client/audioring.h \
+pica-client/echocanceller.cpp \
+pica-client/echocanceller.h \
+pica-client/nativeaudio.cpp \
+pica-client/nativeaudio.h \
+pica-client/nativeaudio_wasapi.cpp \
+pica-client/nativeaudio_coreaudio.cpp \
 pica-client/videodevice.cpp \
 pica-client/videodevice.h \
  \
@@ -185,8 +192,18 @@ ui_%.h: pica-client/%.ui
 	$(UIC)  $< -o $@
 
  
-pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) $(FFMPEG_CFLAGS) $(PLATFORM_DEPS_CFLAGS)
-pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS) $(FFMPEG_LIBS) $(PLATFORM_DEPS_LIBS)
+pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) $(FFMPEG_CFLAGS) $(PLATFORM_DEPS_CFLAGS) $(SPEEXDSP_CFLAGS)
+pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS) $(FFMPEG_LIBS) $(PLATFORM_DEPS_LIBS) $(SPEEXDSP_LIBS)
+
+# Listing PulseAudio sources and sinks in the settings dialog. The two
+# native backend sources above are compiled unconditionally and are empty
+# preprocessor-wise on the platforms they are not for, but libpulse is a
+# real dependency and only linked when configure found it.
+if PICA_PULSE
+pica_client_pica_client_CPPFLAGS += $(PULSE_CFLAGS)
+pica_client_pica_client_LDADD += $(PULSE_LIBS)
+MOCFLAGS += -DHAVE_LIBPULSE
+endif
 
 # VAAPI accelerated encoding, decoding and rendering. Everything below is left
 # out of the build entirely when configure did not find libva/EGL or was told

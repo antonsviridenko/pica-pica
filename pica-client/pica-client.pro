@@ -12,6 +12,10 @@ TEMPLATE = app
 
 SOURCES += main.cpp\
     audiodevice.cpp \
+    echocanceller.cpp \
+    nativeaudio.cpp \
+    nativeaudio_wasapi.cpp \
+    nativeaudio_coreaudio.cpp \
 	audiovideocallcontroller.cpp \
         mainwindow.cpp \
     chatwindow.cpp \
@@ -51,6 +55,9 @@ SOURCES += main.cpp\
 
 HEADERS  += mainwindow.h \
     audiodevice.h \
+    audioring.h \
+    echocanceller.h \
+    nativeaudio.h \
     audiovideocallcontroller.h \
     chatwindow.h \
     callwindow.h \
@@ -106,3 +113,22 @@ unix: CONFIG += link_pkgconfig
 unix: PKGCONFIG += libcrypto
 
 unix|win32: LIBS += -lminiupnpc
+
+# Acoustic echo cancellation. Required everywhere: on Linux there is no other
+# cancellation in the picture, and on the platforms that have their own it is
+# still the fallback for the endpoints and drivers that turn out not to.
+unix:!macx: CONFIG += link_pkgconfig
+unix:!macx: PKGCONFIG += speexdsp
+
+# Listing PulseAudio sources and sinks in the settings dialog. Optional -
+# playing and capturing through PulseAudio goes via FFmpeg's own "pulse"
+# device and needs nothing from us.
+unix:!macx: PKGCONFIG += libpulse
+unix:!macx: DEFINES += HAVE_LIBPULSE
+
+# The native audio backends. Both source files compile to nothing on the
+# platforms they are not for, so they can stay in SOURCES unconditionally;
+# what they link against cannot.
+win32: LIBS += -lole32 -loleaut32
+macx:  LIBS += -framework CoreAudio -framework AudioUnit -framework AudioToolbox -framework CoreFoundation
+macx:  LIBS += -lspeexdsp
