@@ -58,10 +58,6 @@ extern "C" {
 // the feature plan; a fixed, widely supported set of parameters for now.
 static const int kFrameRate = 15;
 static const int64_t kBitrate = 600000;
-// Keyframe every ~2 seconds. There is no retransmission or keyframe request
-// machinery yet, so this doubles as how quickly a receiver that missed data
-// can resynchronize.
-static const int kGopSize = kFrameRate * 2;
 
 // Largest amount of encoded data one 0x77 message can carry over a c2c or
 // directc2c connection: the protocol's per-message payload cap, minus the
@@ -81,6 +77,14 @@ static QString ff_errstr(int err)
 	av_strerror(err, buf, sizeof(buf));
 	return QString::fromLocal8Bit(buf);
 }
+
+#ifdef Q_OS_WIN
+// Both defined in videodshow.cpp. FFmpeg's dshow demuxer can capture but can
+// neither enumerate the cameras nor say what formats one offers, so both
+// answers come from DirectShow itself.
+QList<MediaDeviceInfo> pica_enumerate_dshow_video();
+QStringList pica_dshow_compressed_formats(const QString &device);
+#endif
 
 #ifdef Q_OS_LINUX
 // Compressed formats worth forwarding untouched, best first: HEVC gives the
@@ -153,6 +157,8 @@ QStringList VideoDevice::CompressedFormats(const QString &device)
 		if (offered.contains(kCompressedFormatPreference[i].v4l2_pixelformat) && !result.contains(codec))
 			result << codec;
 	}
+#elif defined(Q_OS_WIN)
+	result = pica_dshow_compressed_formats(device);
 #else
 	Q_UNUSED(device);
 #endif
@@ -323,6 +329,61 @@ static QByteArray cameraOpenUrl(const QString &device)
 #endif
 }
 
+// One attempt at opening the camera.
+//
+// passthroughCodec empty asks for whatever the camera gives; a width of zero
+// drops the size and frame rate constraints as well. *ifmt_ctx is left null on
+// failure - avformat_open_input() frees and clears it - so the caller can just
+// try again.
+static int openCamera(const AVInputFormat *ifmt, const QByteArray &url,
+                      int width, int height, int framerate,
+                      const QString &passthroughCodec, AVFormatContext **ifmt_ctx)
+{
+	AVDictionary *opts = nullptr;
+
+	if (width > 0 && height > 0)
+		av_dict_set(&opts, "video_size", QString("%1x%2").arg(width).arg(height).toUtf8().constData(), 0);
+
+	if (framerate > 0)
+		av_dict_set(&opts, "framerate", QString::number(framerate).toUtf8().constData(), 0);
+
+	if (!passthroughCodec.isEmpty())
+	{
+#ifdef Q_OS_WIN
+		// dshow has no input_format option. It picks the compressed stream
+		// from AVFormatContext::video_codec_id instead, which is what
+		// "-vcodec mjpeg" ahead of "-i" sets on the command line - and that
+		// has to be set on a context allocated here, since
+		// avformat_open_input() would otherwise make one only after the point
+		// where the demuxer reads it.
+		const AVCodec *dec = avcodec_find_decoder_by_name(passthroughCodec.toUtf8().constData());
+
+		if (!dec)
+		{
+			av_dict_free(&opts);
+			return AVERROR(EINVAL);
+		}
+
+		*ifmt_ctx = avformat_alloc_context();
+
+		if (!*ifmt_ctx)
+		{
+			av_dict_free(&opts);
+			return AVERROR(ENOMEM);
+		}
+
+		(*ifmt_ctx)->video_codec_id = dec->id;
+#else
+		av_dict_set(&opts, "input_format", passthroughCodec.toUtf8().constData(), 0);
+#endif
+	}
+
+	int ret = avformat_open_input(ifmt_ctx, url.constData(), ifmt, &opts);
+	av_dict_free(&opts);
+
+	return ret;
+}
+
 void VideoDevice::Capture()
 {
 	m_abort.storeRelaxed(0);
@@ -347,54 +408,75 @@ void VideoDevice::Capture()
 	// Ask the camera for a compressed stream when told to and it offers one:
 	// its packets can then go straight onto the network, with no decoding and
 	// re-encoding in between. The formats are queried rather than guessed, so
-	// this asks for one the camera has already said it can deliver.
-	QString passthroughCodec;
+	// these are ones the camera has already said it can deliver, best first.
+	// The empty string on the end is the fallback of taking whatever comes and
+	// re-encoding it.
+	QStringList attempts;
 
 	if (m_preferCompressed)
+		attempts = CompressedFormats(m_deviceName);
+
+	attempts << QString();
+
+	// Listing a format and being able to produce it at a given size and frame
+	// rate are three separate claims, and cameras routinely honour the first
+	// without the others - an integrated webcam offering MJPEG but not at
+	// 640x480 15fps is what prompted this. So each candidate is tried with the
+	// constraints loosened a step at a time, giving up the frame rate before
+	// the size and both before giving up the format, since the format is worth
+	// the most: it decides whether anything has to be re-encoded at all.
+	//
+	// Whatever comes back is what gets announced to the peer - see
+	// captureStarted() and AudioVideoCallController::video_capture_started() -
+	// so relaxing these changes what is sent, not what is claimed.
+	static const struct
 	{
-		QStringList formats = CompressedFormats(m_deviceName);
+		bool size;
+		bool rate;
+	} kConstraints[] =
+	{
+		{ true,  true  },
+		{ true,  false },
+		{ false, false },
+	};
 
-		if (!formats.isEmpty())
-			passthroughCodec = formats.first();
-	}
-
-	AVDictionary *opts = nullptr;
-	av_dict_set(&opts, "video_size", QString("%1x%2").arg(m_width).arg(m_height).toUtf8().constData(), 0);
-	av_dict_set(&opts, "framerate", QString::number(kFrameRate).toUtf8().constData(), 0);
-	if (!passthroughCodec.isEmpty())
-		av_dict_set(&opts, "input_format", passthroughCodec.toUtf8().constData(), 0);
-
+	QString passthroughCodec;
 	AVFormatContext *ifmt_ctx = nullptr;
-	int ret = avformat_open_input(&ifmt_ctx, deviceUtf8.constData(), ifmt, &opts);
-	av_dict_free(&opts);
+	int ret = AVERROR(EINVAL);
+	bool opened = false;
 
-	if (ret < 0 && !passthroughCodec.isEmpty())
+	for (int a = 0; a < attempts.size() && !opened; a++)
 	{
-		// The camera listed the format but will not actually hand it over at
-		// this size or frame rate. Fall back to whatever it does give.
-		qWarning() << QString("Camera '%1' would not deliver %2 (%3), falling back to re-encoding")
-		              .arg(m_deviceName, passthroughCodec, ff_errstr(ret));
-		passthroughCodec.clear();
+		for (unsigned int c = 0; c < sizeof(kConstraints) / sizeof(kConstraints[0]); c++)
+		{
+			ret = openCamera(ifmt, deviceUtf8,
+			                 kConstraints[c].size ? m_width : 0,
+			                 kConstraints[c].size ? m_height : 0,
+			                 kConstraints[c].rate ? kFrameRate : 0,
+			                 attempts.at(a), &ifmt_ctx);
 
-		opts = nullptr;
-		av_dict_set(&opts, "video_size", QString("%1x%2").arg(m_width).arg(m_height).toUtf8().constData(), 0);
-		av_dict_set(&opts, "framerate", QString::number(kFrameRate).toUtf8().constData(), 0);
+			if (ret >= 0)
+			{
+				passthroughCodec = attempts.at(a);
+				opened = true;
+				break;
+			}
 
-		ret = avformat_open_input(&ifmt_ctx, deviceUtf8.constData(), ifmt, &opts);
-		av_dict_free(&opts);
-	}
+			QString asked;
 
-	if (ret < 0)
-	{
-		// Last resort: let the camera pick. DirectShow in particular will
-		// refuse a video_size or framerate it cannot produce exactly, rather
-		// than settling for the nearest it can, so a camera with an unusual
-		// set of modes would otherwise give no picture at all. Whatever comes
-		// back is scaled to the negotiated size by the transcode loop anyway.
-		qWarning() << QString("Camera '%1' would not open at %2x%3 @%4 (%5), letting it choose")
-		              .arg(m_deviceName).arg(m_width).arg(m_height).arg(kFrameRate).arg(ff_errstr(ret));
+			if (!kConstraints[c].size)
+				asked = QStringLiteral("any size or rate");
+			else if (kConstraints[c].rate)
+				asked = QString("%1x%2 @%3").arg(m_width).arg(m_height).arg(kFrameRate);
+			else
+				asked = QString("%1x%2 at any rate").arg(m_width).arg(m_height);
 
-		ret = avformat_open_input(&ifmt_ctx, deviceUtf8.constData(), ifmt, nullptr);
+			qWarning() << QString("Camera '%1': no %2 at %3 (%4)")
+			              .arg(m_deviceName,
+			                   attempts.at(a).isEmpty() ? QStringLiteral("stream") : attempts.at(a),
+			                   asked,
+			                   ff_errstr(ret));
+		}
 	}
 
 	if (ret < 0)
@@ -430,6 +512,26 @@ void VideoDevice::Capture()
 	}
 
 	AVStream *in_st = ifmt_ctx->streams[0];
+
+	// Check what actually came back rather than trusting the request. A
+	// camera can list a format and then open in a different one, and asking
+	// for it is spelled differently per demuxer - so the one thing worth
+	// relying on is the stream in front of us. Handing raw frames to the
+	// passthrough loop would put unencoded video on the wire labelled as
+	// something it is not.
+	if (!passthroughCodec.isEmpty())
+	{
+		const AVCodec *wanted = avcodec_find_decoder_by_name(passthroughCodec.toUtf8().constData());
+
+		if (!wanted || in_st->codecpar->codec_id != wanted->id)
+		{
+			qWarning() << QString("Camera '%1' opened as %2 rather than the %3 that was asked for, re-encoding")
+			              .arg(m_deviceName,
+			                   QLatin1String(avcodec_get_name(in_st->codecpar->codec_id)),
+			                   passthroughCodec);
+			passthroughCodec.clear();
+		}
+	}
 
 	if (!passthroughCodec.isEmpty())
 		runPassthroughLoop(ifmt_ctx, in_st, passthroughCodec);
@@ -498,8 +600,33 @@ void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st,
 	av_packet_free(&pkt);
 }
 
+// The frame rate the camera actually settled on, which is not necessarily the
+// one that was asked for - and when the open had to fall back to letting the
+// camera choose, was not asked for at all. Encoding at a rate the frames do
+// not arrive at gives a stream whose timestamps disagree with reality.
+static AVRational cameraFrameRate(AVStream *in_st)
+{
+	AVRational fr = in_st->avg_frame_rate;
+
+	if (fr.num <= 0 || fr.den <= 0)
+		fr = in_st->r_frame_rate;
+
+	if (fr.num <= 0 || fr.den <= 0)
+		fr = AVRational{ kFrameRate, 1 };
+
+	return fr;
+}
+
 void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 {
+	const AVRational frameRate = cameraFrameRate(in_st);
+
+	// Two seconds between keyframes. A receiver that joins late or loses a
+	// packet waits this long for a picture, so it is a latency figure as much
+	// as a bandwidth one - hence deriving it from the real rate rather than
+	// from a fixed frame count.
+	const int gopSize = qMax(1, (int)av_q2d(frameRate) * 2);
+
 	int ret;
 
 	// The camera hands us either raw frames or a compressed stream that is
@@ -555,10 +682,10 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 					enc_ctx->width = m_width;
 					enc_ctx->height = m_height;
 					enc_ctx->pix_fmt = AV_PIX_FMT_VAAPI;
-					enc_ctx->time_base = AVRational{1, kFrameRate};
-					enc_ctx->framerate = AVRational{kFrameRate, 1};
+					enc_ctx->time_base = av_inv_q(frameRate);
+					enc_ctx->framerate = frameRate;
 					enc_ctx->bit_rate = kBitrate;
-					enc_ctx->gop_size = kGopSize;
+					enc_ctx->gop_size = gopSize;
 					enc_ctx->max_b_frames = 0;
 					enc_ctx->hw_frames_ctx = av_buffer_ref(hw_frames_ref);
 
@@ -614,10 +741,10 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 		enc_ctx->width = m_width;
 		enc_ctx->height = m_height;
 		enc_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
-		enc_ctx->time_base = AVRational{1, kFrameRate};
-		enc_ctx->framerate = AVRational{kFrameRate, 1};
+		enc_ctx->time_base = av_inv_q(frameRate);
+		enc_ctx->framerate = frameRate;
 		enc_ctx->bit_rate = kBitrate;
-		enc_ctx->gop_size = kGopSize;
+		enc_ctx->gop_size = gopSize;
 		// B-frames reorder output, which would cost latency in a live call.
 		enc_ctx->max_b_frames = 0;
 
@@ -1033,12 +1160,6 @@ void VideoDevice::Play()
 	if (sws) sws_freeContext(sws);
 	avcodec_free_context(&dec_ctx);
 }
-
-#ifdef Q_OS_WIN
-// Defined in videodshow.cpp - FFmpeg's dshow demuxer can capture but cannot
-// enumerate, so the list comes from DirectShow itself.
-QList<MediaDeviceInfo> pica_enumerate_dshow_video();
-#endif
 
 QList<MediaDeviceInfo> VideoDevice::Enumerate(enum MediaDeviceStreamDirection dir)
 {
