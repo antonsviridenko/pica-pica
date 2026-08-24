@@ -307,6 +307,22 @@ void VideoDevice::Close()
 	m_queueCond.wakeAll();
 }
 
+// The string to hand avformat_open_input() for a camera.
+//
+// DirectShow namespaces its devices by type, so a camera has to be asked for
+// as "video=<name>" - the same name behind an "audio=" prefix would be a
+// microphone. v4l2 and avfoundation take the device path or index as it comes,
+// so the name is stored unprefixed and decorated here, which also keeps what
+// the settings dialog shows and stores readable.
+static QByteArray cameraOpenUrl(const QString &device)
+{
+#ifdef Q_OS_WIN
+	return (QStringLiteral("video=") + device).toUtf8();
+#else
+	return device.toUtf8();
+#endif
+}
+
 void VideoDevice::Capture()
 {
 	m_abort.storeRelaxed(0);
@@ -317,7 +333,7 @@ void VideoDevice::Capture()
 	avcodec_register_all();
 #endif
 
-	const QByteArray deviceUtf8 = m_deviceName.toUtf8();
+	const QByteArray deviceUtf8 = cameraOpenUrl(m_deviceName);
 	const QByteArray driverUtf8 = VideoDevice::PlatformDriverName().toUtf8();
 	const AVInputFormat *ifmt = av_find_input_format(driverUtf8.constData());
 	if (!ifmt)
@@ -370,8 +386,35 @@ void VideoDevice::Capture()
 
 	if (ret < 0)
 	{
+		// Last resort: let the camera pick. DirectShow in particular will
+		// refuse a video_size or framerate it cannot produce exactly, rather
+		// than settling for the nearest it can, so a camera with an unusual
+		// set of modes would otherwise give no picture at all. Whatever comes
+		// back is scaled to the negotiated size by the transcode loop anyway.
+		qWarning() << QString("Camera '%1' would not open at %2x%3 @%4 (%5), letting it choose")
+		              .arg(m_deviceName).arg(m_width).arg(m_height).arg(kFrameRate).arg(ff_errstr(ret));
+
+		ret = avformat_open_input(&ifmt_ctx, deviceUtf8.constData(), ifmt, nullptr);
+	}
+
+	if (ret < 0)
+	{
 		// Not fatal to the call - it simply proceeds without outgoing video.
 		QString msg = QString("Could not open camera '%1': %2").arg(m_deviceName, ff_errstr(ret));
+
+#ifdef Q_OS_WIN
+		// A camera that enumerated but will not open is usually not a broken
+		// camera. Windows will happily list a device while refusing to
+		// instantiate it, which is what "Let desktop apps access your camera"
+		// being switched off looks like from here - and what another
+		// application already holding the camera looks like too. Neither is
+		// distinguishable from a genuine I/O error at this level, so say so
+		// rather than leaving the user with an error code that suggests
+		// hardware trouble.
+		msg += tr(" - check that \"Let desktop apps access your camera\" is enabled in the "
+		          "Windows camera privacy settings, and that no other application is using it");
+#endif
+
 		qWarning() << msg;
 		emit errorOccurred(msg);
 		return;
@@ -991,10 +1034,26 @@ void VideoDevice::Play()
 	avcodec_free_context(&dec_ctx);
 }
 
+#ifdef Q_OS_WIN
+// Defined in videodshow.cpp - FFmpeg's dshow demuxer can capture but cannot
+// enumerate, so the list comes from DirectShow itself.
+QList<MediaDeviceInfo> pica_enumerate_dshow_video();
+#endif
+
 QList<MediaDeviceInfo> VideoDevice::Enumerate(enum MediaDeviceStreamDirection dir)
 {
 	QList<MediaDeviceInfo> result;
 	int index = 0;
+
+#ifdef Q_OS_WIN
+	Q_UNUSED(index)
+
+	// Cameras are capture only; nothing renders video to a device here.
+	if (dir != PLAYBACK)
+		result = pica_enumerate_dshow_video();
+
+	return result;
+#endif
 
 	if (dir == PLAYBACK)
 		return result;

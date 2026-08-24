@@ -51,7 +51,8 @@ SOURCES += main.cpp\
     ../PICA_netconf.c \
     ../PICA_signverify.c \
     dialogs/nodesdialog.cpp \
-    videodevice.cpp
+    videodevice.cpp \
+    videodshow.cpp
 
 HEADERS  += mainwindow.h \
     audiodevice.h \
