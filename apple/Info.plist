@@ -16,13 +16,18 @@
   <string>APPL</string>
 
   <key>CFBundleGetInfoString</key>
-  <string>0.7.1, Copyright © 2012 - 2019 Anton Sviridenko</string>
+  <string>0.9.0dev, Copyright © 2012 - 2026 Anton Sviridenko</string>
 
+  <!--
+    Launch Services only accepts up to three period separated integers here,
+    so the "dev" of the upstream version lives in CFBundleGetInfoString above
+    rather than in these two.
+  -->
   <key>CFBundleShortVersionString</key>
-  <string>0.7.1</string>
+  <string>0.9.0</string>
 
   <key>CFBundleVersion</key>
-  <string>0.7</string>
+  <string>0.9.0</string>
 
   <key>CFBundleSignature</key>
   <string>????</string>

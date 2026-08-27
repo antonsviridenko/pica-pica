@@ -1,3 +1,19 @@
+pica-pica (0.9.0dev-1) UNRELEASED; urgency=low
+
+  * Audio/video calls: new build dependencies on FFmpeg (libavcodec,
+    libavdevice, libavformat, libavutil, libswresample, libswscale),
+    speexdsp for acoustic echo cancellation, ALSA, libpulse for
+    PulseAudio/PipeWire device enumeration, and libva/EGL/GL/X11 for
+    VAAPI accelerated encoding, decoding and rendering
+  * Build-depend on pkg-config, sqlite3 and zlib1g-dev, which configure
+    has always required but which were only pulled in indirectly
+  * Configure VAAPI, its X11 rendering path and PulseAudio device
+    enumeration explicitly instead of relying on autodetection
+  * pica-client: recommend va-driver-all, depend on openssl - the
+    command line tool is used to generate keys and certificates
+
+ -- Anton Sviridenko <anton@picapica.im>  Fri, 28 Aug 2026 12:00:00 +0400
+
 pica-pica (0.7.1-1) unstable; urgency=low
 
   * Release 0.7.1

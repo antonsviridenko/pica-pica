@@ -2,16 +2,41 @@ Source: pica-pica
 Section: net
 Priority: optional
 Maintainer: Anton Sviridenko <anton@picapica.im>
-Build-Depends: debhelper (>= 8.0.0), autotools-dev, libssl-dev, qtbase5-dev, libminiupnpc-dev, libevent-dev, libsqlite3-dev
+Build-Depends: debhelper (>= 8.0.0),
+ autotools-dev,
+ pkg-config,
+ libssl-dev,
+ zlib1g-dev,
+ qtbase5-dev,
+ libminiupnpc-dev,
+ libevent-dev,
+ libsqlite3-dev,
+ sqlite3,
+ libasound2-dev,
+ libavcodec-dev,
+ libavdevice-dev,
+ libavformat-dev,
+ libavutil-dev,
+ libswresample-dev,
+ libswscale-dev,
+ libspeexdsp-dev,
+ libpulse-dev,
+ libva-dev,
+ libegl-dev,
+ libgl-dev,
+ libx11-dev
 Standards-Version: 3.9.2
 Homepage: http://picapica.im
 
 Package: pica-client
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends},alsa-utils,libqt5sql5-sqlite
+Depends: ${shlibs:Depends}, ${misc:Depends}, alsa-utils, libqt5sql5-sqlite, openssl
+Recommends: va-driver-all
 Description: Pica Pica instant messaging client
- Client for secure distributed instant messaging system 
+ Client for secure distributed instant messaging system
  Pica Pica.
+ .
+ Supports encrypted text chat, file transfers and audio/video calls.
 
 Package: pica-node
 Architecture: any
@@ -20,4 +45,4 @@ Description: node component for Pica Pica IM system
  Pica Pica node serves Pica Pica distributed IM network.
  It authenticates users, provides info about other existing
  nodes and online users, routes encrypted connections between
- users. 
+ users.
