@@ -188,13 +188,28 @@ private:
 	void waitForPreroll();
 	bool nextPacket(QByteArray *out);
 
-	static const int kMaxQueueDepth = 8;
+	// Ceiling on the queue, in packets of 20ms each - one second. This is a
+	// runaway guard, not a latency control: Play() pops as fast as it can and
+	// the standing latency ends up in the sound card's buffer, not here, so
+	// the queue only grows when the peer sends a burst or our playback thread
+	// is not being scheduled. It has to be well clear of kPrerollDepth,
+	// because overflow is handled by dropping the OLDEST packet
+	// (enqueuePacket()) - that is, by throwing away audio that was about to
+	// be played. At the previous value of 8 that was only 160ms, close enough
+	// to the preroll that ordinary reordering over the direct UDP transport
+	// could reach it and punch holes in the speech.
+	static const int kMaxQueueDepth = 50;
 
 	// Number of packets Play() waits to have buffered before writing the
 	// first one, to build up a cushion against arrival jitter (packets
 	// this call apart arrive roughly every 20ms - see
 	// AudioVideoCallController::startAudioPipeline()).
-	static const int kPrerollDepth = 3;
+	//
+	// This is standing latency: whatever is prerolled here is audio the
+	// listener hears that much later, for the whole call. 100ms buys a
+	// useful margin over the 60ms this used to be while staying inside the
+	// range where a conversation still feels immediate.
+	static const int kPrerollDepth = 5;
 };
 
 #endif // AUDIODEVICE_H

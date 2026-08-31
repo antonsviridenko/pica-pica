@@ -76,7 +76,26 @@ public:
 	// Rough measure of how well it is working, in dB - how much quieter the
 	// output is than the microphone input while the far end is active. Zero
 	// until enough far end audio has gone through to mean anything.
+	//
+	// Only meaningful while the far end is actually talking, which is what
+	// farEndLevelDb() is for: with nothing coming out of the speaker there is
+	// no echo to remove and the figure means nothing.
 	double erle();
+
+	// Recent signal levels in dBFS, averaged over the same window as erle().
+	// nearEndLevelDb() is the microphone before cancellation - a floor-level
+	// reading there means the capture path is dead and nothing else in the
+	// numbers is worth reading.
+	double nearEndLevelDb();
+	double farEndLevelDb();
+
+	// Far end samples waiting to be paired with microphone audio. In the
+	// steady state this settles at the depth of the sound card's output
+	// buffer and stays there, because both are drained by the same clock.
+	// Climbing towards m_farCapacity means capture and playback are running
+	// off different clocks - separate cards - and the reference is drifting
+	// out of alignment with the echo it is supposed to explain.
+	int farEndDepth();
 
 private:
 	Q_DISABLE_COPY(EchoCanceller)
@@ -109,10 +128,23 @@ private:
 	// explain.
 	int m_farCapacity;
 
-	// Running sums of near end and output energy, for erle().
+	// Exponentially averaged mean square of the near end (microphone), the
+	// cancelled output and the far end reference, for erle() and the level
+	// readings. Per sample rather than per call, so they stay comparable
+	// whatever block size the capture path hands us.
 	double m_nearEnergy;
 	double m_outEnergy;
+	double m_farEnergy;
 	QMutex m_statMutex;
+
+	// Drives the periodic qDebug() in processNearEnd(). Counted in samples
+	// rather than wall clock so the report interval does not depend on how
+	// punctually the capture thread is scheduled. Guarded by m_statMutex.
+	qint64 m_processedSamples;
+	qint64 m_nextReportSamples;
+
+	// How often the canceller reports how it is doing, in seconds.
+	static const int kReportIntervalSec = 2;
 
 	// Scratch far end block, reused by processNearEnd().
 	QVector<qint16> m_farBlock;

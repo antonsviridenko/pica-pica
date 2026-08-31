@@ -35,7 +35,10 @@ EchoCanceller::EchoCanceller(int sampleRate, int frameMs, int tailMs)
 	  m_farHead(0),
 	  m_farCapacity(0),
 	  m_nearEnergy(0.0),
-	  m_outEnergy(0.0)
+	  m_outEnergy(0.0),
+	  m_farEnergy(0.0),
+	  m_processedSamples(0),
+	  m_nextReportSamples(0)
 {
 	if (frameMs <= 0)
 		frameMs = 10;
@@ -101,6 +104,10 @@ EchoCanceller::EchoCanceller(int sampleRate, int frameMs, int tailMs)
 	m_farBlock.resize(m_frameSize);
 	m_farFifo.reserve(m_farCapacity);
 
+	// Hold off the first report until there is a window's worth of audio
+	// behind the averages, otherwise it only says the call just started.
+	m_nextReportSamples = qint64(m_sampleRate) * kReportIntervalSec;
+
 	qDebug() << "Echo canceller:" << m_sampleRate << "Hz, frame" << m_frameSize
 	         << "samples, tail" << m_filterLength << "samples ("
 	         << (m_filterLength * 1000 / m_sampleRate) << "ms )";
@@ -133,6 +140,9 @@ void EchoCanceller::reset()
 		QMutexLocker locker(&m_statMutex);
 		m_nearEnergy = 0.0;
 		m_outEnergy = 0.0;
+		m_farEnergy = 0.0;
+		m_processedSamples = 0;
+		m_nextReportSamples = qint64(m_sampleRate) * kReportIntervalSec;
 	}
 }
 
@@ -198,6 +208,7 @@ void EchoCanceller::processNearEnd(qint16 *pcm, int nsamples)
 
 	double nearEnergy = 0.0;
 	double outEnergy = 0.0;
+	double farEnergy = 0.0;
 
 	int blocks = nsamples / m_frameSize;
 	for (int b = 0; b < blocks; b++)
@@ -217,6 +228,12 @@ void EchoCanceller::processNearEnd(qint16 *pcm, int nsamples)
 			memset(m_farBlock.data(), 0, m_frameSize * sizeof(qint16));
 		}
 
+		// Measured before cancellation - this is the reference the filter is
+		// about to be given, so it says whether there was anything coming out
+		// of the speaker for it to work on.
+		for (int i = 0; i < m_frameSize; i++)
+			farEnergy += double(m_farBlock[i]) * double(m_farBlock[i]);
+
 		// speex_echo_cancellation() is happy to work in place on the near end
 		// buffer, which is what lets this sit directly in the capture path
 		// without another copy.
@@ -229,11 +246,41 @@ void EchoCanceller::processNearEnd(qint16 *pcm, int nsamples)
 			outEnergy += double(nearBlock[i]) * double(nearBlock[i]);
 	}
 
-	QMutexLocker statLocker(&m_statMutex);
-	// Exponential forgetting, so erle() reflects the last few seconds rather
-	// than the whole call.
-	m_nearEnergy = m_nearEnergy * 0.95 + nearEnergy * 0.05;
-	m_outEnergy = m_outEnergy * 0.95 + outEnergy * 0.05;
+	// At least one whole block, guaranteed by the nsamples check on entry.
+	const int used = blocks * m_frameSize;
+	bool report = false;
+
+	{
+		QMutexLocker statLocker(&m_statMutex);
+
+		// Exponential forgetting, so erle() reflects the last few seconds
+		// rather than the whole call. Per sample, so a change in the capture
+		// path's block size does not move the levels.
+		m_nearEnergy = m_nearEnergy * 0.95 + (nearEnergy / used) * 0.05;
+		m_outEnergy = m_outEnergy * 0.95 + (outEnergy / used) * 0.05;
+		m_farEnergy = m_farEnergy * 0.95 + (farEnergy / used) * 0.05;
+
+		m_processedSamples += used;
+		if (m_processedSamples >= m_nextReportSamples)
+		{
+			m_nextReportSamples = m_processedSamples + qint64(m_sampleRate) * kReportIntervalSec;
+			report = true;
+		}
+	}
+
+	// Outside the lock: the accessors below take it themselves, and qDebug()
+	// does I/O that has no business happening with a mutex held on the
+	// capture thread. The values can shift by one block in between, which
+	// does not matter for a log line.
+	if (report)
+	{
+		int depth = farEndDepth();
+
+		qDebug("AEC: erle %+.1f dB  mic %.1f dBFS  far %.1f dBFS  ref backlog %d ms%s",
+		       erle(), nearEndLevelDb(), farEndLevelDb(),
+		       (depth * 1000) / m_sampleRate,
+		       depth >= m_farCapacity ? "  [FIFO FULL - reference drifting]" : "");
+	}
 }
 
 double EchoCanceller::erle()
@@ -244,4 +291,37 @@ double EchoCanceller::erle()
 		return 0.0;
 
 	return 10.0 * log10(m_nearEnergy / m_outEnergy);
+}
+
+// Mean square of 16 bit samples to dBFS, with a floor so digital silence
+// prints as a number rather than -inf.
+static double level_db(double meanSquare)
+{
+	static const double kFullScale = 32768.0 * 32768.0;
+
+	if (meanSquare <= 0.0)
+		return -120.0;
+
+	double db = 10.0 * log10(meanSquare / kFullScale);
+	return db < -120.0 ? -120.0 : db;
+}
+
+double EchoCanceller::nearEndLevelDb()
+{
+	QMutexLocker locker(&m_statMutex);
+	return level_db(m_nearEnergy);
+}
+
+double EchoCanceller::farEndLevelDb()
+{
+	QMutexLocker locker(&m_statMutex);
+	return level_db(m_farEnergy);
+}
+
+int EchoCanceller::farEndDepth()
+{
+	QMutexLocker locker(&m_farMutex);
+
+	int pending = m_farFifo.size() - m_farHead;
+	return pending > 0 ? pending : 0;
 }
