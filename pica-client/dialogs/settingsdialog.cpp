@@ -201,6 +201,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	                            "are on speakers. Has no effect where the operating system "
 	                            "already does it."));
 
+	cbAutoCaptureGain = new QCheckBox(tr("Automatic microphone gain"), this);
+	cbAutoCaptureGain->setToolTip(tr("Turns the microphone's own recording level down during a "
+	                                 "call if it is loud enough to distort, and puts it back "
+	                                 "afterwards. A microphone set too loud clips, and clipping "
+	                                 "cannot be repaired later - it also stops echo cancellation "
+	                                 "working."));
+
 	btRingTest = new QPushButton(tr("Test ring 🔔"), this);
 	connect(btRingTest, SIGNAL(clicked()), this, SLOT(toggleRingTest()));
 
@@ -218,6 +225,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	audiodevlayout->addWidget(lbAudioPlaybackDev);
 	audiodevlayout->addWidget(audioPlaybackDev);
 	audiodevlayout->addWidget(cbEchoCancel);
+	audiodevlayout->addWidget(cbAutoCaptureGain);
 	audiodevlayout->addWidget(btAudioTest);
 	audiodevlayout->addWidget(audioTestStatus);
 	audiodevlayout->addWidget(lbAudioRingDev);
@@ -1054,6 +1062,7 @@ void SettingsDialog::loadSettings()
 		audioPlaybackDev->setCurrentIndex(audioPlaybackDevItem);
 
 	cbEchoCancel->setChecked(st.loadValue("audio.echo_cancel", 1).toBool());
+	cbAutoCaptureGain->setChecked(st.loadValue("audio.auto_capture_gain", 1).toBool());
 
 	QString audioRingDevVal = st.loadValue("audio.ring_device", "default").toString();
 	int audioRingDevItem = audioRingDev->findData(audioRingDevVal);
@@ -1108,6 +1117,7 @@ void SettingsDialog::storeSettings()
 	st.storeValue("audio.playback_device", audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString());
 	st.storeValue("audio.ring_device", audioRingDev->itemData(audioRingDev->currentIndex()).toString());
 	st.storeValue("audio.echo_cancel", cbEchoCancel->isChecked() ? "1" : "0");
+	st.storeValue("audio.auto_capture_gain", cbAutoCaptureGain->isChecked() ? "1" : "0");
 
 	if (audioDriver)
 	{

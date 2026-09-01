@@ -24,6 +24,7 @@
 
 struct SpeexEchoState_;
 struct SpeexPreprocessState_;
+struct SwrContext;
 
 // Acoustic echo cancellation for a call, using speexdsp's frequency domain
 // adaptive filter (MDF).
@@ -66,7 +67,15 @@ public:
 	void reset();
 
 	// Playback side: the audio about to be written to the output device.
-	void pushFarEnd(const qint16 *pcm, int nsamples);
+	//
+	// srcRate is what pcm is sampled at, and may differ from sampleRate():
+	// we capture at a rate of our choosing but play back at whatever the peer
+	// announced, so a call with a build that negotiates a different rate ends
+	// up with the two directions disagreeing. Passing 0 means "same as ours".
+	// Anything else is resampled on the way into the FIFO - without this the
+	// playback side used to drop the canceller entirely on a rate mismatch,
+	// leaving the capture side cancelling against silence.
+	void pushFarEnd(const qint16 *pcm, int nsamples, int srcRate = 0);
 
 	// Capture side: removes the echo of what pushFarEnd() was given, in
 	// place. nsamples should be a whole number of frameSize() blocks; a
@@ -120,6 +129,13 @@ private:
 	QMutex m_farMutex;
 	QVector<qint16> m_farFifo;
 	int m_farHead;
+
+	// Rate conversion for a far end that is not running at our rate, built on
+	// first use and rebuilt if the rate changes. Only the playback thread
+	// touches these, under m_farMutex.
+	SwrContext *m_farSwr;
+	int m_farSwrRate;
+	QVector<qint16> m_farScratch;
 
 	// Upper bound on the FIFO, in samples. Reached only if the two sound
 	// cards' clocks drift apart or playback outruns capture; past this the

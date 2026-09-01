@@ -28,9 +28,29 @@
 static const quint16 kVideoWidth = 640;
 static const quint16 kVideoHeight = 480;
 
+// Rate we capture and encode at, announced to the peer in the 0x74 message.
+//
+// 16kHz rather than 48kHz because of the echo canceller. speexdsp's MDF is
+// tuned for 8/16kHz, and its cost is counted in taps: a 150ms tail is 7200
+// taps at 48kHz but only 2400 at 16kHz. Convergence time and steady state
+// misadjustment both scale with that length, so the 48kHz filter spent every
+// call chasing and never settling - visible in the AEC log as ERLE climbing
+// towards 20dB and being knocked back to zero by each doubletalk burst.
+//
+// Costs nothing worth having for speech: Opus codes this as wideband, an 8kHz
+// audio bandwidth, which is well past telephone quality and past where voice
+// intelligibility stops improving.
+//
+// The playback direction is NOT this constant - it follows whatever the peer
+// announces (see incoming_audio_params()), so a call with an older build that
+// still sends 48kHz keeps working.
+static const int kCallSampleRate = 16000;
+
 
 AudioVideoCallController::AudioVideoCallController(QObject *parent)
- : QObject(parent), callwindow(0), ringdevice(0), is_active(false), m_audioSeq(0),
+ : QObject(parent), callwindow(0), ringdevice(0), is_active(false),
+   m_captureGain(nullptr), m_savedCaptureGain(0.0), m_haveSavedCaptureGain(false),
+   m_captureGainSteps(0), m_audioSeq(0),
    m_videoSeq(0), m_videoFrameTimestamp(0), m_videoFrameStarted(false)
 {
 	connect(skynet, SIGNAL(IncomingCall(QByteArray)), this, SLOT(call_from(QByteArray)));
@@ -66,6 +86,12 @@ AudioVideoCallController::AudioVideoCallController(QObject *parent)
 	microphone = new AudioDevice();
 	microphone->moveToThread(&microphone_thread);
 	connect(microphone, SIGNAL(packetReady(QByteArray)), this, SLOT(send_audio_packet(QByteArray)));
+
+	// Queued rather than direct: this crosses from the capture thread, and
+	// warn_capture_clipping() only logs today but is where a UI notice would
+	// go.
+	connect(microphone, SIGNAL(captureClipping(double,double)), this,
+	        SLOT(capture_clipping(double,double)), Qt::QueuedConnection);
 	microphone_thread.start();
 
 	output = new AudioDevice();
@@ -166,7 +192,7 @@ void AudioVideoCallController::startAudioPipeline()
 	// - see AudioDevice::captureNative(), which drops it once the backend
 	// says the platform has the job in hand.
 	if (st.loadValue("audio.echo_cancel", 1).toBool())
-		m_echoCanceller = EchoCancellerPtr(new EchoCanceller(48000));
+		m_echoCanceller = EchoCancellerPtr(new EchoCanceller(kCallSampleRate));
 	else
 		m_echoCanceller.clear();
 
@@ -178,14 +204,18 @@ void AudioVideoCallController::startAudioPipeline()
 	microphone->setEchoCanceller(m_echoCanceller);
 	output->setEchoCanceller(m_echoCanceller);
 
+	// Before Capture() starts, so the gain is already read and saved by the
+	// time the first clipping report can come back.
+	startCaptureGainControl(capDev);
+
 	// Declare our outgoing codec to the peer, then start capturing and
 	// encoding right away - the peer's decoder is only ready once it has
 	// processed this 0x74 message, but since the call is carried over TCP,
 	// packets sent immediately after are guaranteed to arrive after it.
-	skynet->SendAudioParams(m_peer_id, QStringLiteral("opus"), 48000);
+	skynet->SendAudioParams(m_peer_id, QStringLiteral("opus"), kCallSampleRate);
 
 	QMetaObject::invokeMethod(microphone, "configureCapture", Qt::QueuedConnection,
-	                           Q_ARG(QString, capDev), Q_ARG(QString, QStringLiteral("opus")), Q_ARG(int, 48000));
+	                           Q_ARG(QString, capDev), Q_ARG(QString, QStringLiteral("opus")), Q_ARG(int, kCallSampleRate));
 	QMetaObject::invokeMethod(microphone, "Capture", Qt::QueuedConnection);
 
 	// output is configured lazily, once the peer's own 0x74 (see
@@ -205,6 +235,12 @@ void AudioVideoCallController::stopAudioPipeline()
 	// exit after a call).
 	microphone->Close();
 	output->Close();
+
+	// Puts the user's gain back. Safe to do while the capture thread is still
+	// winding down: the control is only ever touched from this thread, and
+	// capture_clipping() finds m_captureGain null and does nothing if a last
+	// queued report arrives after this.
+	stopCaptureGainControl();
 
 	// Drop our reference. The two audio threads still hold theirs until they
 	// come out of Capture()/Play(), and the canceller goes away with the last
@@ -428,6 +464,114 @@ void AudioVideoCallController::send_audio_packet(QByteArray data)
 	quint32 timestamp = (quint32)m_callClock.elapsed();
 
 	skynet->SendAudioPacket(m_peer_id, seq, timestamp, data);
+}
+
+// Rate limited by AudioDevice, which reports at most once every couple of
+// seconds of audio, so this can log and act unconditionally.
+void AudioVideoCallController::capture_clipping(double pinnedPercent, double peakDb)
+{
+	qWarning("Microphone is clipping: %.2f%% of samples at full scale, peak %.1f dBFS",
+	         pinnedPercent, peakDb);
+
+	// Either the setting is off, or nothing on this platform would let us at
+	// the control. The warning above is then all we can do - and it is still
+	// worth having, since the distortion cannot be undone anywhere else.
+	if (!m_captureGain)
+		return;
+
+	if (m_captureGainSteps >= kMaxCaptureGainSteps)
+		return;
+
+	double current = 0.0;
+	if (!m_captureGain->gain(&current))
+		return;
+
+	// Size the step to how badly it is clipping. A microphone left at maximum
+	// is 20-30dB too hot and wants covering quickly; one that only tips over
+	// on the loudest syllable wants nudging, not slamming.
+	double factor;
+	if (pinnedPercent >= 5.0)
+		factor = 0.70;
+	else if (pinnedPercent >= 0.5)
+		factor = 0.85;
+	else
+		factor = 0.95;
+
+	double next = current * factor;
+	if (next < kMinCaptureGain)
+		next = kMinCaptureGain;
+
+	if (next >= current)
+		return; // already at the floor, nothing left to give
+
+	if (!m_captureGain->setGain(next))
+	{
+		qWarning() << "Could not lower the capture gain - leaving it alone";
+		m_captureGainSteps = kMaxCaptureGainSteps;
+		return;
+	}
+
+	m_captureGainSteps++;
+	qDebug("Capture gain %.0f%% -> %.0f%% (step %d of %d)",
+	       current * 100.0, next * 100.0, m_captureGainSteps, kMaxCaptureGainSteps);
+}
+
+void AudioVideoCallController::startCaptureGainControl(const QString &captureDevice)
+{
+	m_captureGain = nullptr;
+	m_savedCaptureGain = 0.0;
+	m_haveSavedCaptureGain = false;
+	m_captureGainSteps = 0;
+
+	Settings st(config_dbname);
+	if (!st.loadValue("audio.auto_capture_gain", 1).toBool())
+		return;
+
+	// Whichever driver the capture side is about to open the device with -
+	// the mixer control has to be the one belonging to that device.
+	const QString driver = AudioDevice::PlatformDriverName(CAPTURE);
+
+	m_captureGain = CaptureGainControl::create(driver, captureDevice);
+	if (!m_captureGain)
+		return;
+
+	if (m_captureGain->gain(&m_savedCaptureGain))
+	{
+		m_haveSavedCaptureGain = true;
+		qDebug() << "Automatic microphone gain using" << m_captureGain->description()
+		         << "- currently at" << qRound(m_savedCaptureGain * 100.0) << "%";
+	}
+	else
+	{
+		// Without a reading there is nothing to put back afterwards, and
+		// moving a control we cannot restore is not a trade worth making.
+		qWarning() << "Could not read the capture gain - not taking it over";
+		delete m_captureGain;
+		m_captureGain = nullptr;
+	}
+}
+
+void AudioVideoCallController::stopCaptureGainControl()
+{
+	if (!m_captureGain)
+		return;
+
+	// Put the user's own setting back. Only bother if we actually moved it,
+	// so a call that never clipped cannot disturb a gain the user changed
+	// themselves while it was running.
+	if (m_haveSavedCaptureGain && m_captureGainSteps > 0)
+	{
+		if (m_captureGain->setGain(m_savedCaptureGain))
+			qDebug() << "Capture gain restored to" << qRound(m_savedCaptureGain * 100.0) << "%";
+		else
+			qWarning() << "Could not restore the capture gain to"
+			           << qRound(m_savedCaptureGain * 100.0) << "% - it has been left turned down";
+	}
+
+	delete m_captureGain;
+	m_captureGain = nullptr;
+	m_haveSavedCaptureGain = false;
+	m_captureGainSteps = 0;
 }
 
 void AudioVideoCallController::incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate)

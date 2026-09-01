@@ -16,6 +16,9 @@ SOURCES += main.cpp\
     nativeaudio.cpp \
     nativeaudio_wasapi.cpp \
     nativeaudio_coreaudio.cpp \
+    capturegain.cpp \
+    capturegain_wasapi.cpp \
+    capturegain_coreaudio.cpp \
 	audiovideocallcontroller.cpp \
         mainwindow.cpp \
     chatwindow.cpp \
@@ -59,6 +62,7 @@ HEADERS  += mainwindow.h \
     audioring.h \
     echocanceller.h \
     nativeaudio.h \
+    capturegain.h \
     audiovideocallcontroller.h \
     chatwindow.h \
     callwindow.h \

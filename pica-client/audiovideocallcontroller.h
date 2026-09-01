@@ -22,6 +22,7 @@
 #include <QElapsedTimer>
 #include "callwindow.h"
 #include "audiodevice.h"
+#include "capturegain.h"
 #include "videodevice.h"
 #include "toneplayer/toneplayer.h"
 
@@ -78,6 +79,27 @@ private:
 	// speexdsp could not start one, or between calls.
 	EchoCancellerPtr m_echoCanceller;
 
+	// The capture device's mixer control, held for the duration of a call so
+	// a clipping microphone can be turned down. Null when the setting is off,
+	// when the platform has no reachable control, or between calls.
+	//
+	// m_savedCaptureGain is where the control was found at the start of the
+	// call, put back in stopAudioPipeline(): this is the user's own setting
+	// and we are only borrowing it. m_captureGainSteps bounds how far we will
+	// go, so a microphone that clips for some reason turning it down cannot
+	// fix - a broken preamp, someone shouting into it - ends up quiet rather
+	// than muted.
+	CaptureGainControl *m_captureGain;
+	double m_savedCaptureGain;
+	bool m_haveSavedCaptureGain;
+	int m_captureGainSteps;
+
+	static const int kMaxCaptureGainSteps = 12;
+
+	// Never go below this fraction of the control's travel; past it we are
+	// making the user inaudible to fix a problem they can hear about instead.
+	static constexpr double kMinCaptureGain = 0.05;
+
 	// Sequence number / capture-clock timestamp stamped onto outgoing
 	// 0x76 audio packets (see PICA_PROTO_CALL_PACKET_HDRSIZE).
 	quint16 m_audioSeq;
@@ -94,6 +116,12 @@ private:
 
 	// Reassembly of incoming 0x77 fragments into whole encoded frames.
 	VideoFrameAssembler m_videoAssembler;
+
+	// Take over the capture device's mixer gain for the duration of a call,
+	// and hand it back. Both are no-ops when "audio.auto_capture_gain" is off
+	// or the platform has no control we can reach.
+	void startCaptureGainControl(const QString &captureDevice);
+	void stopCaptureGainControl();
 
 	void playEarpieceTone(void (TonePlayer::*tone)());
 	void playRingTone();
@@ -114,6 +142,7 @@ private slots:
 
 	void send_audio_packet(QByteArray data);
 	void incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate);
+	void capture_clipping(double pinnedPercent, double peakDb);
 	void incoming_audio_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 	void video_capture_started(QString codec, int width, int height);

@@ -24,7 +24,20 @@
 extern "C" {
 #include <speex/speex_echo.h>
 #include <speex/speex_preprocess.h>
+#include <libswresample/swresample.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/samplefmt.h>
+#include <libavutil/mathematics.h>
+#include <libavutil/opt.h>
 }
+
+// Same split as audiodevice.cpp - FFmpeg 5.1 replaced the channel count and
+// layout fields with the AVChannelLayout API.
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 24, 100)
+#  define EC_HAVE_CH_LAYOUT 1
+#else
+#  define EC_HAVE_CH_LAYOUT 0
+#endif
 
 EchoCanceller::EchoCanceller(int sampleRate, int frameMs, int tailMs)
 	: m_sampleRate(sampleRate > 0 ? sampleRate : 48000),
@@ -33,6 +46,8 @@ EchoCanceller::EchoCanceller(int sampleRate, int frameMs, int tailMs)
 	  m_echo(nullptr),
 	  m_preprocess(nullptr),
 	  m_farHead(0),
+	  m_farSwr(nullptr),
+	  m_farSwrRate(0),
 	  m_farCapacity(0),
 	  m_nearEnergy(0.0),
 	  m_outEnergy(0.0),
@@ -120,6 +135,8 @@ EchoCanceller::~EchoCanceller()
 		speex_preprocess_state_destroy(reinterpret_cast<SpeexPreprocessState *>(m_preprocess));
 	if (m_echo)
 		speex_echo_state_destroy(reinterpret_cast<SpeexEchoState *>(m_echo));
+	if (m_farSwr)
+		swr_free(&m_farSwr);
 }
 
 void EchoCanceller::reset()
@@ -146,12 +163,68 @@ void EchoCanceller::reset()
 	}
 }
 
-void EchoCanceller::pushFarEnd(const qint16 *pcm, int nsamples)
+void EchoCanceller::pushFarEnd(const qint16 *pcm, int nsamples, int srcRate)
 {
 	if (!m_echo || !pcm || nsamples <= 0)
 		return;
 
 	QMutexLocker locker(&m_farMutex);
+
+	if (srcRate > 0 && srcRate != m_sampleRate)
+	{
+		if (m_farSwr && m_farSwrRate != srcRate)
+		{
+			swr_free(&m_farSwr);
+			m_farSwrRate = 0;
+		}
+
+		if (!m_farSwr)
+		{
+#if EC_HAVE_CH_LAYOUT
+			AVChannelLayout mono;
+			av_channel_layout_default(&mono, 1);
+			int ret = swr_alloc_set_opts2(&m_farSwr, &mono, AV_SAMPLE_FMT_S16, m_sampleRate,
+			                              &mono, AV_SAMPLE_FMT_S16, srcRate, 0, nullptr);
+			av_channel_layout_uninit(&mono);
+			if (ret < 0)
+				m_farSwr = nullptr;
+#else
+			m_farSwr = swr_alloc_set_opts(nullptr, AV_CH_LAYOUT_MONO, AV_SAMPLE_FMT_S16, m_sampleRate,
+			                              AV_CH_LAYOUT_MONO, AV_SAMPLE_FMT_S16, srcRate, 0, nullptr);
+#endif
+			if (m_farSwr && swr_init(m_farSwr) < 0)
+				swr_free(&m_farSwr);
+
+			if (!m_farSwr)
+			{
+				qWarning() << "Echo canceller: cannot resample" << srcRate << "Hz far end to"
+				           << m_sampleRate << "Hz - echo cancellation will not work";
+				return;
+			}
+
+			m_farSwrRate = srcRate;
+			qDebug() << "Echo canceller: far end is" << srcRate << "Hz, resampling to" << m_sampleRate << "Hz";
+		}
+
+		// Upper bound on what this many input samples can become, plus
+		// whatever the converter is still holding from last time.
+		int room = (int)av_rescale_rnd(swr_get_delay(m_farSwr, srcRate) + nsamples,
+		                              m_sampleRate, srcRate, AV_ROUND_UP);
+		if (room <= 0)
+			return;
+
+		m_farScratch.resize(room);
+
+		uint8_t *out[1] = { (uint8_t *)m_farScratch.data() };
+		const uint8_t *in[1] = { (const uint8_t *)pcm };
+
+		int got = swr_convert(m_farSwr, out, room, in, nsamples);
+		if (got <= 0)
+			return;
+
+		pcm = m_farScratch.constData();
+		nsamples = got;
+	}
 
 	// Reclaim the space already consumed rather than growing without bound;
 	// doing it only once the head has run past half the buffer keeps this

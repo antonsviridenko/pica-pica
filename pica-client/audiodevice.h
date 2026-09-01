@@ -99,6 +99,14 @@ signals:
 	// Counterpart of VideoDevice::accelerationInUse().
 	void deviceFormatInUse(QString description);
 
+	// The capture device is delivering samples pinned at full scale, with the
+	// share of them in the last window and the peak that was seen. Not an
+	// error in the errorOccurred() sense - the call carries on - but it wants
+	// acting on, because nothing downstream can undo it. Numbers rather than
+	// a message because the receiver drives the gain control with them; see
+	// AudioVideoCallController::capture_clipping().
+	void captureClipping(double pinnedPercent, double peakDb);
+
 public:
 	virtual QList<MediaDeviceInfo> Enumerate(enum MediaDeviceStreamDirection dir);
 
@@ -154,6 +162,34 @@ private:
 	// pointer because AudioVideoCallController tears a call down without
 	// joining either thread.
 	EchoCancellerPtr m_echoCanceller;
+
+	// Watches the microphone for samples pinned at the rail and warns once
+	// every kLevelReportSec of audio if too many of them are.
+	//
+	// Detection only - there is deliberately no gain applied here. Clipping
+	// happens in the converter, before we see anything, and scaling a clipped
+	// buffer down just produces a quieter clipped buffer: the flattened peaks,
+	// the harmonics they generate and the non-linearity that stops the echo
+	// canceller converging are all still in it. The only fix is less gain
+	// ahead of the ADC, which means the capture device's own mixer control.
+	void resetCaptureLevel();
+	void checkCaptureLevel(const qint16 *pcm, int nsamples);
+
+	qint64 m_clipCount;
+	qint64 m_levelCount;
+	int m_levelPeak;
+
+	// |sample| at or above this counts as pinned. 32512 is -0.13 dBFS: low
+	// enough to catch a converter that rails slightly short of 0x7fff, high
+	// enough that ordinary loud speech does not trip it.
+	static const int kClipThreshold = 32512;
+
+	// Fraction of pinned samples in a window that is worth complaining about,
+	// in percent. A stray sample at full scale is normal; a twentieth of a
+	// percent of them is not.
+	static constexpr double kClipWarnPercent = 0.05;
+
+	static const int kLevelReportSec = 2;
 
 	// The FFmpeg and the native halves of each direction. Which one runs is
 	// decided by PlatformDriverName().

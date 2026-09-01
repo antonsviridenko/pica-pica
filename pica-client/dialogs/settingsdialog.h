@@ -81,6 +81,7 @@ private:
 	// Whether to run our own acoustic echo cancellation. Ignored when the
 	// platform provides one - see AudioDevice::PlatformDriverName().
 	QCheckBox *cbEchoCancel;
+	QCheckBox *cbAutoCaptureGain;
 
 	QComboBox *videoDev;
 	QPushButton *videoDevRefresh;

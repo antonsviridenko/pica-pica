@@ -110,6 +110,10 @@ pica-client/nativeaudio.cpp \
 pica-client/nativeaudio.h \
 pica-client/nativeaudio_wasapi.cpp \
 pica-client/nativeaudio_coreaudio.cpp \
+pica-client/capturegain.cpp \
+pica-client/capturegain.h \
+pica-client/capturegain_wasapi.cpp \
+pica-client/capturegain_coreaudio.cpp \
 pica-client/videodevice.cpp \
 pica-client/videodevice.h \
 pica-client/videodshow.cpp \

@@ -20,6 +20,7 @@
 #include <QDebug>
 #include <QMutexLocker>
 #include <QVector>
+#include <cmath>
 #include <cstring>
 
 #ifdef Q_OS_LINUX
@@ -175,8 +176,45 @@ static AVSampleFormat chooseEncoderSampleFmt(const AVCodec *enc)
 
 AudioDevice::AudioDevice(QObject *parent)
 	: QObject(parent), m_sampleRate(48000), m_abort(0),
+	  m_clipCount(0), m_levelCount(0), m_levelPeak(0),
 	  m_lastPlayedSeq(0), m_havePlayedSeq(false)
 {
+}
+
+void AudioDevice::resetCaptureLevel()
+{
+	m_clipCount = 0;
+	m_levelCount = 0;
+	m_levelPeak = 0;
+}
+
+void AudioDevice::checkCaptureLevel(const qint16 *pcm, int nsamples)
+{
+	for (int i = 0; i < nsamples; i++)
+	{
+		// qint16 promotes to int, so negating -32768 is well defined here.
+		int v = pcm[i] < 0 ? -(int)pcm[i] : (int)pcm[i];
+
+		if (v > m_levelPeak)
+			m_levelPeak = v;
+		if (v >= kClipThreshold)
+			m_clipCount++;
+	}
+
+	m_levelCount += nsamples;
+
+	if (m_levelCount < qint64(m_sampleRate) * kLevelReportSec)
+		return;
+
+	double pinned = 100.0 * double(m_clipCount) / double(m_levelCount);
+
+	if (pinned >= kClipWarnPercent)
+	{
+		double peakDb = m_levelPeak > 0 ? 20.0 * log10(double(m_levelPeak) / 32768.0) : -120.0;
+		emit captureClipping(pinned, peakDb);
+	}
+
+	resetCaptureLevel();
 }
 
 AudioDevice::~AudioDevice()
@@ -294,6 +332,7 @@ bool AudioDevice::nextPacket(QByteArray *out)
 void AudioDevice::Capture()
 {
 	m_abort.storeRelaxed(0);
+	resetCaptureLevel();
 
 	const QString driver = AudioDevice::PlatformDriverName(CAPTURE);
 
@@ -519,6 +558,12 @@ void AudioDevice::captureFFmpeg(const QString &driver)
 
 				av_audio_fifo_read(fifo, (void **)enc_frame->data, frame_size);
 
+				// Both of these want interleaved 16 bit. That is what libopus
+				// takes, so it is the normal path; the native "opus" encoder
+				// fallback runs in planar float and gets neither.
+				if (enc_ctx->sample_fmt == AV_SAMPLE_FMT_S16)
+					checkCaptureLevel((const qint16 *)enc_frame->data[0], frame_size);
+
 				// Take the echo of what the playback direction has been
 				// feeding the speaker back out of the microphone signal,
 				// before it is encoded and sent.
@@ -676,6 +721,10 @@ void AudioDevice::captureNative(const QString &api)
 		{
 			memcpy(block.data(), pending.constData() + consumed, frame_size * sizeof(qint16));
 			consumed += frame_size;
+
+			// The backend always delivers interleaved 16 bit, so unlike the
+			// FFmpeg path this needs no format check.
+			checkCaptureLevel(block.constData(), frame_size);
 
 			if (ec)
 				ec->processNearEnd(block.data(), frame_size);
@@ -841,8 +890,12 @@ void AudioDevice::playFFmpeg(const QString &driver)
 		return;
 	}
 
+	// A rate mismatch is not a reason to drop it any more - pushFarEnd()
+	// resamples. The two directions genuinely can disagree: we capture at the
+	// rate AudioVideoCallController picked, but play back at whatever the
+	// peer announced.
 	EchoCancellerPtr ec = m_echoCanceller;
-	if (ec && (!ec->isValid() || ec->sampleRate() != m_sampleRate))
+	if (ec && !ec->isValid())
 		ec.clear();
 
 	SwrContext *swr = nullptr;
@@ -923,7 +976,7 @@ void AudioDevice::playFFmpeg(const QString &driver)
 					// moment the sound card gets it, so the delay it has to
 					// model is only the device buffer plus the room.
 					if (ec)
-						ec->pushFarEnd((const qint16 *)out_frame->data[0], converted_samples);
+						ec->pushFarEnd((const qint16 *)out_frame->data[0], converted_samples, m_sampleRate);
 
 					if (avcodec_send_frame(out_ctx, out_frame) == 0)
 					{
@@ -999,9 +1052,10 @@ void AudioDevice::playNative(const QString &api)
 
 	// On a platform that cancels for us, the far end signal it needs is the
 	// one it is rendering itself - there is nothing to hand to ours, and
-	// nothing for ours to do.
+	// nothing for ours to do. A rate mismatch is handled by pushFarEnd()
+	// rather than by dropping the canceller, see playFFmpeg().
 	EchoCancellerPtr ec = m_echoCanceller;
-	if (ec && (!ec->isValid() || ec->sampleRate() != m_sampleRate))
+	if (ec && !ec->isValid())
 		ec.clear();
 
 	SwrContext *swr = nullptr;
@@ -1070,7 +1124,7 @@ void AudioDevice::playNative(const QString &api)
 				if (converted > 0)
 				{
 					if (ec)
-						ec->pushFarEnd(out.constData(), converted * kChannels);
+						ec->pushFarEnd(out.constData(), converted * kChannels, m_sampleRate);
 
 					if (backend->write(out.constData(), converted * kChannels, 100) < 0)
 					{
