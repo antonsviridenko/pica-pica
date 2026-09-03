@@ -183,6 +183,31 @@ public:
 		return true;
 	}
 
+	// kAudioDevicePropertyVolumeDecibels is the same control as the scalar
+	// above, reported on a decibel scale. Devices that expose the scalar do not
+	// always expose this one, hence the plain false rather than a fallback.
+	bool gainDb(double *out) override
+	{
+		if (!out || m_dev == kAudioObjectUnknown)
+			return false;
+
+		AudioObjectPropertyAddress addr;
+		addr.mSelector = kAudioDevicePropertyVolumeDecibels;
+		addr.mScope = kAudioObjectPropertyScopeInput;
+		addr.mElement = m_master ? 0 : (m_channels.isEmpty() ? 0 : m_channels[0]);
+
+		if (!AudioObjectHasProperty(m_dev, &addr))
+			return false;
+
+		Float32 db = 0.0f;
+		UInt32 size = sizeof(db);
+		if (AudioObjectGetPropertyData(m_dev, &addr, 0, nullptr, &size, &db) != noErr)
+			return false;
+
+		*out = db;
+		return true;
+	}
+
 	bool setGain(double value) override
 	{
 		if (m_dev == kAudioObjectUnknown)

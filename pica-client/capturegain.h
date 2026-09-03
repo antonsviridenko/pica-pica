@@ -18,6 +18,7 @@
 #define CAPTUREGAIN_H
 
 #include <QString>
+#include <QtGlobal>
 
 // The capture device's own gain control - the mixer slider, not a multiplier
 // applied to samples we already have.
@@ -50,6 +51,17 @@ public:
 	// Current position of the control, 0.0 to 1.0. False if it could not be
 	// read, in which case *out is untouched.
 	virtual bool gain(double *out) = 0;
+
+	// The same position in decibels, where the platform can say. This is what
+	// a caller should bound itself by: the fraction above is a position on a
+	// slider whose relationship to loudness differs per backend - linear in dB
+	// on an ALSA hardware control, roughly cubic on PulseAudio and WASAPI - so
+	// "5% of travel" is a mild cut on one and near silence on another. Decibels
+	// mean the same thing everywhere.
+	//
+	// False when the platform will not say, and then the caller has nothing to
+	// go on but a step count.
+	virtual bool gainDb(double *out) { Q_UNUSED(out) return false; }
 
 	// Moves the control. Values outside 0.0 to 1.0 are clamped.
 	virtual bool setGain(double value) = 0;

@@ -51,10 +51,21 @@ class EchoCanceller
 {
 public:
 	// frameMs is the block the filter works on and must divide the audio
-	// handed to processNearEnd(). tailMs is how much echo delay the filter
-	// can model - it has to cover the sound card's output buffer plus the
-	// room, and costs CPU and convergence time in proportion.
-	EchoCanceller(int sampleRate, int frameMs = 10, int tailMs = 150);
+	// handed to processNearEnd().
+	//
+	// tailMs is the longest echo delay the filter can model at all; anything
+	// arriving later is invisible to it and can only be dealt with
+	// statistically by the residual suppressor. The fixed part of that delay
+	// is small - the capture path plus a metre or two of flight, call it 30ms
+	// - so nearly all of the tail is budget for the room's reverberation.
+	//
+	// It is not free in either direction. Too short and late reflections never
+	// get modelled and are heard as residual echo; too long and both the
+	// convergence time and the steady state misadjustment grow with the tap
+	// count. 300ms at 16kHz is 4800 taps, which is still fewer than the 7200
+	// this ran at when calls were 48kHz with a 150ms tail - so the room
+	// coverage doubles and the filter is still shorter than it used to be.
+	EchoCanceller(int sampleRate, int frameMs = 10, int tailMs = 300);
 	~EchoCanceller();
 
 	bool isValid() const { return m_echo != nullptr; }

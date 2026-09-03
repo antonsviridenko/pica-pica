@@ -1062,7 +1062,7 @@ void SettingsDialog::loadSettings()
 		audioPlaybackDev->setCurrentIndex(audioPlaybackDevItem);
 
 	cbEchoCancel->setChecked(st.loadValue("audio.echo_cancel", 1).toBool());
-	cbAutoCaptureGain->setChecked(st.loadValue("audio.auto_capture_gain", 1).toBool());
+	cbAutoCaptureGain->setChecked(st.loadValue("audio.auto_capture_gain", 0).toBool());
 
 	QString audioRingDevVal = st.loadValue("audio.ring_device", "default").toString();
 	int audioRingDevItem = audioRingDev->findData(audioRingDevVal);

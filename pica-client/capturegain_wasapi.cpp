@@ -119,6 +119,21 @@ public:
 		return true;
 	}
 
+	// WASAPI keeps a real decibel value alongside the scalar, so this needs no
+	// conversion of our own.
+	bool gainDb(double *out) override
+	{
+		if (!m_vol || !out)
+			return false;
+
+		float db = 0.0f;
+		if (FAILED(m_vol->GetMasterVolumeLevel(&db)))
+			return false;
+
+		*out = db;
+		return true;
+	}
+
 	bool setGain(double value) override
 	{
 		if (!m_vol)

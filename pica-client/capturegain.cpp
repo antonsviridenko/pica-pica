@@ -18,6 +18,7 @@
 
 #include <QDebug>
 #include <QtGlobal>
+#include <QStringList>
 #include <cmath>
 
 #ifdef Q_OS_LINUX
@@ -114,48 +115,31 @@ public:
 
 	bool open(const QString &pcmName)
 	{
-		const QString card = alsaCardFromPcm(pcmName);
-		const QByteArray cardUtf8 = card.toUtf8();
+		// The card the PCM name points at, and then the real cards as
+		// fallbacks. "default" is not a card at all on a machine running a
+		// sound server: attaching to it lands on the server's own software
+		// volume, which is applied to samples the converter has already
+		// digitised. That control cannot undo clipping - scaling a clipped
+		// buffer down just gives a quieter clipped buffer - so calibrating
+		// against it would turn the microphone down forever without the
+		// clipping ever going away. Only a gain ahead of the ADC is any use
+		// here, and tryCard() insists on one.
+		QStringList candidates;
+		candidates << alsaCardFromPcm(pcmName);
 
-		if (snd_mixer_open(&m_mixer, 0) < 0)
+		if (candidates.first() == QLatin1String("default"))
 		{
-			m_mixer = nullptr;
-			return false;
+			for (int card = 0; card < 8; card++)
+				candidates << (QStringLiteral("hw:") + QString::number(card));
 		}
 
-		if (snd_mixer_attach(m_mixer, cardUtf8.constData()) < 0 ||
-		    snd_mixer_selem_register(m_mixer, nullptr, nullptr) < 0 ||
-		    snd_mixer_load(m_mixer) < 0)
-			return false;
-
-		// "Capture" is what the recording gain is called on essentially every
-		// card that has one; "Mic" turns up on the ones that do not separate
-		// the input selector from the gain. Failing both, take the first
-		// element that has a capture volume at all.
-		m_elem = findNamed("Capture");
-		if (!m_elem)
-			m_elem = findNamed("Mic");
-		if (!m_elem)
+		for (int i = 0; i < candidates.size(); i++)
 		{
-			for (snd_mixer_elem_t *e = snd_mixer_first_elem(m_mixer); e; e = snd_mixer_elem_next(e))
-			{
-				if (snd_mixer_selem_is_active(e) && snd_mixer_selem_has_capture_volume(e))
-				{
-					m_elem = e;
-					break;
-				}
-			}
+			if (tryCard(candidates[i]))
+				return true;
 		}
 
-		if (!m_elem)
-			return false;
-
-		if (snd_mixer_selem_get_capture_volume_range(m_elem, &m_min, &m_max) < 0 || m_max <= m_min)
-			return false;
-
-		m_name = QString::fromUtf8(snd_mixer_selem_get_name(m_elem)) +
-		         QStringLiteral(" on ") + card;
-		return true;
+		return false;
 	}
 
 	bool gain(double *out) override
@@ -176,6 +160,24 @@ public:
 		return true;
 	}
 
+	bool gainDb(double *out) override
+	{
+		if (!m_elem || !out)
+			return false;
+
+		snd_mixer_handle_events(m_mixer);
+
+		// ALSA reports hundredths of a decibel. Not every element has a dB
+		// mapping - the software controls a sound server exposes often do not.
+		long v = 0;
+		if (snd_mixer_selem_get_capture_dB(m_elem, SND_MIXER_SCHN_FRONT_LEFT, &v) < 0 &&
+		    snd_mixer_selem_get_capture_dB(m_elem, SND_MIXER_SCHN_MONO, &v) < 0)
+			return false;
+
+		*out = double(v) / 100.0;
+		return true;
+	}
+
 	bool setGain(double value) override
 	{
 		if (!m_elem)
@@ -188,6 +190,60 @@ public:
 	QString description() const override { return m_name; }
 
 private:
+	// A candidate has to have a decibel range as well as a volume range. That
+	// is what separates a converter gain from a sound server's software fader:
+	// the hardware control knows what its steps are worth in dB, the software
+	// one only has a slider position. It is also what lets the caller bound
+	// the total cut in dB, which is the only unit that means the same thing on
+	// every backend.
+	bool tryCard(const QString &card)
+	{
+		if (m_mixer)
+		{
+			snd_mixer_close(m_mixer);
+			m_mixer = nullptr;
+			m_elem = nullptr;
+		}
+
+		if (snd_mixer_open(&m_mixer, 0) < 0)
+		{
+			m_mixer = nullptr;
+			return false;
+		}
+
+		const QByteArray cardUtf8 = card.toUtf8();
+		if (snd_mixer_attach(m_mixer, cardUtf8.constData()) < 0 ||
+		    snd_mixer_selem_register(m_mixer, nullptr, nullptr) < 0 ||
+		    snd_mixer_load(m_mixer) < 0)
+			return false;
+
+		// "Capture" is what the recording gain is called on essentially every
+		// card that has one; "Mic" turns up on the ones that do not separate
+		// the input selector from the gain.
+		m_elem = findNamed("Capture");
+		if (!m_elem)
+			m_elem = findNamed("Mic");
+		if (!m_elem)
+			m_elem = findNamed("Digital");
+
+		if (!m_elem)
+			return false;
+
+		if (snd_mixer_selem_get_capture_volume_range(m_elem, &m_min, &m_max) < 0 || m_max <= m_min)
+			return false;
+
+		long dbMin = 0, dbMax = 0;
+		if (snd_mixer_selem_get_capture_dB_range(m_elem, &dbMin, &dbMax) < 0 || dbMax <= dbMin)
+		{
+			m_elem = nullptr;
+			return false;
+		}
+
+		m_name = QString::fromUtf8(snd_mixer_selem_get_name(m_elem)) +
+		         QStringLiteral(" on ") + card;
+		return true;
+	}
+
 	snd_mixer_elem_t *findNamed(const char *want)
 	{
 		for (snd_mixer_elem_t *e = snd_mixer_first_elem(m_mixer); e; e = snd_mixer_elem_next(e))
@@ -220,7 +276,7 @@ class PulseCaptureGain : public CaptureGainControl
 public:
 	PulseCaptureGain()
 		: m_mainloop(nullptr), m_ctx(nullptr), m_channels(1),
-		  m_pending(false), m_ok(false), m_value(0.0) {}
+		  m_pending(false), m_ok(false), m_value(0.0), m_valueDb(0.0) {}
 
 	~PulseCaptureGain() override
 	{
@@ -291,6 +347,24 @@ public:
 		if (m_ok && out)
 			*out = m_value;
 		return m_ok;
+	}
+
+	// pa_sw_volume_to_dB() returns -inf for a muted control, which is true but
+	// useless as a number to do arithmetic on.
+	bool gainDb(double *out) override
+	{
+		if (!out)
+			return false;
+
+		double ignored;
+		if (!gain(&ignored))
+			return false;
+
+		if (m_valueDb < -200.0 || m_valueDb > 200.0)
+			return false;
+
+		*out = m_valueDb;
+		return true;
 	}
 
 	bool setGain(double value) override
@@ -393,6 +467,7 @@ private:
 		// The loudest channel, so a step down is a step down for all of them
 		// rather than only for whichever happens to be quietest.
 		self->m_value = clampGainAmplified(double(pa_cvolume_max(&info->volume)) / double(PA_VOLUME_NORM));
+		self->m_valueDb = pa_sw_volume_to_dB(pa_cvolume_max(&info->volume));
 		self->m_ok = true;
 	}
 
@@ -411,6 +486,7 @@ private:
 	bool m_pending;
 	bool m_ok;
 	double m_value;
+	double m_valueDb;
 };
 
 #endif // HAVE_LIBPULSE
