@@ -449,13 +449,20 @@ static bool create_config_dir()
 
 	QFile::setPermissions(config_dbname, QFile::ReadOwner | QFile::WriteOwner);
 
-	// Publish the audio driver choice to the audio threads while we are still
-	// the only thread and the settings database is reachable - see
-	// AudioDevice::SetLinuxDriverName() for why it cannot be read on demand.
+	// Publish the audio driver choice and the echo cancellation setting to the
+	// audio threads while we are still the only thread and the settings
+	// database is reachable - see AudioDevice::SetLinuxDriverName() for why
+	// they cannot be read on demand.
+	//
+	// The driver first: on Linux it is what decides whether the platform has
+	// any cancellation to offer, which loadEchoCancellationSetting() needs in
+	// order to work out the default.
 	{
 		Settings audiost(config_dbname);
 		AudioDevice::SetLinuxDriverName(audiost.loadValue("audio.driver", "alsa").toString());
 	}
+
+	AudioDevice::SetEchoCancellation(loadEchoCancellationSetting());
 
 	/*if (!QFile::exists(config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE))
 	{

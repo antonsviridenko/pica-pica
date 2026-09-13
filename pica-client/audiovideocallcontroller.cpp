@@ -30,12 +30,10 @@ static const quint16 kVideoHeight = 480;
 
 // Rate we capture and encode at, announced to the peer in the 0x74 message.
 //
-// 16kHz rather than 48kHz because of the echo canceller. speexdsp's MDF is
-// tuned for 8/16kHz, and its cost is counted in taps: a 150ms tail is 7200
-// taps at 48kHz but only 2400 at 16kHz. Convergence time and steady state
-// misadjustment both scale with that length, so the 48kHz filter spent every
-// call chasing and never settling - visible in the AEC log as ERLE climbing
-// towards 20dB and being knocked back to zero by each doubletalk burst.
+// 16kHz rather than 48kHz because it is what the echo canceller wants. AEC3
+// does its filtering in the 0-8kHz band whatever it is handed; at 48kHz it
+// splits the signal into four bands, cancels in the lowest and gates the rest,
+// which is more work for a result that is no better on speech.
 //
 // Costs nothing worth having for speech: Opus codes this as wideband, an 8kHz
 // audio bandwidth, which is well past telephone quality and past where voice
@@ -49,10 +47,7 @@ static const int kCallSampleRate = 16000;
 
 AudioVideoCallController::AudioVideoCallController(QObject *parent)
  : QObject(parent), callwindow(0), ringdevice(0), is_active(false),
-   m_captureGain(nullptr), m_savedCaptureGain(0.0), m_haveSavedCaptureGain(false),
-   m_gainCalibrating(false), m_captureGainSteps(0), m_gainStartDb(0.0),
-   m_haveGainDb(false), m_gainIneffectiveSteps(0), m_lastPinnedPercent(0.0),
-   m_gainSettleReports(0), m_audioSeq(0),
+   m_audioSeq(0),
    m_videoSeq(0), m_videoFrameTimestamp(0), m_videoFrameStarted(false)
 {
 	connect(skynet, SIGNAL(IncomingCall(QByteArray)), this, SLOT(call_from(QByteArray)));
@@ -189,11 +184,11 @@ void AudioVideoCallController::startAudioPipeline()
 	// stopAudioPipeline() does not join either thread, so this has to outlive
 	// whichever of them returns last.
 	//
-	// It is created even on the platforms that cancel for us, because whether
-	// they really will is not known until the capture stream has been opened
-	// - see AudioDevice::captureNative(), which drops it once the backend
-	// says the platform has the job in hand.
-	if (st.loadValue("audio.echo_cancel", 1).toBool())
+	// Only for EchoCancellationOwn. The other two settings mean something
+	// below us is doing the job or nobody is, and either way running this as
+	// well would only take a second bite out of the speech - the devices are
+	// opened accordingly, see AudioDevice::captureNative().
+	if (AudioDevice::EchoCancellation() == EchoCancellationOwn)
 		m_echoCanceller = EchoCancellerPtr(new EchoCanceller(kCallSampleRate));
 	else
 		m_echoCanceller.clear();
@@ -205,10 +200,6 @@ void AudioVideoCallController::startAudioPipeline()
 	// Play() calls below are what publishes it to those threads.
 	microphone->setEchoCanceller(m_echoCanceller);
 	output->setEchoCanceller(m_echoCanceller);
-
-	// Before Capture() starts, so the gain is already read and saved by the
-	// time the first clipping report can come back.
-	startCaptureGainControl(capDev);
 
 	// Declare our outgoing codec to the peer, then start capturing and
 	// encoding right away - the peer's decoder is only ready once it has
@@ -237,12 +228,6 @@ void AudioVideoCallController::stopAudioPipeline()
 	// exit after a call).
 	microphone->Close();
 	output->Close();
-
-	// Puts the user's gain back. Safe to do while the capture thread is still
-	// winding down: the control is only ever touched from this thread, and
-	// capture_clipping() finds m_captureGain null and does nothing if a last
-	// queued report arrives after this.
-	stopCaptureGainControl();
 
 	// Drop our reference. The two audio threads still hold theirs until they
 	// come out of Capture()/Play(), and the canceller goes away with the last
@@ -469,222 +454,20 @@ void AudioVideoCallController::send_audio_packet(QByteArray data)
 }
 
 // Rate limited by AudioDevice, which reports at most once every couple of
-// seconds of audio, so this can log and act unconditionally.
+// seconds of audio, so this can log unconditionally.
+//
+// Only a warning, and deliberately: clipping happens in the converter, before
+// anything here sees a sample, so nothing in this process can undo it. The
+// fix is less gain ahead of the ADC, which is the capture device's own mixer
+// control and the user's to set.
 void AudioVideoCallController::capture_clipping(double pinnedPercent, double peakDb)
 {
-	qWarning("Microphone is clipping: %.2f%% of samples at full scale, peak %.1f dBFS",
+	qWarning("Microphone is clipping: %.2f%% of samples at full scale, peak %.1f dBFS - "
+	         "turn the recording level down, it distorts the speech and stops the echo "
+	         "canceller converging",
 	         pinnedPercent, peakDb);
-
-	// Either the setting is off, or nothing on this platform would let us at
-	// the control. The warning above is then all we can do - and it is still
-	// worth having, since the distortion cannot be undone anywhere else.
-	if (!m_captureGain || !m_gainCalibrating)
-		return;
-
-	// Calibration is a thing that happens at the start of a call, not a gain
-	// rider. Once the window has passed the level is whatever it is: moving it
-	// mid-conversation would keep dragging the echo path out from under the
-	// canceller, which is worse than a bit of distortion.
-	if (m_callClock.elapsed() > kGainCalibrationMs)
-	{
-		closeGainCalibration("calibration window has passed");
-		return;
-	}
-
-	// The audio in this report may predate the last adjustment.
-	if (m_gainSettleReports > 0)
-	{
-		m_gainSettleReports--;
-		return;
-	}
-
-	// Without a dB scale there is no safe way to know how far down we have
-	// come, so the step count has to be the bound - and a much tighter one,
-	// since six steps of 0.7 is over 50 dB on a perceptual scale.
-	const int stepLimit = m_haveGainDb ? kMaxCaptureGainSteps : kMaxBlindGainSteps;
-	if (m_captureGainSteps >= stepLimit)
-	{
-		closeGainCalibration("step limit reached");
-		return;
-	}
-
-	// Did the previous adjustment achieve anything? Two that did not means the
-	// stage overloading is not the one we are holding.
-	if (m_captureGainSteps > 0 && pinnedPercent >= m_lastPinnedPercent)
-	{
-		m_gainIneffectiveSteps++;
-		if (m_gainIneffectiveSteps >= kMaxGainIneffectiveSteps)
-		{
-			closeGainCalibration("lowering this control is not reducing the clipping - "
-			                     "something ahead of it (an analog mic boost, or Windows' "
-			                     "separate Microphone Boost) is what is overloading");
-			return;
-		}
-	}
-	else
-	{
-		m_gainIneffectiveSteps = 0;
-	}
-
-	double current = 0.0;
-	if (!m_captureGain->gain(&current))
-		return;
-
-	// The bound that matters, and the one an earlier version of this got
-	// wrong: how far down we have come in decibels, not where the slider sits.
-	double currentDb = 0.0;
-	if (m_haveGainDb && m_captureGain->gainDb(&currentDb))
-	{
-		if (m_gainStartDb - currentDb >= kMaxGainReductionDb)
-		{
-			closeGainCalibration(QString("already %1 dB down and still clipping")
-			                     .arg(m_gainStartDb - currentDb, 0, 'f', 1));
-			return;
-		}
-	}
-
-	// Size the step to how badly it is clipping. A microphone left at maximum
-	// is 20-30dB too hot and wants covering quickly; one that only tips over
-	// on the loudest syllable wants nudging, not slamming.
-	double factor;
-	if (pinnedPercent >= 5.0)
-		factor = 0.70;
-	else if (pinnedPercent >= 0.5)
-		factor = 0.85;
-	else
-		factor = 0.95;
-
-	double next = current * factor;
-	if (next >= current)
-	{
-		closeGainCalibration("control is already at its minimum");
-		return;
-	}
-
-	if (!m_captureGain->setGain(next))
-	{
-		closeGainCalibration("the control would not move");
-		return;
-	}
-
-	m_captureGainSteps++;
-	m_lastPinnedPercent = pinnedPercent;
-	m_gainSettleReports = kGainSettleReports;
-
-	double achieved = 0.0;
-	double newDb = 0.0;
-	if (m_haveGainDb && m_captureGain->gainDb(&newDb))
-	{
-		achieved = currentDb - newDb;
-		qDebug("Capture gain %.0f%% -> %.0f%% (%.1f dB, %.1f dB below the user's setting)",
-		       current * 100.0, next * 100.0, -achieved, m_gainStartDb - newDb);
-
-		// A step that moved the slider but not the level means we are pushing
-		// against the end of a control that no longer does anything.
-		if (achieved < kMinEffectiveStepDb)
-			m_gainIneffectiveSteps++;
-
-		// Close on the step that crosses the ceiling rather than waiting for
-		// another report, which would let one more step through first.
-		if (m_gainStartDb - newDb >= kMaxGainReductionDb)
-			closeGainCalibration(QString("reached the %1 dB limit")
-			                     .arg(kMaxGainReductionDb, 0, 'f', 0));
-	}
-	else
-	{
-		qDebug("Capture gain %.0f%% -> %.0f%% (step %d of %d)",
-		       current * 100.0, next * 100.0, m_captureGainSteps, kMaxCaptureGainSteps);
-	}
-
-	// The echo path just changed by however many dB that was, so everything
-	// the filter has learned about it is now wrong. Telling it to start over
-	// costs a second of convergence; not telling it costs the rest of the call.
-	if (m_echoCanceller)
-		m_echoCanceller->reset();
 }
 
-void AudioVideoCallController::closeGainCalibration(const QString &why)
-{
-	if (!m_gainCalibrating)
-		return;
-
-	m_gainCalibrating = false;
-	qDebug() << "Microphone gain calibration finished:" << why;
-}
-
-void AudioVideoCallController::startCaptureGainControl(const QString &captureDevice)
-{
-	m_captureGain = nullptr;
-	m_savedCaptureGain = 0.0;
-	m_haveSavedCaptureGain = false;
-	m_captureGainSteps = 0;
-	m_gainCalibrating = false;
-	m_gainStartDb = 0.0;
-	m_haveGainDb = false;
-	m_gainIneffectiveSteps = 0;
-	m_lastPinnedPercent = 0.0;
-	m_gainSettleReports = 0;
-
-	Settings st(config_dbname);
-	if (!st.loadValue("audio.auto_capture_gain", 0).toBool())
-		return;
-
-	// Whichever driver the capture side is about to open the device with -
-	// the mixer control has to be the one belonging to that device.
-	const QString driver = AudioDevice::PlatformDriverName(CAPTURE);
-
-	m_captureGain = CaptureGainControl::create(driver, captureDevice);
-	if (!m_captureGain)
-		return;
-
-	if (!m_captureGain->gain(&m_savedCaptureGain))
-	{
-		// Without a reading there is nothing to put back afterwards, and
-		// moving a control we cannot restore is not a trade worth making.
-		qWarning() << "Could not read the capture gain - not taking it over";
-		delete m_captureGain;
-		m_captureGain = nullptr;
-		return;
-	}
-
-	m_haveSavedCaptureGain = true;
-	m_haveGainDb = m_captureGain->gainDb(&m_gainStartDb);
-	m_gainCalibrating = true;
-
-	if (m_haveGainDb)
-		qDebug("Microphone gain calibration open on %s - at %.0f%% (%.1f dB), will cut at most %.0f dB",
-		       qPrintable(m_captureGain->description()), m_savedCaptureGain * 100.0,
-		       m_gainStartDb, kMaxGainReductionDb);
-	else
-		qDebug("Microphone gain calibration open on %s - at %.0f%%, no dB scale so bounded "
-		       "to %d steps",
-		       qPrintable(m_captureGain->description()), m_savedCaptureGain * 100.0,
-		       kMaxCaptureGainSteps);
-}
-
-void AudioVideoCallController::stopCaptureGainControl()
-{
-	if (!m_captureGain)
-		return;
-
-	// Put the user's own setting back. Only bother if we actually moved it,
-	// so a call that never clipped cannot disturb a gain the user changed
-	// themselves while it was running.
-	if (m_haveSavedCaptureGain && m_captureGainSteps > 0)
-	{
-		if (m_captureGain->setGain(m_savedCaptureGain))
-			qDebug() << "Capture gain restored to" << qRound(m_savedCaptureGain * 100.0) << "%";
-		else
-			qWarning() << "Could not restore the capture gain to"
-			           << qRound(m_savedCaptureGain * 100.0) << "% - it has been left turned down";
-	}
-
-	delete m_captureGain;
-	m_captureGain = nullptr;
-	m_haveSavedCaptureGain = false;
-	m_captureGainSteps = 0;
-	m_gainCalibrating = false;
-}
 
 void AudioVideoCallController::incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate)
 {

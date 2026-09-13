@@ -22,7 +22,6 @@
 #include <QElapsedTimer>
 #include "callwindow.h"
 #include "audiodevice.h"
-#include "capturegain.h"
 #include "videodevice.h"
 #include "toneplayer/toneplayer.h"
 
@@ -75,74 +74,9 @@ private:
 	QThread remotevideo_thread;
 
 	// Acoustic echo cancellation for the current call, shared by microphone
-	// and output. Null when it is switched off in the settings, when
-	// speexdsp could not start one, or between calls.
+	// and output. Null unless the "audio.echo_cancellation" setting is
+	// EchoCancellationOwn, and between calls.
 	EchoCancellerPtr m_echoCanceller;
-
-	// The capture device's mixer control, held for the duration of a call so
-	// a clipping microphone can be turned down. Null when the setting is off,
-	// when the platform has no reachable control, or between calls.
-	//
-	// m_savedCaptureGain is where the control was found at the start of the
-	// call, put back in stopAudioPipeline(): this is the user's own setting
-	// and we are only borrowing it.
-	CaptureGainControl *m_captureGain;
-	double m_savedCaptureGain;
-	bool m_haveSavedCaptureGain;
-
-	// This is a calibration that runs at the start of a call and then stops -
-	// NOT a gain control that rides the level for the call's duration. The
-	// difference matters: an adaptive echo canceller can only track a
-	// stationary echo path, and moving the microphone gain moves that path.
-	// See the AGC comment in EchoCanceller's constructor, which says the same
-	// thing about the reason speexdsp's own AGC is left switched off.
-	//
-	// So every adjustment resets the canceller, and once m_gainCalibrating is
-	// false nothing touches the control again until the call ends.
-	bool m_gainCalibrating;
-	int m_captureGainSteps;
-
-	// dB reading when calibration opened, and whether the platform would give
-	// us one. Bounding the total cut in decibels rather than as a fraction of
-	// the control's travel is the whole point: a fraction means different
-	// things on a hardware mixer (linear in dB) and on a sound server or
-	// WASAPI endpoint (roughly cubic), which is how an earlier version of this
-	// managed to wind a microphone down to silence.
-	double m_gainStartDb;
-	bool m_haveGainDb;
-
-	// Consecutive adjustments that moved the control but did not reduce the
-	// clipping. Means the stage actually overloading is one we cannot reach -
-	// an analog mic boost ahead of the converter, or Windows' separate
-	// "Microphone Boost" - and that turning our control down further will
-	// silence the user without ever fixing it.
-	int m_gainIneffectiveSteps;
-	double m_lastPinnedPercent;
-
-	// Reports to ignore after an adjustment, while audio captured at the old
-	// setting drains out of the pipeline.
-	int m_gainSettleReports;
-
-	static const int kMaxCaptureGainSteps = 6;
-
-	// Bound used when the control will not report decibels at all, where we
-	// are working blind and a wrong guess is what silences a microphone.
-	static const int kMaxBlindGainSteps = 2;
-	static const int kMaxGainIneffectiveSteps = 2;
-	static const int kGainSettleReports = 1;
-
-	// How long the calibration window stays open, in milliseconds of call
-	// time. Long enough that someone who says nothing for the first few
-	// seconds still gets calibrated, short enough to be over before the
-	// conversation proper.
-	static const int kGainCalibrationMs = 20000;
-
-	// Hard ceiling on the total cut, in dB below where the user had it. Past
-	// this the problem is not one we are going to fix by turning a knob.
-	static constexpr double kMaxGainReductionDb = 24.0;
-
-	// An adjustment that achieves less than this much is not doing anything.
-	static constexpr double kMinEffectiveStepDb = 0.5;
 
 	// Sequence number / capture-clock timestamp stamped onto outgoing
 	// 0x76 audio packets (see PICA_PROTO_CALL_PACKET_HDRSIZE).
@@ -160,15 +94,6 @@ private:
 
 	// Reassembly of incoming 0x77 fragments into whole encoded frames.
 	VideoFrameAssembler m_videoAssembler;
-
-	// Take over the capture device's mixer gain for the duration of a call,
-	// and hand it back. Both are no-ops when "audio.auto_capture_gain" is off
-	// or the platform has no control we can reach.
-	void startCaptureGainControl(const QString &captureDevice);
-	void stopCaptureGainControl();
-
-	// Ends the calibration window, logging why. Idempotent.
-	void closeGainCalibration(const QString &why);
 
 	void playEarpieceTone(void (TonePlayer::*tone)());
 	void playRingTone();

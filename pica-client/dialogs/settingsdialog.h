@@ -78,10 +78,18 @@ private:
 	// a slot hidden behind one ends up declared but never generated.
 	QComboBox *audioDriver;
 
-	// Whether to run our own acoustic echo cancellation. Ignored when the
-	// platform provides one - see AudioDevice::PlatformDriverName().
-	QCheckBox *cbEchoCancel;
-	QCheckBox *cbAutoCaptureGain;
+	// Who takes the echo of the other person back out of the microphone
+	// signal: EchoCanceller, the platform, or nobody. See
+	// EchoCancellationMode - one of the three, never two at once.
+	//
+	// The platform option is only offered where there is something to offer;
+	// on Linux that depends on the audio system chosen above it, so it is
+	// enabled and disabled as that combo box changes rather than once at
+	// startup.
+	QRadioButton *rbEchoCancelOwn;
+	QRadioButton *rbEchoCancelPlatform;
+	QRadioButton *rbEchoCancelNone;
+	void updateEchoCancellationChoices();
 
 	QComboBox *videoDev;
 	QPushButton *videoDevRefresh;

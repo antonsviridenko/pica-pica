@@ -177,13 +177,80 @@ PKG_CHECK_MODULES([FFMPEG],["libavcodec libavdevice libavformat libavutil libswr
 AC_SUBST([FFMPEG_CFLAGS])
 AC_SUBST([FFMPEG_LIBS])
 
-#check for speexdsp, which provides the acoustic echo cancellation used in
-#calls. Not optional: on Linux there is no other cancellation in the picture
-#at all, and on the platforms that have their own it is still the fallback for
-#the endpoints and drivers that turn out not to.
-PKG_CHECK_MODULES([SPEEXDSP],[speexdsp])
-AC_SUBST([SPEEXDSP_CFLAGS])
-AC_SUBST([SPEEXDSP_LIBS])
+#check for webrtc-audio-processing, which provides AEC3 - the acoustic echo
+#cancellation pica-client runs itself. Not optional: on Linux there is no
+#other cancellation in the picture unless the user has set their sound server
+#up for it, and on the platforms that have their own this is still what the
+#"use own echo cancellation" setting selects.
+#
+#Either the 1.x or the 2.x ABI will do. They install in parallel under
+#separate pkg-config names, and pica-client/echocanceller.cpp carries the few
+#conditionals the API break between them needs. 0.x is not a candidate at any
+#price: it predates AEC3 entirely, and its whole API is different.
+#
+#1.x is preferred when both are installed, only because it is the one this has
+#had the most hours on. --with-webrtc-audio-processing=2 forces the other,
+#which is how the 2.x path gets exercised deliberately rather than by accident
+#of what is on the build machine.
+AC_ARG_WITH([webrtc-audio-processing],
+  [AS_HELP_STRING([--with-webrtc-audio-processing=@<:@auto|1|2@:>@],
+  [webrtc-audio-processing major version to build against (default: auto, preferring 1)])],
+  [], [with_webrtc_audio_processing=auto])
+
+AS_CASE([$with_webrtc_audio_processing],
+  [auto], [webrtc_audio_processing_try="1 2"],
+  [1],    [webrtc_audio_processing_try="1"],
+  [2],    [webrtc_audio_processing_try="2"],
+  [AC_MSG_ERROR([--with-webrtc-audio-processing must be auto, 1 or 2])])
+
+WEBRTC_AUDIO_PROCESSING_MAJOR=
+for webrtc_audio_processing_major in $webrtc_audio_processing_try; do
+  AS_IF([test "x$WEBRTC_AUDIO_PROCESSING_MAJOR" = x],
+    [PKG_CHECK_MODULES([WEBRTC_AUDIO_PROCESSING],
+      [webrtc-audio-processing-$webrtc_audio_processing_major],
+      [WEBRTC_AUDIO_PROCESSING_MAJOR=$webrtc_audio_processing_major],
+      [:])])
+done
+
+AS_IF([test "x$WEBRTC_AUDIO_PROCESSING_MAJOR" = x],
+  [AC_MSG_ERROR(["webrtc-audio-processing was not found. It provides the acoustic echo cancellation used in calls - Debian and Ubuntu call it libwebrtc-audio-processing-1-dev, Gentoo media-libs/webrtc-audio-processing:1"])])
+
+AC_MSG_NOTICE([using webrtc-audio-processing-$WEBRTC_AUDIO_PROCESSING_MAJOR])
+
+#echocanceller.cpp can work this out from the headers on its own, but only the
+#check above knows which one was picked when both are installed.
+AC_DEFINE_UNQUOTED([PICA_WEBRTC_AUDIO_PROCESSING_MAJOR],
+  [$WEBRTC_AUDIO_PROCESSING_MAJOR],
+  [Major version of the webrtc-audio-processing library being built against])
+
+AC_SUBST([WEBRTC_AUDIO_PROCESSING_CFLAGS])
+AC_SUBST([WEBRTC_AUDIO_PROCESSING_LIBS])
+
+#the WebRTC headers, and the abseil ones they include, refuse to compile as
+#anything older. Recent compilers default to C++17 or later and need nothing
+#added; older ones have to be told.
+AC_LANG_PUSH([C++])
+AC_MSG_CHECKING([whether $CXX compiles C++17 without help])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#if __cplusplus < 201703L
+#error C++17 is not the default
+#endif]], [])],
+  [AC_MSG_RESULT([yes])],
+  [
+    AC_MSG_RESULT([no])
+    pica_saved_cxxflags="$CXXFLAGS"
+    CXXFLAGS="$CXXFLAGS -std=c++17"
+    AC_MSG_CHECKING([whether $CXX accepts -std=c++17])
+    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#if __cplusplus < 201703L
+#error C++17 is not enabled
+#endif]], [])],
+      [AC_MSG_RESULT([yes])],
+      [
+        AC_MSG_RESULT([no])
+        CXXFLAGS="$pica_saved_cxxflags"
+        AC_MSG_ERROR(["A C++17 compiler is required to build pica-client"])
+      ])
+  ])
+AC_LANG_POP([C++])
 
 #check for libpulse, used only to list PulseAudio sources and sinks in the
 #settings dialog - playing and capturing through PulseAudio goes via FFmpeg's

@@ -299,7 +299,11 @@ IMMDevice *WasapiBackend::resolveDevice(const QString &device, bool isCapture,
 		// A ringtone is not a call and belongs on the console endpoint, so
 		// that it is heard on the speakers rather than in a headset the user
 		// is not wearing yet.
-		const ERole role = (mode == NativeAudioVoiceCall) ? eCommunications : eConsole;
+		//
+		// Both call modes take the communications endpoint. Cancelling the
+		// echo ourselves is a reason not to ask for the endpoint's voice
+		// processing, not a reason to move the call to a different device.
+		const ERole role = (mode != NativeAudioPlain) ? eCommunications : eConsole;
 		hr = devEnum->GetDefaultAudioEndpoint(isCapture ? eCapture : eRender, role, &dev);
 	}
 	else
@@ -407,6 +411,10 @@ bool WasapiBackend::open(const QString &device, int sampleRate, int channels, bo
 	// Asking for it on render as well is what made the settings dialog's
 	// microphone test come out chopped while the ring test, which opens a
 	// plain stream, was clean.
+	//
+	// NativeAudioVoiceCallRaw is a call that cancels its own echo, so it does
+	// not want the endpoint's processing either - this is the one place where
+	// it differs from NativeAudioVoiceCall.
 	if (mode == NativeAudioVoiceCall && isCapture)
 		requestCommunicationsCategory();
 

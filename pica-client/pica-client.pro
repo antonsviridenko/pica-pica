@@ -16,9 +16,6 @@ SOURCES += main.cpp\
     nativeaudio.cpp \
     nativeaudio_wasapi.cpp \
     nativeaudio_coreaudio.cpp \
-    capturegain.cpp \
-    capturegain_wasapi.cpp \
-    capturegain_coreaudio.cpp \
 	audiovideocallcontroller.cpp \
         mainwindow.cpp \
     chatwindow.cpp \
@@ -62,7 +59,6 @@ HEADERS  += mainwindow.h \
     audioring.h \
     echocanceller.h \
     nativeaudio.h \
-    capturegain.h \
     audiovideocallcontroller.h \
     chatwindow.h \
     callwindow.h \
@@ -119,11 +115,34 @@ unix: PKGCONFIG += libcrypto
 
 unix|win32: LIBS += -lminiupnpc
 
-# Acoustic echo cancellation. Required everywhere: on Linux there is no other
-# cancellation in the picture, and on the platforms that have their own it is
-# still the fallback for the endpoints and drivers that turn out not to.
-unix:!macx: CONFIG += link_pkgconfig
-unix:!macx: PKGCONFIG += speexdsp
+# Acoustic echo cancellation - WebRTC's AEC3, through the audio processing
+# module. Required everywhere: it is what the "use own echo cancellation"
+# setting selects, and on Linux it is usually the only cancellation in the
+# picture at all.
+#
+# Its headers, and the abseil ones they include, refuse to compile as anything
+# older than C++17, so the whole target is built that way.
+CONFIG += c++17
+
+# Through pkg-config on macOS too, unlike the libraries above: the headers sit
+# in a versioned include directory and the library needs several abseil ones
+# alongside it, so the flags are not worth writing out by hand.
+#
+# 1.x and 2.x install in parallel under separate pkg-config names and differ
+# in a few API details that echocanceller.cpp handles; 1.x wins when both are
+# there, matching what configure does. The macro is only a hint - the file
+# falls back to working the version out from the headers - but a build that
+# has both installed is exactly where the hint earns its keep.
+unix: CONFIG += link_pkgconfig
+unix {
+    packagesExist(webrtc-audio-processing-1) {
+        PKGCONFIG += webrtc-audio-processing-1
+        DEFINES += PICA_WEBRTC_AUDIO_PROCESSING_MAJOR=1
+    } else {
+        PKGCONFIG += webrtc-audio-processing-2
+        DEFINES += PICA_WEBRTC_AUDIO_PROCESSING_MAJOR=2
+    }
+}
 
 # Listing PulseAudio sources and sinks in the settings dialog. Optional -
 # playing and capturing through PulseAudio goes via FFmpeg's own "pulse"
@@ -136,4 +155,3 @@ unix:!macx: DEFINES += HAVE_LIBPULSE
 # what they link against cannot.
 win32: LIBS += -lole32 -loleaut32
 macx:  LIBS += -framework CoreAudio -framework AudioUnit -framework AudioToolbox -framework CoreFoundation
-macx:  LIBS += -lspeexdsp

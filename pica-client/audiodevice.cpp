@@ -80,6 +80,13 @@ static const int64_t kOpusBitrate = 32000;
 static QMutex s_driverMutex;
 static QString s_linuxDriver = QStringLiteral("alsa");
 
+// The configured echo cancellation, published to the audio threads the same
+// way and for the same reason. The initial value only stands until main()
+// has read the setting, and is the one that cannot make things worse if it
+// somehow does not.
+static QMutex s_echoCancellationMutex;
+static EchoCancellationMode s_echoCancellation = EchoCancellationNone;
+
 static QString ff_errstr(int err)
 {
 	char buf[256] = {0};
@@ -612,8 +619,16 @@ void AudioDevice::captureNative(const QString &api)
 		return;
 	}
 
+	// Ask the platform for its voice processing only when it is the one
+	// meant to be cancelling. Either of the other two settings wants the
+	// microphone as the hardware delivers it: EchoCanceller cannot model an
+	// echo path that something below it is already subtracting from, and
+	// "off" means off.
+	const NativeAudioMode mode = (AudioDevice::EchoCancellation() == EchoCancellationPlatform)
+	                             ? NativeAudioVoiceCall : NativeAudioVoiceCallRaw;
+
 	QString err;
-	if (!backend->openCapture(m_deviceName, m_sampleRate, kChannels, NativeAudioVoiceCall, &err))
+	if (!backend->openCapture(m_deviceName, m_sampleRate, kChannels, mode, &err))
 	{
 		qWarning() << err;
 		emit errorOccurred(err);
@@ -1021,8 +1036,15 @@ void AudioDevice::playNative(const QString &api)
 		return;
 	}
 
+	// Same choice as captureNative(), and it has to be the same answer: on
+	// macOS the platform canceller is one audio unit doing both directions,
+	// so asking for it here and not there would open a second unit on the
+	// same device.
+	const NativeAudioMode mode = (AudioDevice::EchoCancellation() == EchoCancellationPlatform)
+	                             ? NativeAudioVoiceCall : NativeAudioVoiceCallRaw;
+
 	QString err;
-	if (!backend->openPlayback(m_deviceName, m_sampleRate, kChannels, NativeAudioVoiceCall, &err))
+	if (!backend->openPlayback(m_deviceName, m_sampleRate, kChannels, mode, &err))
 	{
 		qWarning() << err;
 		emit errorOccurred(err);
@@ -1409,6 +1431,42 @@ QString AudioDevice::LinuxDriverName()
 {
 	QMutexLocker locker(&s_driverMutex);
 	return s_linuxDriver;
+}
+
+void AudioDevice::SetEchoCancellation(EchoCancellationMode mode)
+{
+	QMutexLocker locker(&s_echoCancellationMutex);
+	s_echoCancellation = mode;
+}
+
+EchoCancellationMode AudioDevice::EchoCancellation()
+{
+	QMutexLocker locker(&s_echoCancellationMutex);
+	return s_echoCancellation;
+}
+
+bool AudioDevice::PlatformEchoCancellationAvailable(const QString &driver)
+{
+	// Windows and macOS both have one, and both are reached through the
+	// native backends rather than through libavdevice - which is why those
+	// backends exist at all.
+	if (AudioDevice::IsPlatformDriver(driver))
+		return NativeAudioBackend::isAvailable(AudioDevice::PlatformApiName(driver));
+
+	// On Linux nothing is provided per stream. What there is instead is a
+	// sound server that can be made to hand out an already cancelled source -
+	// PulseAudio's module-echo-cancel, or PipeWire's equivalent - which the
+	// user then picks from the microphone list like any other device. Raw
+	// ALSA has nothing of the sort.
+	if (driver == QLatin1String("pulse"))
+		return true;
+
+	return false;
+}
+
+bool AudioDevice::PlatformEchoCancellationAvailable()
+{
+	return PlatformEchoCancellationAvailable(AudioDevice::PlatformDriverName(CAPTURE));
 }
 
 QString AudioDevice::PlatformDriverName(enum MediaDeviceStreamDirection dir)

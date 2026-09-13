@@ -51,7 +51,10 @@ DEPEND=">=dev-libs/openssl-1.0.2r
 		dev-qt/qtchooser
 
 		media-libs/alsa-lib
-		media-libs/speexdsp
+		|| (
+			media-libs/webrtc-audio-processing:1
+			media-libs/webrtc-audio-processing:2
+		)
 
 		# audio and video calls: FFmpeg does the capturing, encoding,
 		# decoding and playback. v4l for cameras, alsa for the ALSA

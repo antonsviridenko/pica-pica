@@ -195,18 +195,38 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	audioTestStatus = new QLabel(this);
 	audioTestStatus->setAlignment(Qt::AlignCenter);
 
-	cbEchoCancel = new QCheckBox(tr("Cancel acoustic echo"), this);
-	cbEchoCancel->setToolTip(tr("Removes the sound of the other person coming back out of your "
-	                            "microphone, which is what makes them hear themselves when you "
-	                            "are on speakers. Has no effect where the operating system "
-	                            "already does it."));
+	// Echo cancellation: removing the sound of the other person coming back
+	// out of the microphone, which is what makes them hear themselves when
+	// the call is on speakers. Exactly one of the three - two cancellers in
+	// series is worse than either alone, since the second one is left
+	// chasing a reference that is no longer in the signal.
+	QGroupBox *gbEchoCancel = new QGroupBox(tr("Audio echo cancellation"), this);
+	QVBoxLayout *echoCancelLayout = new QVBoxLayout();
 
-	cbAutoCaptureGain = new QCheckBox(tr("Automatic microphone gain"), this);
-	cbAutoCaptureGain->setToolTip(tr("Turns the microphone's own recording level down during a "
-	                                 "call if it is loud enough to distort, and puts it back "
-	                                 "afterwards. A microphone set too loud clips, and clipping "
-	                                 "cannot be repaired later - it also stops echo cancellation "
-	                                 "working."));
+	// Parented to the group box, not the dialog: QRadioButton's automatic
+	// exclusivity groups by parent widget, and these three must not join the
+	// direct connection or multiple login buttons.
+	rbEchoCancelOwn = new QRadioButton(tr("Use own echo cancellation"), gbEchoCancel);
+	rbEchoCancelOwn->setToolTip(tr("Cancels the echo inside Pica Pica, using WebRTC's AEC3. "
+	                               "Works with any microphone and any sound system, and is the "
+	                               "only option where the platform provides nothing."));
+
+	rbEchoCancelPlatform = new QRadioButton(tr("Use platform provided echo cancellation"), gbEchoCancel);
+
+	rbEchoCancelNone = new QRadioButton(tr("Disable echo cancellation"), gbEchoCancel);
+	rbEchoCancelNone->setToolTip(tr("Nothing is removed from the microphone signal. Right with a "
+	                                "headset, where there is no echo to cancel, and worth trying "
+	                                "if cancellation is cutting into your speech."));
+
+	echoCancelLayout->addWidget(rbEchoCancelOwn);
+	echoCancelLayout->addWidget(rbEchoCancelPlatform);
+	echoCancelLayout->addWidget(rbEchoCancelNone);
+	gbEchoCancel->setLayout(echoCancelLayout);
+
+	// Fills in the platform option's tooltip and greys it out where there is
+	// no such thing. loadSettings() runs afterwards and is what actually
+	// picks one of the three.
+	updateEchoCancellationChoices();
 
 	btRingTest = new QPushButton(tr("Test ring 🔔"), this);
 	connect(btRingTest, SIGNAL(clicked()), this, SLOT(toggleRingTest()));
@@ -224,8 +244,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	audiodevlayout->addWidget(audioCaptureDev);
 	audiodevlayout->addWidget(lbAudioPlaybackDev);
 	audiodevlayout->addWidget(audioPlaybackDev);
-	audiodevlayout->addWidget(cbEchoCancel);
-	audiodevlayout->addWidget(cbAutoCaptureGain);
+	audiodevlayout->addWidget(gbEchoCancel);
 	audiodevlayout->addWidget(btAudioTest);
 	audiodevlayout->addWidget(audioTestStatus);
 	audiodevlayout->addWidget(lbAudioRingDev);
@@ -908,6 +927,43 @@ void SettingsDialog::audioDriverChanged(int index)
 	fillAudioCaptureDevices();
 	fillAudioPlaybackDevices();
 	fillAudioRingDevices();
+
+	// ALSA has no echo cancellation of its own and PulseAudio does, so the
+	// platform option comes and goes with this choice.
+	updateEchoCancellationChoices();
+}
+
+void SettingsDialog::updateEchoCancellationChoices()
+{
+	// PlatformDriverName() reads the driver SetLinuxDriverName() published,
+	// which audioDriverChanged() has already updated by the time it calls
+	// this - so the answer follows the combo box rather than the saved
+	// setting.
+	const QString driver = AudioDevice::PlatformDriverName(CAPTURE);
+	const bool available = AudioDevice::PlatformEchoCancellationAvailable(driver);
+
+	rbEchoCancelPlatform->setEnabled(available);
+
+	if (available)
+	{
+		rbEchoCancelPlatform->setToolTip(tr("Lets the operating system or sound server cancel the "
+		                                    "echo instead. Where it exists this is the better "
+		                                    "one: it sits below Pica Pica and can see the real "
+		                                    "speaker signal and the real clock.\n\n"
+		                                    "With PulseAudio or PipeWire it also means picking an "
+		                                    "echo cancelling source as the microphone above - a "
+		                                    "plain input device is not processed."));
+	}
+	else
+	{
+		rbEchoCancelPlatform->setToolTip(tr("Not available: the audio system in use does not "
+		                                    "cancel echo for us."));
+
+		// A disabled button that is still the checked one would leave the
+		// group showing a choice that is not in effect.
+		if (rbEchoCancelPlatform->isChecked())
+			rbEchoCancelOwn->setChecked(true);
+	}
 }
 
 void SettingsDialog::fillAudioCaptureDevices()
@@ -1061,8 +1117,27 @@ void SettingsDialog::loadSettings()
 	if (audioPlaybackDevItem >= 0)
 		audioPlaybackDev->setCurrentIndex(audioPlaybackDevItem);
 
-	cbEchoCancel->setChecked(st.loadValue("audio.echo_cancel", 1).toBool());
-	cbAutoCaptureGain->setChecked(st.loadValue("audio.auto_capture_gain", 0).toBool());
+	// Not read from st directly: the setting has a default that depends on the
+	// platform, and an older on/off setting to fall back on.
+	switch (loadEchoCancellationSetting())
+	{
+	case EchoCancellationPlatform:
+		rbEchoCancelPlatform->setChecked(true);
+		break;
+
+	case EchoCancellationNone:
+		rbEchoCancelNone->setChecked(true);
+		break;
+
+	case EchoCancellationOwn:
+	default:
+		rbEchoCancelOwn->setChecked(true);
+		break;
+	}
+
+	// Covers a saved "platform" on a machine where it is no longer on offer -
+	// a Linux install whose audio system has since been moved to ALSA.
+	updateEchoCancellationChoices();
 
 	QString audioRingDevVal = st.loadValue("audio.ring_device", "default").toString();
 	int audioRingDevItem = audioRingDev->findData(audioRingDevVal);
@@ -1116,8 +1191,6 @@ void SettingsDialog::storeSettings()
 	st.storeValue("audio.capture_device", audioCaptureDev->itemData(audioCaptureDev->currentIndex()).toString());
 	st.storeValue("audio.playback_device", audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString());
 	st.storeValue("audio.ring_device", audioRingDev->itemData(audioRingDev->currentIndex()).toString());
-	st.storeValue("audio.echo_cancel", cbEchoCancel->isChecked() ? "1" : "0");
-	st.storeValue("audio.auto_capture_gain", cbAutoCaptureGain->isChecked() ? "1" : "0");
 
 	if (audioDriver)
 	{
@@ -1125,4 +1198,20 @@ void SettingsDialog::storeSettings()
 		st.storeValue("audio.driver", drv);
 		AudioDevice::SetLinuxDriverName(drv);
 	}
+
+	// After the driver, since on Linux that is what decides whether the
+	// platform option means anything - and updateEchoCancellationChoices()
+	// has already moved the selection off it if it does not.
+	EchoCancellationMode echoMode = EchoCancellationOwn;
+
+	if (rbEchoCancelPlatform->isChecked())
+		echoMode = EchoCancellationPlatform;
+	else if (rbEchoCancelNone->isChecked())
+		echoMode = EchoCancellationNone;
+
+	storeEchoCancellationSetting(echoMode);
+
+	// Publish it to the audio threads, the same way the driver above is
+	// published - see AudioDevice::SetEchoCancellation().
+	AudioDevice::SetEchoCancellation(echoMode);
 }

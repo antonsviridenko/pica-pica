@@ -55,7 +55,7 @@ public:
 	// far end signal; both directions of one call must be given the same
 	// object or there is nothing to cancel against.
 	//
-	// Ignored when the platform is doing its own cancellation - see
+	// Null unless EchoCancellation() is EchoCancellationOwn - see
 	// AudioVideoCallController::startAudioPipeline(), which is where that is
 	// decided.
 	void setEchoCanceller(EchoCancellerPtr ec);
@@ -150,6 +150,24 @@ public:
 	// whenever the setting changes.
 	static void SetLinuxDriverName(const QString &driver);
 	static QString LinuxDriverName();
+
+	// Whether anything below us would cancel the acoustic echo, so that
+	// EchoCancellationPlatform is worth offering at all.
+	//
+	// The overload taking a driver answers for that driver rather than the
+	// configured one, which is what the settings dialog needs: on Linux the
+	// answer depends on the audio system, and the radio button has to follow
+	// the combo box before either has been applied.
+	static bool PlatformEchoCancellationAvailable(const QString &driver);
+	static bool PlatformEchoCancellationAvailable();
+
+	// Which of the three cancellers a call should use. Cached in a process
+	// wide variable for the same reason LinuxDriverName() is - the capture
+	// and playback loops run on their own threads and cannot reach the
+	// settings database. Set it from the GUI thread at startup and whenever
+	// the setting changes.
+	static void SetEchoCancellation(EchoCancellationMode mode);
+	static EchoCancellationMode EchoCancellation();
 
 private:
 	QString m_deviceName;

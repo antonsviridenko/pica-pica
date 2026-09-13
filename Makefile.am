@@ -110,10 +110,6 @@ pica-client/nativeaudio.cpp \
 pica-client/nativeaudio.h \
 pica-client/nativeaudio_wasapi.cpp \
 pica-client/nativeaudio_coreaudio.cpp \
-pica-client/capturegain.cpp \
-pica-client/capturegain.h \
-pica-client/capturegain_wasapi.cpp \
-pica-client/capturegain_coreaudio.cpp \
 pica-client/videodevice.cpp \
 pica-client/videodevice.h \
 pica-client/videodshow.cpp \
@@ -197,8 +193,8 @@ ui_%.h: pica-client/%.ui
 	$(UIC)  $< -o $@
 
  
-pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) $(FFMPEG_CFLAGS) $(PLATFORM_DEPS_CFLAGS) $(SPEEXDSP_CFLAGS)
-pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS) $(FFMPEG_LIBS) $(PLATFORM_DEPS_LIBS) $(SPEEXDSP_LIBS)
+pica_client_pica_client_CPPFLAGS = -DPICA_INSTALLPREFIX=\"$(prefix)\" $(QT_DEPENDENCIES_CFLAGS) $(FFMPEG_CFLAGS) $(PLATFORM_DEPS_CFLAGS) $(WEBRTC_AUDIO_PROCESSING_CFLAGS)
+pica_client_pica_client_LDADD = $(QT_DEPENDENCIES_LIBS) $(FFMPEG_LIBS) $(PLATFORM_DEPS_LIBS) $(WEBRTC_AUDIO_PROCESSING_LIBS)
 
 # Listing PulseAudio sources and sinks in the settings dialog. The two
 # native backend sources above are compiled unconditionally and are empty

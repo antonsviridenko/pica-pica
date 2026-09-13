@@ -43,14 +43,22 @@
 
 // What a stream is going to be used for.
 //
-// A call stream asks the platform for its voice processing, echo cancellation
-// above all. A plain one does not, and must not: on macOS the echo canceller
-// is an audio unit that captures as well as renders, so asking for it to play
-// a ringtone would open the microphone, prompt for permission and light the
-// recording indicator, all to make a telephone noise.
+// The two call modes differ in one thing only: whether the platform is asked
+// for its voice processing, echo cancellation above all. Which of them a call
+// uses is the "audio.echo_cancellation" setting - see EchoCancellationMode.
+// They agree on everything else, device selection included: a call belongs on
+// the endpoint the user nominated for calls whoever ends up cancelling the
+// echo.
+//
+// A plain stream is not a call at all, and must not ask for voice processing:
+// on macOS the echo canceller is an audio unit that captures as well as
+// renders, so asking for it to play a ringtone would open the microphone,
+// prompt for permission and light the recording indicator, all to make a
+// telephone noise.
 enum NativeAudioMode
 {
 	NativeAudioVoiceCall,
+	NativeAudioVoiceCallRaw,
 	NativeAudioPlain
 };
 

@@ -147,6 +147,30 @@ static QVector<AudioDeviceID> allDevices()
 	return devices;
 }
 
+// The system's current default input or output device.
+//
+// Needed because kAudioUnitSubType_HALOutput left alone follows the default
+// OUTPUT device on both of its buses, so an input only unit that is never
+// bound to a device tries to capture from the speakers. VoiceProcessingIO has
+// no such problem, which is why nothing needed this until there was a plain
+// capture path.
+static AudioDeviceID defaultDevice(bool input)
+{
+	AudioObjectPropertyAddress addr;
+	addr.mSelector = input ? kAudioHardwarePropertyDefaultInputDevice
+	                       : kAudioHardwarePropertyDefaultOutputDevice;
+	addr.mScope = kAudioObjectPropertyScopeGlobal;
+	addr.mElement = kAudioObjectPropertyElementMaster;
+
+	AudioDeviceID dev = kAudioObjectUnknown;
+	UInt32 size = sizeof(dev);
+
+	if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, nullptr, &size, &dev) != noErr)
+		return kAudioObjectUnknown;
+
+	return dev;
+}
+
 // Looks up a device by the UID string enumerate() handed out.
 static AudioDeviceID deviceForUid(const QString &uid, bool input)
 {
@@ -174,10 +198,12 @@ static AudioDeviceID deviceForUid(const QString &uid, bool input)
 // through the same unit, and AudioDevice keeps one object per direction on its
 // own thread, the voice unit is a refcounted singleton the two of them share.
 //
-// A plain unit is kAudioUnitSubType_HALOutput, output only, no voice
-// processing, one per caller. Ringtones and earpiece tones use it: they are
-// not part of a call, and opening a voice unit to play one would switch the
-// microphone on, prompt for permission and light the recording indicator.
+// A plain unit is kAudioUnitSubType_HALOutput with no voice processing, one
+// per caller, running one direction only. Ringtones and earpiece tones use
+// the output flavour: they are not part of a call, and opening a voice unit
+// to play one would switch the microphone on, prompt for permission and light
+// the recording indicator. The input flavour is for a call that cancels its
+// own echo, or none of it - see NativeAudioVoiceCallRaw.
 //
 // One consequence of the singleton worth knowing about: an audio unit is
 // bound to one device, so capture and playback cannot be on different sound
@@ -195,6 +221,12 @@ public:
 	// it and releases it the same way.
 	static CoreAudioUnit *createPlain(const QString &device, int sampleRate, int channels,
 	                                  QString *error);
+
+	// The same, input only: a microphone opened without the voice unit, for a
+	// call whose echo is cancelled somewhere else - by EchoCanceller, or not
+	// at all. Owned by the caller like createPlain().
+	static CoreAudioUnit *createPlainCapture(const QString &device, int sampleRate, int channels,
+	                                         QString *error);
 
 	void release(bool forCapture);
 
@@ -312,24 +344,40 @@ bool CoreAudioUnit::setUp(const QString &device, QString *error)
 	// Bind to a specific device when one was asked for. Left alone, the unit
 	// follows the system default input and output, which is what most users
 	// want and what keeps working when they unplug a headset mid-call.
+	//
+	// With one exception: a HAL unit follows the default OUTPUT device on
+	// both of its buses, so an input only one has to be pointed at the
+	// default input by hand or it captures from nothing.
+	AudioDeviceID devId = kAudioObjectUnknown;
+
 	if (!device.isEmpty() && device != QLatin1String("default"))
 	{
-		AudioDeviceID devId = deviceForUid(device, m_wantInput);
+		devId = deviceForUid(device, m_wantInput);
 		if (devId == kAudioObjectUnknown)
 			devId = deviceForUid(device, !m_wantInput);
 
-		if (devId != kAudioObjectUnknown)
-		{
-			err = AudioUnitSetProperty(m_unit, kAudioOutputUnitProperty_CurrentDevice,
-			                           kAudioUnitScope_Global, kOutputBus, &devId, sizeof(devId));
-			if (err != noErr)
-				qWarning() << "CoreAudio: could not bind the audio unit to device" << device
-				           << osStatusString(err) << "- using the system default";
-		}
-		else
-		{
+		if (devId == kAudioObjectUnknown)
 			qWarning() << "CoreAudio: device" << device << "not found - using the system default";
+	}
+
+	if (devId == kAudioObjectUnknown && m_wantInput && !m_wantOutput)
+	{
+		devId = defaultDevice(true);
+		if (devId == kAudioObjectUnknown)
+		{
+			if (error)
+				*error = QStringLiteral("There is no default audio input device");
+			return false;
 		}
+	}
+
+	if (devId != kAudioObjectUnknown)
+	{
+		err = AudioUnitSetProperty(m_unit, kAudioOutputUnitProperty_CurrentDevice,
+		                           kAudioUnitScope_Global, kOutputBus, &devId, sizeof(devId));
+		if (err != noErr)
+			qWarning() << "CoreAudio: could not bind the audio unit to device" << device
+			           << osStatusString(err) << "- using the system default";
 	}
 	m_device = device;
 
@@ -390,7 +438,7 @@ bool CoreAudioUnit::setUp(const QString &device, QString *error)
 		                     kAudioUnitScope_Global, 0, &bypass, sizeof(bypass));
 
 		// Leave the unit's automatic gain control off, for the same reason
-		// the speexdsp path leaves speex's off: a moving gain in front of a
+		// EchoCanceller leaves WebRTC's off: a moving gain in front of a
 		// call that has no level control anywhere else is more trouble than
 		// it is worth.
 		UInt32 agc = 0;
@@ -616,6 +664,20 @@ CoreAudioUnit *CoreAudioUnit::createPlain(const QString &device, int sampleRate,
 	return unit;
 }
 
+CoreAudioUnit *CoreAudioUnit::createPlainCapture(const QString &device, int sampleRate, int channels,
+                                                 QString *error)
+{
+	CoreAudioUnit *unit = new CoreAudioUnit(sampleRate, channels, false, true, false);
+	if (!unit->setUp(device, error))
+	{
+		delete unit;
+		return nullptr;
+	}
+
+	unit->m_captureRefs = 1;
+	return unit;
+}
+
 void CoreAudioUnit::release(bool forCapture)
 {
 	QMutexLocker locker(&s_mutex);
@@ -668,15 +730,18 @@ public:
 	{
 		close();
 
-		// There is no plain capture path: the only reason this backend
-		// captures at all is the call, and the call always wants the voice
-		// unit.
-		Q_UNUSED(mode)
+		// The voice unit is the whole point of this backend, but it is not
+		// the only thing it can open: a call that cancels its own echo wants
+		// the microphone as the hardware delivers it, with nothing having
+		// been subtracted from it first.
+		if (mode == NativeAudioVoiceCall)
+			m_unit = CoreAudioUnit::acquireVoice(device, sampleRate, channels, true, error);
+		else
+			m_unit = CoreAudioUnit::createPlainCapture(device, sampleRate, channels, error);
 
-		m_unit = CoreAudioUnit::acquireVoice(device, sampleRate, channels, true, error);
 		m_isCapture = true;
 		m_channels = channels;
-		m_platformAec = (m_unit != nullptr);
+		m_platformAec = (m_unit != nullptr && m_unit->voiceProcessing());
 
 		return m_unit != nullptr;
 	}

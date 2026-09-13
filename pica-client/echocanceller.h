@@ -22,60 +22,79 @@
 #include <QVector>
 #include <QSharedPointer>
 
-struct SpeexEchoState_;
-struct SpeexPreprocessState_;
+struct EchoCancellerPrivate;
 struct SwrContext;
 
-// Acoustic echo cancellation for a call, using speexdsp's frequency domain
-// adaptive filter (MDF).
+// Where the acoustic echo of a call is taken out of the microphone signal.
+// One of these three, never two at once: running a second canceller over an
+// already cancelled signal gives it a near silent reference to chase and it
+// chews holes in the speech.
+enum EchoCancellationMode
+{
+	// EchoCanceller below - WebRTC's AEC3, in process.
+	EchoCancellationOwn,
+
+	// Whatever the operating system or sound server does below us, which is
+	// better where it exists: it sees the real speaker signal and the real
+	// clock. Not offered everywhere - see
+	// AudioDevice::PlatformEchoCancellationAvailable().
+	EchoCancellationPlatform,
+
+	// Nothing cancels. Correct with a headset, and the only honest answer
+	// when both of the above make things worse.
+	EchoCancellationNone
+};
+
+// The "audio.echo_cancellation" setting. Both must be called from a thread
+// that may touch the settings database - see AudioDevice::SetLinuxDriverName()
+// for why the audio threads may not.
+//
+// Nothing stored yet means the default for this platform: the platform's own
+// where there is one, ours otherwise. The setting this replaced
+// ("audio.echo_cancel", a plain on/off) is still honoured when it is all
+// there is, so an existing install that had it switched off stays that way.
+EchoCancellationMode loadEchoCancellationSetting();
+void storeEchoCancellationSetting(EchoCancellationMode mode);
+
+// Acoustic echo cancellation for a call, using WebRTC's AEC3 through the
+// audio processing module.
 //
 // One instance is shared by the two AudioDevice objects of a call - the
 // playback one feeds it the far end signal it is about to hand to the sound
 // card via pushFarEnd(), the capture one runs the microphone signal through
-// processNearEnd() before encoding. Both run on their own thread, so every
-// entry point here takes a lock.
+// processNearEnd() before encoding. Both run on their own thread, which is
+// what AEC3 expects: one render thread, one capture thread.
 //
 // Because AudioVideoCallController tears a call down without joining those
 // two threads (see stopAudioPipeline()), ownership is shared: hold this
 // through a QSharedPointer so the object outlives whichever thread leaves
 // last.
 //
-// Alignment between the two signals is left to the FIFO: in the steady state
-// the playback side pushes samples at the same rate the capture side pulls
-// them, and the backlog that builds up in the FIFO settles at exactly the
-// sound card's buffer depth - which is also how far ahead of the speaker the
-// playback side is running. What remains is the acoustic flight time from
-// speaker to microphone plus any capture side buffering, and that is what the
-// filter tail is for.
+// One per call, built when the call starts and dropped when it ends. There is
+// nothing worth carrying over: the previous call's room response is not this
+// call's, and the module is cheap enough to build.
+//
+// Nothing here tries to line the two signals up. AEC3 has its own delay
+// estimator and a render buffer to hold the far end audio until the echo of
+// it arrives, which is the whole reason it copes with an application that
+// hands over playback audio some way ahead of the speaker actually making a
+// sound - and with that lead changing when the sound card's buffer does.
 class EchoCanceller
 {
 public:
-	// frameMs is the block the filter works on and must divide the audio
-	// handed to processNearEnd().
-	//
-	// tailMs is the longest echo delay the filter can model at all; anything
-	// arriving later is invisible to it and can only be dealt with
-	// statistically by the residual suppressor. The fixed part of that delay
-	// is small - the capture path plus a metre or two of flight, call it 30ms
-	// - so nearly all of the tail is budget for the room's reverberation.
-	//
-	// It is not free in either direction. Too short and late reflections never
-	// get modelled and are heard as residual echo; too long and both the
-	// convergence time and the steady state misadjustment grow with the tap
-	// count. 300ms at 16kHz is 4800 taps, which is still fewer than the 7200
-	// this ran at when calls were 48kHz with a 150ms tail - so the room
-	// coverage doubles and the filter is still shorter than it used to be.
-	EchoCanceller(int sampleRate, int frameMs = 10, int tailMs = 300);
+	// sampleRate must be one of AEC3's native rates - 8000, 16000, 32000 or
+	// 48000. Anything else leaves isValid() false rather than silently
+	// processing at the wrong rate; the caller then runs without
+	// cancellation.
+	explicit EchoCanceller(int sampleRate);
 	~EchoCanceller();
 
-	bool isValid() const { return m_echo != nullptr; }
+	bool isValid() const;
 	int sampleRate() const { return m_sampleRate; }
-	int frameSize() const { return m_frameSize; }
 
-	// Forget the adapted filter and drop any buffered far end audio. Called
-	// when a call starts, since the previous call's room response is not
-	// worth keeping and a stale FIFO would start it off misaligned.
-	void reset();
+	// The block AEC3 works on: 10ms, always. Audio handed to
+	// processNearEnd() should be a whole number of these.
+	int frameSize() const { return m_frameSize; }
 
 	// Playback side: the audio about to be written to the output device.
 	//
@@ -83,9 +102,7 @@ public:
 	// we capture at a rate of our choosing but play back at whatever the peer
 	// announced, so a call with a build that negotiates a different rate ends
 	// up with the two directions disagreeing. Passing 0 means "same as ours".
-	// Anything else is resampled on the way into the FIFO - without this the
-	// playback side used to drop the canceller entirely on a rate mismatch,
-	// leaving the capture side cancelling against silence.
+	// Anything else is resampled on the way in.
 	void pushFarEnd(const qint16 *pcm, int nsamples, int srcRate = 0);
 
 	// Capture side: removes the echo of what pushFarEnd() was given, in
@@ -93,74 +110,57 @@ public:
 	// partial trailing block is passed through untouched.
 	void processNearEnd(qint16 *pcm, int nsamples);
 
-	// Rough measure of how well it is working, in dB - how much quieter the
-	// output is than the microphone input while the far end is active. Zero
-	// until enough far end audio has gone through to mean anything.
+	// Echo return loss enhancement in dB, as AEC3 measures it: how much
+	// quieter the echo is after cancellation than before. Zero until the
+	// filter has had far end audio to work on.
 	//
 	// Only meaningful while the far end is actually talking, which is what
 	// farEndLevelDb() is for: with nothing coming out of the speaker there is
 	// no echo to remove and the figure means nothing.
 	double erle();
 
-	// Recent signal levels in dBFS, averaged over the same window as erle().
+	// Recent signal levels in dBFS, averaged over a few seconds.
 	// nearEndLevelDb() is the microphone before cancellation - a floor-level
 	// reading there means the capture path is dead and nothing else in the
 	// numbers is worth reading.
 	double nearEndLevelDb();
 	double farEndLevelDb();
 
-	// Far end samples waiting to be paired with microphone audio. In the
-	// steady state this settles at the depth of the sound card's output
-	// buffer and stays there, because both are drained by the same clock.
-	// Climbing towards m_farCapacity means capture and playback are running
-	// off different clocks - separate cards - and the reference is drifting
-	// out of alignment with the echo it is supposed to explain.
-	int farEndDepth();
-
 private:
 	Q_DISABLE_COPY(EchoCanceller)
 
 	int m_sampleRate;
 	int m_frameSize;
-	int m_filterLength;
 
-	// speexdsp state. The echo canceller proper, plus a preprocessor whose
-	// only job here is the residual echo suppression that the adaptive
-	// filter alone cannot do (SPEEX_PREPROCESS_SET_ECHO_STATE).
-	SpeexEchoState_ *m_echo;
-	SpeexPreprocessState_ *m_preprocess;
+	// The audio processing module and the stream configurations handed to it,
+	// kept out of this header so that the WebRTC headers - which want C++17
+	// and drag in abseil - are only seen by echocanceller.cpp.
+	EchoCancellerPrivate *m_d;
 
-	// Guards the speex state, which both directions reach into: the capture
-	// thread through speex_echo_cancellation(), and reset() from whichever
-	// thread starts the call.
-	QMutex m_procMutex;
+	// Guards the render direction: the far end accumulator, the resampler,
+	// and ProcessReverseStream(). Only the playback thread takes it.
+	QMutex m_renderMutex;
 
-	// Far end FIFO, written by the playback thread and drained by the
-	// capture thread.
-	QMutex m_farMutex;
-	QVector<qint16> m_farFifo;
-	int m_farHead;
+	// Guards the capture direction: ProcessStream() and the statistics read
+	// alongside it. Taken by the capture thread, and by whoever calls the
+	// erle() accessor.
+	QMutex m_captureMutex;
+
+	// Far end audio that did not fill a whole 10ms block, waiting for the
+	// samples that will complete it.
+	QVector<qint16> m_farPending;
 
 	// Rate conversion for a far end that is not running at our rate, built on
-	// first use and rebuilt if the rate changes. Only the playback thread
-	// touches these, under m_farMutex.
+	// first use and rebuilt if the rate changes.
 	SwrContext *m_farSwr;
 	int m_farSwrRate;
 	QVector<qint16> m_farScratch;
 
-	// Upper bound on the FIFO, in samples. Reached only if the two sound
-	// cards' clocks drift apart or playback outruns capture; past this the
-	// oldest audio is dropped, since keeping it would mean the reference
-	// signal lagging further and further behind the echo it is meant to
-	// explain.
-	int m_farCapacity;
-
-	// Exponentially averaged mean square of the near end (microphone), the
-	// cancelled output and the far end reference, for erle() and the level
-	// readings. Per sample rather than per call, so they stay comparable
-	// whatever block size the capture path hands us.
+	// Exponentially averaged mean square of the near end (microphone) and of
+	// the far end reference, for the level readings. Per sample rather than
+	// per call, so they stay comparable whatever block size the capture path
+	// hands us.
 	double m_nearEnergy;
-	double m_outEnergy;
 	double m_farEnergy;
 	QMutex m_statMutex;
 
@@ -170,13 +170,21 @@ private:
 	qint64 m_processedSamples;
 	qint64 m_nextReportSamples;
 
+	// 10ms blocks handed to each direction. AEC3 lines the two streams up by
+	// counting API calls, not by any clock, so the gap between these is what
+	// its alignment is measured in. In a healthy call it settles at the depth
+	// of the sound card's output buffer and stays there; a gap that keeps
+	// growing or shrinking means capture and playback are running off
+	// different clocks and the alignment is being dragged out from under the
+	// filter. Guarded by m_statMutex.
+	qint64 m_renderBlocks;
+	qint64 m_captureBlocks;
+
 	// How often the canceller reports how it is doing, in seconds.
 	static const int kReportIntervalSec = 2;
 
-	// Scratch far end block, reused by processNearEnd().
-	QVector<qint16> m_farBlock;
-
-	bool popFarEnd(qint16 *dst, int nsamples);
+	// True if rate is one of the rates AEC3's integer interface accepts.
+	static bool isNativeRate(int rate);
 };
 
 typedef QSharedPointer<EchoCanceller> EchoCancellerPtr;
