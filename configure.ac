@@ -213,7 +213,7 @@ for webrtc_audio_processing_major in $webrtc_audio_processing_try; do
 done
 
 AS_IF([test "x$WEBRTC_AUDIO_PROCESSING_MAJOR" = x],
-  [AC_MSG_ERROR(["webrtc-audio-processing was not found. It provides the acoustic echo cancellation used in calls - Debian and Ubuntu call it libwebrtc-audio-processing-1-dev, Gentoo media-libs/webrtc-audio-processing:1"])])
+  [AC_MSG_ERROR(["webrtc-audio-processing 1.x or 2.x was not found. It provides the acoustic echo cancellation used in calls. On Debian 13 and Ubuntu 25.10 or newer it is libwebrtc-audio-processing-dev; the same name on Ubuntu 24.04 is version 0.3, which predates AEC3 and will not do. On Gentoo it is media-libs/webrtc-audio-processing:1"])])
 
 AC_MSG_NOTICE([using webrtc-audio-processing-$WEBRTC_AUDIO_PROCESSING_MAJOR])
 

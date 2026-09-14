@@ -2,8 +2,7 @@ Source: pica-pica
 Section: net
 Priority: optional
 Maintainer: Anton Sviridenko <anton@picapica.im>
-Build-Depends: debhelper (>= 8.0.0),
- autotools-dev,
+Build-Depends: debhelper-compat (= 13),
  pkg-config,
  libssl-dev,
  zlib1g-dev,
@@ -19,7 +18,7 @@ Build-Depends: debhelper (>= 8.0.0),
  libavutil-dev,
  libswresample-dev,
  libswscale-dev,
- libwebrtc-audio-processing-1-dev | libwebrtc-audio-processing-2-dev,
+ libwebrtc-audio-processing-dev (>= 1.3) | libwebrtc-audio-processing-1-dev,
  libpulse-dev,
  libva-dev,
  libegl-dev,
