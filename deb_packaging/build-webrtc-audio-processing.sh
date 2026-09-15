@@ -253,6 +253,27 @@ if [ "$RENAME_DEV" -eq 1 ]; then
 
 	grep -q '^Package: libwebrtc-audio-processing-1-dev$' debian/control ||
 		die "the -dev package rename did not apply - has Debian's control changed?"
+
+	# debhelper locates a binary package's configuration by file name -
+	# debian/<package>.install and the rest of that family - so renaming the
+	# package in debian/control and stopping there leaves dh_install with
+	# nothing matching the new name. The package builds empty, and then
+	# dh_missing aborts the build because every header, the .so symlink and
+	# the .pc file are unaccounted for.
+	#
+	# A glob rather than the one file Debian has today, so that a .links or a
+	# .lintian-overrides appearing later comes along on its own.
+	renamed=0
+	for f in debian/libwebrtc-audio-processing-dev.*; do
+		[ -e "$f" ] || continue
+		mv "$f" "debian/libwebrtc-audio-processing-1-dev.${f#debian/libwebrtc-audio-processing-dev.}"
+		renamed=$((renamed + 1))
+	done
+
+	[ "$renamed" -gt 0 ] ||
+		die "found no debian/libwebrtc-audio-processing-dev.* files to rename alongside the package - has Debian's packaging changed?"
+
+	note "renamed $renamed per-package debhelper file(s) to match"
 fi
 
 # Drop the Breaks/Replaces that record Debian's 1.3-1 -> 1.3-2 rename.
@@ -313,6 +334,22 @@ mv debian/changelog.new debian/changelog
 
 note "the delta applied to Debian's packaging:"
 sed -n '1,20p' debian/changelog | sed 's/^/    /'
+
+# --- sanity check ---------------------------------------------------------
+#
+# debhelper only notices a package with no per-package configuration at
+# dh_missing, right at the end of a build that takes minutes. This is the same
+# check, up front: every binary package this control file declares should have
+# something telling dh_install what goes in it.
+#
+# A warning rather than an error - a package can legitimately be populated by
+# other means - but for this source all four have a .install, so anything
+# reported here means the delta above and Debian's packaging have drifted
+# apart.
+for p in $(sed -n 's/^Package: //p' debian/control); do
+	[ -e "debian/$p.install" ] && continue
+	note "WARNING: no debian/$p.install - $p will be built empty unless something else fills it"
+done
 
 # --- build ----------------------------------------------------------------
 
