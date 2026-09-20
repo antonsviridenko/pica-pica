@@ -146,31 +146,58 @@ fi
 
 if [ "$(id -u)" -eq 0 ]; then
 	SUDO=""
-else
+elif command -v sudo >/dev/null; then
 	SUDO="sudo"
-	command -v sudo >/dev/null ||
-		die "not root and no sudo - install podman yourself and re-run"
-fi
-
-# --- podman ---------------------------------------------------------------
-
-if ! command -v podman >/dev/null; then
-	note "installing podman"
-	$SUDO apt-get update
-	$SUDO apt-get install -y podman
 else
-	note "podman is already installed: $(podman --version)"
+	# Not fatal on its own. Nothing may need installing, which is the normal
+	# case on a signing-only machine; ensure_tool() complains if something
+	# actually is missing.
+	SUDO=""
 fi
 
-# apt-ftparchive assembles the repository indices; gpg signs them.
-for tool in apt-ftparchive gpg; do
-	command -v "$tool" >/dev/null && continue
-	note "installing $tool"
-	case "$tool" in
-	apt-ftparchive) $SUDO apt-get install -y apt-utils ;;
-	gpg)            $SUDO apt-get install -y gnupg ;;
-	esac
-done
+# Installs a package, but only if the tool it provides is not already there -
+# and says plainly why it cannot when it has no way to become root, rather
+# than letting apt-get fail with something less obvious.
+ensure_tool()
+{
+	local tool="$1" package="$2"
+
+	command -v "$tool" >/dev/null && return 0
+
+	if [ "$(id -u)" -ne 0 ] && [ -z "$SUDO" ]; then
+		die "$tool is missing and would come from the $package package, but this is not root and there is no sudo"
+	fi
+
+	note "installing $package, for $tool"
+	$SUDO apt-get install -y "$package"
+}
+
+# --- tools ----------------------------------------------------------------
+
+# podman only when there is something to build. --skip-build exists so that
+# the repository can be assembled and signed on a machine that holds the key
+# and does nothing else; installing a container runtime on that machine would
+# be exactly backwards.
+if [ "$SKIP_BUILD" -eq 0 ]; then
+	if command -v podman >/dev/null; then
+		note "podman is already installed: $(podman --version)"
+	else
+		if [ "$(id -u)" -ne 0 ] && [ -z "$SUDO" ]; then
+			die "podman is missing and this is not root and there is no sudo - install podman yourself and re-run"
+		fi
+		note "installing podman"
+		$SUDO apt-get update
+		$SUDO apt-get install -y podman
+	fi
+fi
+
+# apt-ftparchive builds the repository indices, so it is needed in both
+# modes. gpg only matters when there is something to sign.
+ensure_tool apt-ftparchive apt-utils
+
+if [ "$SIGN" -eq 1 ]; then
+	ensure_tool gpg gnupg
+fi
 
 if [ "$SIGN" -eq 1 ]; then
 	gpg --list-keys "$GPGKEY" >/dev/null 2>&1 ||
