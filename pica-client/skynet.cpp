@@ -21,7 +21,7 @@
 #include <QCoreApplication>
 //#include "dialogs/viewcertdialog.h"
 #include "contacts.h"
-#include "openssltool.h"
+#include "openssllib.h"
 //#include <QMessageBox> //debug
 //#include "dialogs/forgedcertdialog.h"
 #include <QDebug>
@@ -324,7 +324,7 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 	{
 		cnt.SetContactCert(peer_id, cert_pem);
 
-		QString name = OpenSSLTool::NameFromCertString(cert_pem);
+		QString name = OpenSSLLib::NameFromCertString(cert_pem);
 
 		cnt.SetContactName(peer_id, name);
 

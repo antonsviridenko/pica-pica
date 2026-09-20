@@ -38,7 +38,7 @@ SOURCES += main.cpp\
     dialogs/viewcertdialog.cpp \
     dialogs/forgedcertdialog.cpp \
     dialogs/registeraccountdialog.cpp \
-    openssltool.cpp \
+    openssllib.cpp \
     history.cpp \
     ../PICA_id.c \
     dhparam.cpp \
@@ -83,7 +83,7 @@ HEADERS  += mainwindow.h \
     ../PICA_common.h \
     ../PICA_proto.h \
     dialogs/registeraccountdialog.h \
-    openssltool.h \
+    openssllib.h \
     history.h \
     ../PICA_id.h \
     dhparam.h \

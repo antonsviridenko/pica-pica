@@ -23,7 +23,7 @@
 #include <QLabel>
 #include <QCheckBox>
 #include <QRegExpValidator>
-#include "../openssltool.h"
+#include "../openssllib.h"
 
 class RegisterAccountDialog : public QDialog
 {
@@ -46,7 +46,7 @@ private:
 	QCheckBox *cbUseDevRandom;
 
 	QRegExpValidator *vld;
-	OpenSSLTool ost;
+	OpenSSLLib ost;
 	QByteArray cert_buf;
 
 	QString CertFilename_;
@@ -59,8 +59,8 @@ private slots:
 	void setPasswordClick();
 	void useDevRandomClick();
 
-	void stageSignCert(int retval, QProcess::ExitStatus);
-	void stageFinished(int retval, QProcess::ExitStatus);
+	void stageSignCert(int retval);
+	void stageFinished(int retval);
 };
 
 #endif // REGISTERACCOUNTDIALOG_H

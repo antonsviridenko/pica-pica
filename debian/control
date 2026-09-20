@@ -29,7 +29,7 @@ Homepage: http://picapica.im
 
 Package: pica-client
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, alsa-utils, libqt5sql5-sqlite, openssl
+Depends: ${shlibs:Depends}, ${misc:Depends}, alsa-utils, libqt5sql5-sqlite
 Recommends: va-driver-all
 Description: Pica Pica instant messaging client
  Client for secure distributed instant messaging system

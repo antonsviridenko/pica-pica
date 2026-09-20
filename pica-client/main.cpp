@@ -466,7 +466,7 @@ static bool create_config_dir()
 
 	/*if (!QFile::exists(config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE))
 	{
-	    OpenSSLTool osslt;
+	    OpenSSLLib osslt;
 	    msgBox.setText(QString(QObject::tr("Diffie-Hellman parameters will be generated. Please wait. This process can take several minutes...")));
 	    msgBox.exec();
 

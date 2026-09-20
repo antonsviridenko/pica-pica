@@ -178,10 +178,10 @@ void RegisterAccountDialog::Register()
 	btRegister->setEnabled(false);
 
 	ost.GenRSAKeySignal(config_dir + QDir::separator() + "privkey.pem", cbSetPassword->isChecked(),
-	                    password->text(), rand, this, SLOT(stageSignCert(int, QProcess::ExitStatus)));
+	                    password->text(), rand, this, SLOT(stageSignCert(int)));
 }
 
-void RegisterAccountDialog::stageSignCert(int retval, QProcess::ExitStatus)
+void RegisterAccountDialog::stageSignCert(int retval)
 {
 	if (retval != 0)
 	{
@@ -196,10 +196,10 @@ void RegisterAccountDialog::stageSignCert(int retval, QProcess::ExitStatus)
 	ost.GenCertSignal(config_dir + QDir::separator() + "cert.pem",
 	                  config_dir + QDir::separator() + "privkey.pem",
 	                  password->text(), nickname->text(),
-	                  this, SLOT(stageFinished(int, QProcess::ExitStatus)));
+	                  this, SLOT(stageFinished(int)));
 }
 
-void RegisterAccountDialog::stageFinished(int retval, QProcess::ExitStatus)
+void RegisterAccountDialog::stageFinished(int retval)
 {
 	if (retval != 0)
 	{

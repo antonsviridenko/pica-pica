@@ -78,8 +78,8 @@ pica-client/msguirouter.cpp \
 pica-client/msguirouter.h \
 pica-client/nodes.cpp \
 pica-client/nodes.h \
-pica-client/openssltool.cpp \
-pica-client/openssltool.h \
+pica-client/openssllib.cpp \
+pica-client/openssllib.h \
 pica-client/picaactioncenter.cpp \
 pica-client/picaactioncenter.h \
 pica-client/pica-client.pro \
@@ -152,6 +152,7 @@ moc_contactlistwidget.cpp \
 moc_forgedcertdialog.cpp \
 moc_mainwindow.cpp \
 moc_msguirouter.cpp \
+moc_openssllib.cpp \
 moc_picaactioncenter.cpp \
 moc_picasystray.cpp \
 moc_registeraccountdialog.cpp \
