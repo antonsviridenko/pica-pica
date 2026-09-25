@@ -1,0 +1,71 @@
+!include MUI2.nsh
+
+!define VERSION "@VERSION@"
+
+Name "Pica Pica Messenger"
+OutFile "PicaPicaMessengerInstaller_${VERSION}_32bit.exe"
+InstallDir "$PROGRAMFILES\Pica Pica Messenger"
+InstallDirRegKey HKLM "Software\Pica Pica Messenger" ""
+RequestExecutionLevel admin
+SetCompressor /FINAL /SOLID lzma
+!define MUI_ICON "picapica.ico"
+!define MUI_UNICON "picapica.ico"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "COPYING"
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!define MUI_FINISHPAGE_RUN $INSTDIR\pica-client.exe
+!define MUI_FINISHPAGE_RUN_TEXT "Run Pica Pica Messenger"
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "English"
+
+Section
+  SetOutPath "$INSTDIR"
+  SetShellVarContext all
+
+!include dll_list.nsh
+
+  File "pica-client.exe"
+  File "picapica.ico"
+  File "COPYING"
+  File "README"
+  SetOutPath "$INSTDIR\share"
+  File  "share/picapica-icon-fly.png"
+  File  "share/picapica-icon-sit.png"
+  File  "share/picapica-snd-newmessage.wav"
+  File  "share/dhparam4096.pem"
+  SetOutPath "$INSTDIR\sqldrivers"
+  File  "sqldrivers/qsqlite.dll"
+  SetOutPath "$INSTDIR\platforms"
+  File "platforms/qwindows.dll"
+  SetOutPath "$INSTDIR\imageformats"
+  File "imageformats/qico.dll"  
+  WriteUninstaller "uninstall.exe"
+  
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pica Pica Messenger" "DisplayName" "Pica Pica Messenger"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pica Pica Messenger" "UninstallString" '"$INSTDIR\uninstall.exe"'
+  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pica Pica Messenger" "NoModify" 1
+  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pica Pica Messenger" "NoRepair" 1
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pica Pica Messenger" "HelpLink" "https://picapica.im"
+  
+
+  CreateDirectory "$SMPROGRAMS\Pica Pica Messenger"
+  SetOutPath $INSTDIR
+  CreateShortCut "$SMPROGRAMS\Pica Pica Messenger\Pica Pica Messenger.lnk" "$INSTDIR\pica-client.exe" "" "$INSTDIR\picapica.ico" 
+    
+
+SectionEnd
+
+Section "Uninstall"
+  SetShellVarContext all
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir /r "$INSTDIR"
+  RMDir /r "$SMPROGRAMS\Pica Pica Messenger"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pica Pica Messenger"
+SectionEnd
+

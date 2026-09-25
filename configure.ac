@@ -144,13 +144,19 @@ AS_CASE([$host],
 		],
 	[*-w64-mingw*],
 		[
+		TARGET_OS=windows
 		QT_DEPENDENCIES_LIBS="$QT_DEPENDENCIES_LIBS -mwindows"
 		#the WASAPI backend is COM: ole32 for CoCreateInstance and the
 		#task allocator, oleaut32 for PROPVARIANT.
 		PLATFORM_DEPS_LIBS="$PLATFORM_DEPS_LIBS -lole32 -loleaut32"
+		AC_PATH_TOOL(WINDRES, windres, none)
+		if test x$WINDRES = xnone; then
+			AC_MSG_ERROR("windres not found")
+		fi
 		],
 	[*-apple-darwin*],
 		[
+		TARGET_OS=darwin
 		#the CoreAudio backend: the HAL for device enumeration,
 		#AudioUnit/AudioToolbox for the VoiceProcessingIO unit that does
 		#the echo cancellation, CoreFoundation for the CFString handling
@@ -324,5 +330,28 @@ AC_TYPE_UINT16_T
 # Checks for library functions.
 AC_CHECK_FUNCS([getcwd inet_ntoa memmove memset select socket strchr strstr strtol])
 
-AC_CONFIG_FILES([Makefile])
+VERSION=$PACKAGE_VERSION
+AC_SUBST([VERSION])
+
+# Both the assemblyIdentity element of a Windows application manifest and the
+# FILEVERSION field of a VERSIONINFO resource only accept a version of exactly
+# four numbers, which the package version ("0.9.0dev") is not. Cut it at the
+# first character that is neither a digit nor a dot and pad the rest with ".0"
+# up to four components. The manifest wants them separated by dots and
+# VERSIONINFO by commas, so both spellings are substituted.
+AC_MSG_CHECKING([for the Windows binary version number])
+PICA_WINDOWS_VERSION=`echo "$PACKAGE_VERSION" | sed -e ['s/[^0-9.].*$//'] -e ['s/\.*$//']`
+AS_IF([test -z "$PICA_WINDOWS_VERSION"], [PICA_WINDOWS_VERSION=0])
+while test `echo "$PICA_WINDOWS_VERSION" | tr -dc . | wc -c` -lt 3
+do
+	PICA_WINDOWS_VERSION="$PICA_WINDOWS_VERSION.0"
+done
+PICA_WINDOWS_VERSION_COMMAS=`echo "$PICA_WINDOWS_VERSION" | tr . ,`
+AC_MSG_RESULT([$PICA_WINDOWS_VERSION])
+AC_SUBST([PICA_WINDOWS_VERSION])
+AC_SUBST([PICA_WINDOWS_VERSION_COMMAS])
+
+AM_CONDITIONAL([TARGET_WINDOWS], [test x$TARGET_OS = xwindows])
+AM_CONDITIONAL([TARGET_DARWIN], [test x$TARGET_OS = xdarwin])
+AC_CONFIG_FILES([Makefile windows/installer32.nsi windows/installer64.nsi windows/pica-client.exe.manifest windows/pica-node.exe.manifest])
 AC_OUTPUT
