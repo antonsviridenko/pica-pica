@@ -1,19 +1,20 @@
 diff --git a/src/qtbase.mk b/src/qtbase.mk
-index 600ff60f..29578a77 100644
+index 600ff60..220c2bb 100644
 --- a/src/qtbase.mk
 +++ b/src/qtbase.mk
-@@ -9,8 +9,8 @@ $(PKG)_CHECKSUM := 51e91c73abacab81e64efd01bf95794e79c0e605ad80947a024769f0dd620
+@@ -9,9 +9,8 @@ $(PKG)_CHECKSUM := 51e91c73abacab81e64efd01bf95794e79c0e605ad80947a024769f0dd620
  $(PKG)_SUBDIR   := $(PKG)-everywhere-src-$($(PKG)_VERSION)
  $(PKG)_FILE     := $(PKG)-everywhere-opensource-src-$($(PKG)_VERSION).tar.xz
  $(PKG)_URL      := https://download.qt.io/archive/qt/5.15/$($(PKG)_VERSION)/submodules/$($(PKG)_FILE)
 -$(PKG)_DEPS     := cc dbus fontconfig freetds freetype harfbuzz jpeg mariadb-connector-c \
 -                   libpng mesa openssl pcre2 postgresql sqlite zlib zstd $(BUILD)~zstd \
-+$(PKG)_DEPS     := cc dbus fontconfig freetype harfbuzz jpeg \
-+                   libpng mesa openssl pcre2 sqlite zlib zstd $(BUILD)~zstd \
-                    $(if $(findstring shared,$(MXE_TARGETS)), icu4c)
+-                   $(if $(findstring shared,$(MXE_TARGETS)), icu4c)
++$(PKG)_DEPS     := cc dbus fontconfig freetype harfbuzz \
++                   libpng mesa openssl pcre2 sqlite zlib
  $(PKG)_DEPS_$(BUILD) :=
  $(PKG)_TARGETS  := $(BUILD) $(MXE_TARGETS)
-@@ -27,8 +27,6 @@ define $(PKG)_BUILD
+ 
+@@ -27,8 +26,6 @@ define $(PKG)_BUILD
      # ICU is buggy on static builds. See #653. TODO: reenable it some time in the future.
      cd '$(1)' && \
          OPENSSL_LIBS="`'$(TARGET)-pkg-config' --libs-only-l openssl`" \
@@ -22,7 +23,15 @@ index 600ff60f..29578a77 100644
          PKG_CONFIG="${TARGET}-pkg-config" \
          PKG_CONFIG_SYSROOT_DIR="/" \
          PKG_CONFIG_LIBDIR="$(PREFIX)/$(TARGET)/lib/pkgconfig" \
-@@ -51,11 +49,7 @@ define $(PKG)_BUILD
+@@ -45,27 +42,23 @@ define $(PKG)_BUILD
+             -release \
+             $(if $(BUILD_STATIC), -static,)$(if $(BUILD_SHARED), -shared,) \
+             -prefix '$(PREFIX)/$(TARGET)/qt5' \
+-            $(if $(BUILD_STATIC), -no)-icu \
++            -no-icu \
++            -no-zstd \
+             -opengl dynamic \
+             -no-glib \
              -accessibility \
              -nomake examples \
              -nomake tests \
@@ -33,8 +42,11 @@ index 600ff60f..29578a77 100644
 -            -plugin-sql-tds -D Q_USE_SYBASE \
              -system-zlib \
              -system-libpng \
-             -system-libjpeg \
-@@ -65,7 +59,6 @@ define $(PKG)_BUILD
+-            -system-libjpeg \
++            -no-libjpeg \
+             -system-sqlite \
+             -fontconfig \
+             -system-freetype \
              -system-harfbuzz \
              -system-pcre \
              -openssl-linked \

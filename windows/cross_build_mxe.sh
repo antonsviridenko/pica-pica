@@ -243,11 +243,11 @@ cp $PREFIX/share/pica-client/picapica-snd-newmessage.wav share/
 
 if test $arch = 'i686-w64-mingw32.shared'
 then
-	cp ../build_pica-pica/win/installer32.nsi ./
+	cp ../build_pica-pica/windows/installer32.nsi ./
 	makensis installer32.nsi
 elif test $arch = 'x86_64-w64-mingw32.shared'
 then
-	cp ../build_pica-pica/win/installer64.nsi ./
+	cp ../build_pica-pica/windows/installer64.nsi ./
 	makensis installer64.nsi
 else
 	die "unsupported architecture $arch"

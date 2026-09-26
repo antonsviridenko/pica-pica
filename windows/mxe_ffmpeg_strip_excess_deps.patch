@@ -1,63 +1,82 @@
 diff --git a/src/ffmpeg.mk b/src/ffmpeg.mk
-index 8dd80d86..e2132c3c 100644
+index 8dd80d8..4c7daec 100644
 --- a/src/ffmpeg.mk
 +++ b/src/ffmpeg.mk
-@@ -8,9 +8,9 @@ $(PKG)_CHECKSUM := cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f
+@@ -8,9 +8,7 @@ $(PKG)_CHECKSUM := cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f
  $(PKG)_SUBDIR   := $(PKG)-$($(PKG)_VERSION)
  $(PKG)_FILE     := $(PKG)-$($(PKG)_VERSION).tar.xz
  $(PKG)_URL      := https://ffmpeg.org/releases/$($(PKG)_FILE)
 -$(PKG)_DEPS     := cc bzip2 gnutls lame libass libbluray libbs2b libcaca \
 -                   libvpx opencore-amr $(BUILD)~nasm opus sdl2 speex theora vidstab \
 -                   vo-amrwbenc vorbis x264 x265 xvidcore zlib
-+$(PKG)_DEPS     := cc bzip2 \
-+                   libvpx opencore-amr $(BUILD)~nasm opus sdl2 speex \
-+                   vo-amrwbenc vorbis x264 x265 zlib
++$(PKG)_DEPS     := cc bzip2 libvpx $(BUILD)~nasm opus x264 x265 zlib
  
  # DO NOT ADD fdk-aac OR openssl SUPPORT.
  # Although they are free softwares, their licenses are not compatible with
-@@ -42,24 +42,35 @@ define $(PKG)_BUILD
+@@ -25,6 +23,22 @@ define $(PKG)_UPDATE
+     head -1
+ endef
+ 
++# Pica Pica needs a small part of what MXE's stock ffmpeg provides: the codecs
++# named in doc/proto-doc-latest.txt for the media of an audio/video call (h264,
++# hevc, vp9 and mjpeg for video, opus, adpcm_g722 and pcm_alaw for audio, both
++# directions), dshow for capture, and the hardware paths ffmpeg has for the
++# video codecs. --disable-everything turns off every component and the
++# --enable-<component>= options below turn that set back on, which is what
++# keeps libavcodec from carrying the several hundred codecs nothing here can
++# reach.
++#
++# The nvenc/nvdec/cuvid/qsv/amf components are listed as well although no MXE
++# package provides their headers yet, so configure prints a warning for each of
++# them and leaves them out. That is deliberate: adding ffnvcodec (NVIDIA),
++# libvpl (Intel QSV) or the AMF headers as a dependency is then the only change
++# needed to get them. The MediaFoundation encoders (h264_mf, hevc_mf) and the
++# dxva2/d3d11va/d3d12va hardware decoders need nothing but mingw-w64 and are
++# available right away.
+ define $(PKG)_BUILD
+     cd '$(BUILD_DIR)' && '$(SOURCE_DIR)/configure' \
+         --cross-prefix='$(TARGET)'- \
+@@ -41,25 +55,28 @@ define $(PKG)_BUILD
+         --disable-doc \
          --enable-gpl \
          --enable-version3 \
-         --extra-libs="`'$(TARGET)-pkg-config' --libs libmpg123` -mconsole" \
+-        --extra-libs="`'$(TARGET)-pkg-config' --libs libmpg123` -mconsole" \
 -        --enable-gnutls \
 -        --enable-libass \
 -        --enable-libbluray \
 -        --enable-libbs2b \
 -        --enable-libcaca \
 -        --enable-libmp3lame \
-         --enable-libopencore-amrnb \
-         --enable-libopencore-amrwb \
+-        --enable-libopencore-amrnb \
+-        --enable-libopencore-amrwb \
++        --extra-libs="-mconsole" \
          --enable-libopus \
-         --enable-libspeex \
+-        --enable-libspeex \
 -        --enable-libtheora \
 -        --enable-libvidstab \
-         --enable-libvo-amrwbenc \
+-        --enable-libvo-amrwbenc \
 -        --enable-libvorbis \
          --enable-libvpx \
          --enable-libx264 \
          --enable-libx265 \
 -        --enable-libxvid \
 +        --disable-programs \
++        --disable-lzma \
++        --disable-everything \
 +        --enable-protocol=file \
-+        --enable-muxer=matroska \
-+        --enable-muxer=mjpeg \
-+        --enable-demuxer=mjpeg \
-+        --enable-decoder=h264 \
-+        --enable-decoder=hevc \
-+        --enable-decoder=libvpx-vp9 \
-+        --enable-decoder=mjpeg \
-+        --enable-decoder=opus \
-+        --enable-decoder=libopus \
-+        --enable-decoder=pcm_alaw \
-+        --enable-decoder=g722 \
-+        --enable-encoder=mjpeg \
-+        --enable-encoder=libvpx-vp9 \
-+        --enable-encoder=libx264 \
-+        --enable-encoder=libx265 \
-+        --enable-encoder=opus \
-+        --enable-encoder=libopus \
-+        --enable-encoder=pcm_alaw \
-+        --enable-encoder=g722 \
++        --enable-indev=dshow \
++        --enable-demuxer=matroska,mjpeg,h264,hevc,ivf,wav \
++        --enable-muxer=matroska,mjpeg,h264,hevc,ivf,wav \
++        --enable-parser=h264,hevc,vp9,mjpeg,opus \
++        --enable-bsf=extract_extradata,h264_mp4toannexb,hevc_mp4toannexb,vp9_superframe,vp9_superframe_split \
++        --enable-decoder=h264,hevc,vp9,libvpx_vp9,mjpeg,rawvideo,opus,libopus,adpcm_g722,pcm_alaw,pcm_mulaw,pcm_s16le \
++        --enable-encoder=libx264,libx265,libvpx_vp9,mjpeg,libopus,opus,adpcm_g722,pcm_alaw,pcm_mulaw,pcm_s16le \
++        --enable-hwaccel=h264_dxva2,h264_d3d11va,h264_d3d11va2,h264_d3d12va,hevc_dxva2,hevc_d3d11va,hevc_d3d11va2,hevc_d3d12va,vp9_dxva2,vp9_d3d11va,vp9_d3d11va2,vp9_d3d12va \
++        --enable-encoder=h264_mf,hevc_mf \
++        --enable-hwaccel=h264_nvdec,hevc_nvdec,vp9_nvdec,mjpeg_nvdec \
++        --enable-decoder=h264_qsv,hevc_qsv,vp9_qsv,mjpeg_qsv,h264_cuvid,hevc_cuvid,vp9_cuvid,mjpeg_cuvid \
++        --enable-encoder=h264_nvenc,hevc_nvenc,h264_qsv,hevc_qsv,h264_amf,hevc_amf \
++        --enable-filter=scale,format,null,hwupload,hwdownload,hwmap,aresample,aformat,anull \
          --extra-ldflags="-fstack-protector" \
          $($(PKG)_CONFIGURE_OPTS)
      $(MAKE) -C '$(BUILD_DIR)' -j '$(JOBS)'
