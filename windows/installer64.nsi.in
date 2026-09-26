@@ -44,7 +44,12 @@ Section
   SetOutPath "$INSTDIR\platforms"
   File "platforms/qwindows.dll"
   SetOutPath "$INSTDIR\imageformats"
-  File "imageformats/qico.dll"  
+  File "imageformats/qico.dll"
+  ; The themed look. Qt picks the windowsvista style on Vista and later, and
+  ; that style is a plugin - without it the program falls back to the built-in
+  ; Windows style, which looks like Windows 95.
+  SetOutPath "$INSTDIR\styles"
+  File "styles/qwindowsvistastyle.dll"
   WriteUninstaller "uninstall.exe"
   
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Pica Pica Messenger" "DisplayName" "Pica Pica Messenger"

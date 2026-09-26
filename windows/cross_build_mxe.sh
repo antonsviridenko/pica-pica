@@ -182,6 +182,39 @@ function build_mxe_packages {
 $(echo "$missing" | sed 's,^,      ,')"
 }
 
+# makensis for the given architecture.
+#
+# makensis is a program for the host system, but MXE installs it into the
+# target prefix - usr/<target>/bin - because the installer stubs it carries are
+# built for that target: the copy from the x86_64-w64-mingw32.shared tree emits
+# 64 bit installers, the one from the i686-w64-mingw32.shared tree 32 bit ones,
+# and a 64 bit installer does not run on a 32 bit Windows. So the copy
+# belonging to the architecture being packaged is used when it is there, any
+# other MXE built copy after that, then usr/bin/makensis for an nsis built into
+# the MXE tree by hand, and finally whatever the host system has.
+#
+# usr/<target>/bin is deliberately not added to PATH: it is full of Windows
+# executables, and configure --host=<target> looks for host programs with the
+# .exe suffix as well, so a Windows uic.exe or sqlite3.exe in there could be
+# picked up as if it were a host tool.
+function find_makensis {
+	local wanted_arch=$1
+	local other_arch candidate
+
+	for candidate in "$mxe_dir/usr/$wanted_arch/bin/makensis" \
+	                 $(for other_arch in $MXE_TARGETS; do echo "$mxe_dir/usr/$other_arch/bin/makensis"; done) \
+	                 "$mxe_dir/usr/bin/makensis"
+	do
+		if test -x "$candidate"
+		then
+			echo "$candidate"
+			return
+		fi
+	done
+
+	command -v makensis || die "makensis not found: no nsis in $mxe_dir/usr/*/bin, none on the host system"
+}
+
 # step 5: build Pica Pica itself and the installer, always from scratch
 function build_for_arch {
 
@@ -209,7 +242,10 @@ cp $PREFIX/bin/pica-node.exe build_installer_$arch/
 #run copydlldeps.sh from destination dir, otherwise it recursively walks all MXE tree and copies excess DLLs
 
 cd build_installer_$arch
-../tools/copydlldeps.sh --infile ./pica-client.exe --destdir ./ --recursivesrcdir $PREFIX --copy --enforcedir $PREFIX/qt5/plugins/platforms/ --enforcedir $PREFIX/qt5/plugins/sqldrivers/ --enforcedir $PREFIX/qt5/plugins/imageformats/  --objdump ../usr/bin/$arch-objdump
+#the styles directory is what keeps the program from looking like Windows 95:
+#Qt's themed look on Windows lives in the windowsvista style, which is a
+#plugin, and without it QApplication falls back to the built-in Windows style
+../tools/copydlldeps.sh --infile ./pica-client.exe --destdir ./ --recursivesrcdir $PREFIX --copy --enforcedir $PREFIX/qt5/plugins/platforms/ --enforcedir $PREFIX/qt5/plugins/sqldrivers/ --enforcedir $PREFIX/qt5/plugins/imageformats/ --enforcedir $PREFIX/qt5/plugins/styles/  --objdump ../usr/bin/$arch-objdump
 
 ../tools/copydlldeps.sh --infile ./pica-node.exe --destdir ./ --recursivesrcdir $PREFIX --copy  --objdump ../usr/bin/$arch-objdump
 
@@ -241,14 +277,17 @@ cp $PREFIX/share/pica-client/picapica-icon-fly.png share/
 cp $PREFIX/share/pica-client/picapica-icon-sit.png share/
 cp $PREFIX/share/pica-client/picapica-snd-newmessage.wav share/
 
+makensis_bin=$(find_makensis $arch)
+echo "*** building the installer with $makensis_bin"
+
 if test $arch = 'i686-w64-mingw32.shared'
 then
 	cp ../build_pica-pica/windows/installer32.nsi ./
-	makensis installer32.nsi
+	"$makensis_bin" installer32.nsi
 elif test $arch = 'x86_64-w64-mingw32.shared'
 then
 	cp ../build_pica-pica/windows/installer64.nsi ./
-	makensis installer64.nsi
+	"$makensis_bin" installer64.nsi
 else
 	die "unsupported architecture $arch"
 fi
@@ -266,7 +305,12 @@ cd "$mxe_dir"
 
 export PATH=$PWD/usr/bin/:$PATH
 
-command -v makensis > /dev/null || die "makensis not found in PATH, the MXE nsis package is not built"
+# resolve makensis for every architecture now, so that a missing nsis is
+# reported before the hour the Pica Pica builds take, not after them
+for arch in $MXE_TARGETS
+do
+	find_makensis $arch > /dev/null
+done
 
 for arch in $MXE_TARGETS
 do
