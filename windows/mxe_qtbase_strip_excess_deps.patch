@@ -8,7 +8,7 @@ index 600ff60f..29578a77 100644
  $(PKG)_URL      := https://download.qt.io/archive/qt/5.15/$($(PKG)_VERSION)/submodules/$($(PKG)_FILE)
 -$(PKG)_DEPS     := cc dbus fontconfig freetds freetype harfbuzz jpeg mariadb-connector-c \
 -                   libpng mesa openssl pcre2 postgresql sqlite zlib zstd $(BUILD)~zstd \
-+$(PKG)_DEPS     := cc dbus fontconfig freetype harfbuzz \
++$(PKG)_DEPS     := cc dbus fontconfig freetype harfbuzz jpeg \
 +                   libpng mesa openssl pcre2 sqlite zlib zstd $(BUILD)~zstd \
                     $(if $(findstring shared,$(MXE_TARGETS)), icu4c)
  $(PKG)_DEPS_$(BUILD) :=
