@@ -48,6 +48,7 @@ SOURCES += main.cpp\
     sound.cpp \
     dialogs/settingsdialog.cpp \
     settings.cpp \
+    callsettings.cpp \
     ../PICA_netconf.c \
     ../PICA_signverify.c \
     dialogs/nodesdialog.cpp \
@@ -93,6 +94,7 @@ HEADERS  += mainwindow.h \
     sound.h \
     dialogs/settingsdialog.h \
     settings.h \
+    callsettings.h \
     ../PICA_netconf.h \
     ../PICA_security.h \
     ../PICA_signverify.h \

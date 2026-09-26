@@ -15,6 +15,7 @@
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "mediadevice.h"
+#include "videodevice.h"
 
 #include <QtGlobal>
 
@@ -22,9 +23,13 @@
 
 #include <QDebug>
 #include <QList>
+#include <QMap>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <algorithm>
+#include <functional>
 
 // INITGUID before the DirectShow headers so CLSID_SystemDeviceEnum and the
 // rest get defined here rather than needing strmiids at link time. The GUIDs
@@ -301,6 +306,232 @@ QStringList pica_dshow_compressed_formats(const QString &device)
 	return result;
 }
 
+// Frame rates worth offering out of a pin that reports a range of frame
+// intervals rather than one fixed rate. Same list, and the same reasoning, as
+// kStandardFrameRates in videodevice.cpp.
+static const int kDshowStandardFrameRates[] = { 60, 50, 30, 25, 24, 20, 15, 10, 5 };
+
+// DirectShow measures a frame interval in 100 nanosecond units, and we want
+// the rate, so this is a reciprocal like the v4l2 one.
+static double intervalToFps(LONGLONG interval)
+{
+	if (interval <= 0)
+		return 0.0;
+
+	return 10000000.0 / (double)interval;
+}
+
+// Largest picture first - the same order VideoDevice::CaptureFormats() reports
+// on Linux, so the settings dialog's list reads the same on both.
+static bool dshowFormatLessThan(const VideoCaptureFormat &a, const VideoCaptureFormat &b)
+{
+	const qint64 areaA = (qint64)a.width * a.height;
+	const qint64 areaB = (qint64)b.width * b.height;
+
+	if (areaA != areaB)
+		return areaA > areaB;
+
+	return a.width > b.width;
+}
+
+// Every picture size the camera can deliver, with the frame rates and
+// compressed formats available at each.
+//
+// The counterpart of the v4l2 VIDIOC_ENUM_FRAMESIZES/VIDIOC_ENUM_FRAMEINTERVALS
+// walk in VideoDevice::CaptureFormats(), and it comes off the same
+// IAMStreamConfig enumeration pica_dshow_compressed_formats() uses: each media
+// type carries a size and a FourCC, and the VIDEO_STREAM_CONFIG_CAPS alongside
+// it carries the range of frame intervals that size can be delivered at.
+//
+// The same caveat applies as there: this instantiates the capture filter, so
+// an empty list can mean "cannot be opened at all" as much as "offers
+// nothing". Either way the caller falls back to a set of common sizes.
+QList<VideoCaptureFormat> pica_dshow_capture_formats(const QString &device)
+{
+	QList<VideoCaptureFormat> result;
+
+	if (device.isEmpty())
+		return result;
+
+	bool didInit = false;
+	HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	if (SUCCEEDED(hr))
+		didInit = true;
+	else if (hr != RPC_E_CHANGED_MODE)
+		return result;
+
+	IMoniker *moniker = findCamera(device);
+	if (!moniker)
+	{
+		if (didInit)
+			CoUninitialize();
+		return result;
+	}
+
+	IBaseFilter *filter = nullptr;
+	hr = moniker->BindToObject(nullptr, nullptr, IID_IBaseFilter, (void **)&filter);
+	moniker->Release();
+
+	if (FAILED(hr) || !filter)
+	{
+		qWarning() << "DirectShow: could not instantiate" << device
+		           << "to ask what sizes it offers";
+		if (didInit)
+			CoUninitialize();
+		return result;
+	}
+
+	// Keyed on the size, because a camera lists one media type per size and
+	// format combination and the same size comes back once per format.
+	QMap<QPair<int, int>, VideoCaptureFormat> bySize;
+
+	IEnumPins *enumPins = nullptr;
+	if (SUCCEEDED(filter->EnumPins(&enumPins)) && enumPins)
+	{
+		IPin *pin = nullptr;
+
+		while (enumPins->Next(1, &pin, nullptr) == S_OK)
+		{
+			PIN_DIRECTION dir;
+			IAMStreamConfig *config = nullptr;
+
+			if (SUCCEEDED(pin->QueryDirection(&dir)) && dir == PINDIR_OUTPUT &&
+			    SUCCEEDED(pin->QueryInterface(IID_IAMStreamConfig, (void **)&config)) && config)
+			{
+				int count = 0, size = 0;
+
+				if (SUCCEEDED(config->GetNumberOfCapabilities(&count, &size)) &&
+				    size >= (int)sizeof(VIDEO_STREAM_CONFIG_CAPS))
+				{
+					QVector<quint8> caps(size);
+
+					for (int i = 0; i < count; i++)
+					{
+						AM_MEDIA_TYPE *mt = nullptr;
+						if (FAILED(config->GetStreamCaps(i, &mt, caps.data())) || !mt)
+							continue;
+
+						const BITMAPINFOHEADER *bih = nullptr;
+						// The nominal interval of this particular media type,
+						// as opposed to the range in the caps below.
+						LONGLONG avgTimePerFrame = 0;
+
+						if (mt->formattype == FORMAT_VideoInfo &&
+						    mt->cbFormat >= sizeof(VIDEOINFOHEADER))
+						{
+							const VIDEOINFOHEADER *vih = (const VIDEOINFOHEADER *)mt->pbFormat;
+							bih = &vih->bmiHeader;
+							avgTimePerFrame = vih->AvgTimePerFrame;
+						}
+						else if (mt->formattype == FORMAT_VideoInfo2 &&
+						         mt->cbFormat >= sizeof(VIDEOINFOHEADER2))
+						{
+							const VIDEOINFOHEADER2 *vih = (const VIDEOINFOHEADER2 *)mt->pbFormat;
+							bih = &vih->bmiHeader;
+							avgTimePerFrame = vih->AvgTimePerFrame;
+						}
+
+						if (!bih || bih->biWidth <= 0 || bih->biHeight == 0)
+						{
+							freeMediaType(mt);
+							continue;
+						}
+
+						// A bottom-up DIB states its height negative; the
+						// picture is the same size either way.
+						const int width = (int)bih->biWidth;
+						const int height = bih->biHeight < 0 ? (int)-bih->biHeight : (int)bih->biHeight;
+
+						VideoCaptureFormat &entry = bySize[qMakePair(width, height)];
+						entry.width = width;
+						entry.height = height;
+
+						const QString fourcc = fourccToString(bih->biCompression);
+
+						for (unsigned int f = 0; f < sizeof(kDshowCompressedFormats) / sizeof(kDshowCompressedFormats[0]); f++)
+						{
+							if (fourcc != QLatin1String(kDshowCompressedFormats[f].fourcc))
+								continue;
+
+							QString codec = QLatin1String(kDshowCompressedFormats[f].ffmpeg_codec);
+
+							if (!entry.compressedFormats.contains(codec))
+								entry.compressedFormats << codec;
+
+							break;
+						}
+
+						const VIDEO_STREAM_CONFIG_CAPS *scc = (const VIDEO_STREAM_CONFIG_CAPS *)caps.constData();
+
+						// The shortest interval is the highest rate, hence the
+						// crossed over names.
+						const double maxFps = intervalToFps(scc->MinFrameInterval);
+						const double minFps = intervalToFps(scc->MaxFrameInterval);
+
+						int nominal = qRound(intervalToFps(avgTimePerFrame));
+
+						if (nominal > 0 && !entry.frameRates.contains(nominal))
+							entry.frameRates << nominal;
+
+						// A pin that accepts a range of intervals will take
+						// anything within it, so there is no list to show -
+						// the standard rates inside the range stand in for one,
+						// exactly as on the v4l2 side.
+						for (unsigned int r = 0; r < sizeof(kDshowStandardFrameRates) / sizeof(kDshowStandardFrameRates[0]); r++)
+						{
+							const int fps = kDshowStandardFrameRates[r];
+
+							if (fps >= minFps && fps <= maxFps && !entry.frameRates.contains(fps))
+								entry.frameRates << fps;
+						}
+
+						freeMediaType(mt);
+					}
+				}
+			}
+
+			if (config)
+				config->Release();
+			pin->Release();
+		}
+
+		enumPins->Release();
+	}
+
+	filter->Release();
+
+	for (QMap<QPair<int, int>, VideoCaptureFormat>::iterator it = bySize.begin(); it != bySize.end(); ++it)
+	{
+		VideoCaptureFormat entry = it.value();
+
+		// Report the formats in our preference order rather than in the order
+		// the camera happened to list them, the same way
+		// pica_dshow_compressed_formats() does.
+		QStringList ordered;
+
+		for (unsigned int f = 0; f < sizeof(kDshowCompressedFormats) / sizeof(kDshowCompressedFormats[0]); f++)
+		{
+			QString codec = QLatin1String(kDshowCompressedFormats[f].ffmpeg_codec);
+
+			if (entry.compressedFormats.contains(codec) && !ordered.contains(codec))
+				ordered << codec;
+		}
+
+		entry.compressedFormats = ordered;
+
+		std::sort(entry.frameRates.begin(), entry.frameRates.end(), std::greater<int>());
+
+		result << entry;
+	}
+
+	std::sort(result.begin(), result.end(), dshowFormatLessThan);
+
+	if (didInit)
+		CoUninitialize();
+
+	return result;
+}
+
 // Lists the cameras DirectShow knows about.
 //
 // Capture itself goes through FFmpeg's "dshow" demuxer rather than through
@@ -413,11 +644,10 @@ QList<MediaDeviceInfo> pica_enumerate_dshow_video()
 
 		d.index = index++;
 
-		// Left empty deliberately. compressedFormats drives the "prefer
-		// compressed formats" setting, and working out what a DirectShow
-		// camera can deliver means walking its output pin's media types
-		// through IAMStreamConfig - a good deal more work than the v4l2 call
-		// that fills this in on Linux, and not needed to get a picture.
+		// Nothing here about what the camera can deliver: that means walking
+		// its output pin's media types, which pica_dshow_capture_formats()
+		// does once a camera has actually been selected rather than for every
+		// camera on the machine.
 		result << d;
 	}
 

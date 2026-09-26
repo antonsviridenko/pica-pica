@@ -15,6 +15,7 @@
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "audiodevice.h"
+#include "callsettings.h"
 #include "nativeaudio.h"
 
 #include <QDebug>
@@ -68,9 +69,10 @@ extern "C" {
 // TonePlayer's design and keeps the resampling/framing code below simple.
 static const int kChannels = 1;
 
-// Target bitrate for the Opus voice encoder. Not exposed as a setting yet;
-// a reasonable fixed default for a single speech channel.
-static const int64_t kOpusBitrate = 32000;
+// Bitrate an encoder runs at when configureCapture() was given none, and the
+// one the "Audio Bitrate" setting defaults to: a reasonable rate for a single
+// speech channel of Opus.
+static const int64_t kOpusBitrate = kDefaultAudioBitrateKbps * 1000;
 
 // The FFmpeg driver name used on Linux. Kept in a process wide variable
 // rather than read from the settings database on demand, because the audio
@@ -140,6 +142,65 @@ static SwrContext *makeMonoResampler(AVSampleFormat inFmt, int inRate, AVSampleF
 	return swr;
 }
 
+// The AVCodecID behind one of the names the 0x74 message carries.
+//
+// Those are FFmpeg *codec* names (see doc/proto-doc-latest.txt), which are not
+// always the name of an encoder or decoder for them: FFmpeg names each
+// implementation after itself, so the G.722 codec is "adpcm_g722" while the
+// only encoder and decoder for it are both called "g722". Going through the
+// codec descriptor rather than through the implementation name is what makes
+// the protocol's names work for all three.
+static AVCodecID callAudioCodecId(const QString &codec)
+{
+	const AVCodecDescriptor *desc = avcodec_descriptor_get_by_name(codec.toLatin1().constData());
+
+	if (!desc || desc->type != AVMEDIA_TYPE_AUDIO)
+		return AV_CODEC_ID_NONE;
+
+	return desc->id;
+}
+
+// The encoder for one of the call audio codecs. Only "opus" needs a word of
+// its own, because FFmpeg has two Opus encoders and libopus is both the better
+// one and the only one offering the interleaved 16 bit format the echo
+// canceller wants.
+static const AVCodec *findCallAudioEncoder(const QString &codec)
+{
+	if (codec == QLatin1String("opus"))
+	{
+		const AVCodec *enc = avcodec_find_encoder_by_name("libopus");
+
+		if (enc)
+			return enc;
+	}
+
+	const AVCodecID id = callAudioCodecId(codec);
+
+	// AV_CODEC_ID_NONE covers a name that is not a codec at all, and one that
+	// names a video codec - which would otherwise be opened as one here and
+	// produce something no audio decoder on the far side can read.
+	return id == AV_CODEC_ID_NONE ? nullptr : avcodec_find_encoder(id);
+}
+
+// The decoder counterpart, for whatever codec the peer announced. Resolved by
+// name for the same reason VideoDevice::Play() does it: the 0x74 message names
+// the codec the way FFmpeg does, so a peer that picks a different one of the
+// three needs no codec list kept in step here.
+static const AVCodec *findCallAudioDecoder(const QString &codec)
+{
+	if (codec == QLatin1String("opus"))
+	{
+		const AVCodec *dec = avcodec_find_decoder_by_name("libopus");
+
+		if (dec)
+			return dec;
+	}
+
+	const AVCodecID id = callAudioCodecId(codec);
+
+	return id == AV_CODEC_ID_NONE ? nullptr : avcodec_find_decoder(id);
+}
+
 // Which sample format to run the Opus encoder in. Interleaved 16 bit is
 // preferred over whatever the encoder lists first, because that is the format
 // the echo canceller works in - taking it means the microphone samples can go
@@ -182,7 +243,7 @@ static AVSampleFormat chooseEncoderSampleFmt(const AVCodec *enc)
 }
 
 AudioDevice::AudioDevice(QObject *parent)
-	: QObject(parent), m_sampleRate(48000), m_abort(0),
+	: QObject(parent), m_sampleRate(48000), m_bitrate(kOpusBitrate), m_abort(0),
 	  m_clipCount(0), m_levelCount(0), m_levelPeak(0),
 	  m_lastPlayedSeq(0), m_havePlayedSeq(false)
 {
@@ -229,11 +290,12 @@ AudioDevice::~AudioDevice()
 	Close();
 }
 
-void AudioDevice::configureCapture(QString deviceName, QString codec, int sampleRate)
+void AudioDevice::configureCapture(QString deviceName, QString codec, int sampleRate, int bitrate)
 {
 	m_deviceName = deviceName;
 	m_codec = codec;
 	m_sampleRate = sampleRate;
+	m_bitrate = bitrate > 0 ? bitrate : kOpusBitrate;
 }
 
 void AudioDevice::configurePlayback(QString deviceName, QString codec, int sampleRate)
@@ -431,15 +493,14 @@ void AudioDevice::captureFFmpeg(const QString &driver)
 		return;
 	}
 
-	const AVCodec *enc = avcodec_find_encoder_by_name("libopus");
-	if (!enc)
-		enc = avcodec_find_encoder(AV_CODEC_ID_OPUS);
+	const AVCodec *enc = findCallAudioEncoder(m_codec);
 	AVCodecContext *enc_ctx = enc ? avcodec_alloc_context3(enc) : nullptr;
 	if (!enc || !enc_ctx)
 	{
-		QString msg = "Opus encoder not available";
+		QString msg = QString("No %1 encoder available").arg(m_codec);
 		qWarning() << msg;
 		emit errorOccurred(msg);
+		if (enc_ctx) avcodec_free_context(&enc_ctx);
 		avcodec_free_context(&dec_ctx);
 		avformat_close_input(&ifmt_ctx);
 		return;
@@ -447,19 +508,21 @@ void AudioDevice::captureFFmpeg(const QString &driver)
 
 	enc_ctx->sample_rate = m_sampleRate;
 	enc_ctx->sample_fmt = chooseEncoderSampleFmt(enc);
-	enc_ctx->bit_rate = kOpusBitrate;
+	enc_ctx->bit_rate = m_bitrate;
 	enc_ctx->time_base = AVRational{1, m_sampleRate};
 	applyMonoLayout(enc_ctx);
 
 	// "voip" favors speech intelligibility over faithfulness and has lower
 	// algorithmic delay than the default "audio" mode - a better fit for a
 	// live call than for e.g. music. Only libopus exposes this private
-	// option; harmless no-op on the native "opus" encoder fallback.
-	av_opt_set(enc_ctx->priv_data, "application", "voip", 0);
+	// option; the other codecs have no private options at all, and a PCM
+	// encoder has no priv_data to pass here in the first place.
+	if (m_codec == QLatin1String("opus") && enc_ctx->priv_data)
+		av_opt_set(enc_ctx->priv_data, "application", "voip", 0);
 
 	if ((ret = avcodec_open2(enc_ctx, enc, nullptr)) < 0)
 	{
-		QString msg = QString("Could not open Opus encoder: %1").arg(ff_errstr(ret));
+		QString msg = QString("Could not open the %1 encoder: %2").arg(m_codec, ff_errstr(ret));
 		qWarning() << msg;
 		emit errorOccurred(msg);
 		avcodec_free_context(&enc_ctx);
@@ -481,7 +544,11 @@ void AudioDevice::captureFFmpeg(const QString &driver)
 	}
 
 	AVAudioFifo *fifo = av_audio_fifo_alloc(enc_ctx->sample_fmt, kChannels, 1);
-	int frame_size = enc_ctx->frame_size > 0 ? enc_ctx->frame_size : 960;
+	// An encoder that takes any number of samples per packet - a PCM one -
+	// leaves this at zero and the packet size is ours to pick. 20ms is what
+	// the other two produce and what the playback side's jitter buffer is
+	// sized in, so it is what everything here already assumes.
+	int frame_size = enc_ctx->frame_size > 0 ? enc_ctx->frame_size : m_sampleRate / 50;
 
 	// The canceller only gets to work in place when the encoder is taking
 	// interleaved 16 bit, which libopus does. On the native encoder, whose
@@ -590,7 +657,7 @@ void AudioDevice::captureFFmpeg(const QString &driver)
 				}
 				else if (!loggedEncodeError)
 				{
-					qWarning() << "Opus encode failed";
+					qWarning() << QString("%1 encode failed").arg(m_codec);
 					loggedEncodeError = true;
 				}
 				av_frame_free(&enc_frame);
@@ -638,13 +705,11 @@ void AudioDevice::captureNative(const QString &api)
 
 	emit deviceFormatInUse(backend->formatDescription());
 
-	const AVCodec *enc = avcodec_find_encoder_by_name("libopus");
-	if (!enc)
-		enc = avcodec_find_encoder(AV_CODEC_ID_OPUS);
+	const AVCodec *enc = findCallAudioEncoder(m_codec);
 	AVCodecContext *enc_ctx = enc ? avcodec_alloc_context3(enc) : nullptr;
 	if (!enc || !enc_ctx)
 	{
-		QString msg = "Opus encoder not available";
+		QString msg = QString("No %1 encoder available").arg(m_codec);
 		qWarning() << msg;
 		emit errorOccurred(msg);
 		if (enc_ctx) avcodec_free_context(&enc_ctx);
@@ -655,15 +720,18 @@ void AudioDevice::captureNative(const QString &api)
 
 	enc_ctx->sample_rate = m_sampleRate;
 	enc_ctx->sample_fmt = chooseEncoderSampleFmt(enc);
-	enc_ctx->bit_rate = kOpusBitrate;
+	enc_ctx->bit_rate = m_bitrate;
 	enc_ctx->time_base = AVRational{1, m_sampleRate};
 	applyMonoLayout(enc_ctx);
-	av_opt_set(enc_ctx->priv_data, "application", "voip", 0);
+
+	// See captureFFmpeg() for why this is guarded.
+	if (m_codec == QLatin1String("opus") && enc_ctx->priv_data)
+		av_opt_set(enc_ctx->priv_data, "application", "voip", 0);
 
 	int ret = avcodec_open2(enc_ctx, enc, nullptr);
 	if (ret < 0)
 	{
-		QString msg = QString("Could not open Opus encoder: %1").arg(ff_errstr(ret));
+		QString msg = QString("Could not open the %1 encoder: %2").arg(m_codec, ff_errstr(ret));
 		qWarning() << msg;
 		emit errorOccurred(msg);
 		avcodec_free_context(&enc_ctx);
@@ -706,7 +774,8 @@ void AudioDevice::captureNative(const QString &api)
 		ec.clear();
 	}
 
-	const int frame_size = enc_ctx->frame_size > 0 ? enc_ctx->frame_size : 960;
+	// Same reasoning as in captureFFmpeg().
+	const int frame_size = enc_ctx->frame_size > 0 ? enc_ctx->frame_size : m_sampleRate / 50;
 
 	QVector<qint16> pending;
 	QVector<qint16> scratch(frame_size * 4);
@@ -783,7 +852,7 @@ void AudioDevice::captureNative(const QString &api)
 			}
 			else if (!loggedEncodeError)
 			{
-				qWarning() << "Opus encode failed";
+				qWarning() << QString("%1 encode failed").arg(m_codec);
 				loggedEncodeError = true;
 			}
 
@@ -884,16 +953,18 @@ void AudioDevice::playFFmpeg(const QString &driver)
 		return;
 	}
 
-	// Only "opus" is understood by this slice - matches what
-	// AudioVideoCallController always negotiates via SendAudioParams().
-	const AVCodec *in_codec = avcodec_find_decoder(AV_CODEC_ID_OPUS);
+	// Whatever the peer announced in its 0x74 message, looked up by the name
+	// it used - the peer's choice of codec is its own and need not match ours.
+	const AVCodec *in_codec = findCallAudioDecoder(m_codec);
 	AVCodecContext *dec_ctx = in_codec ? avcodec_alloc_context3(in_codec) : nullptr;
 	if (dec_ctx)
 	{
+		// A PCM decoder is told nothing by the bitstream and has to be given
+		// both of these; the others work them out for themselves.
 		dec_ctx->sample_rate = m_sampleRate;
 		applyMonoLayout(dec_ctx);
 	}
-	if (m_codec != QLatin1String("opus") || !in_codec || !dec_ctx || avcodec_open2(dec_ctx, in_codec, nullptr) < 0)
+	if (!in_codec || !dec_ctx || avcodec_open2(dec_ctx, in_codec, nullptr) < 0)
 	{
 		QString msg = QString("Unsupported call audio codec: %1").arg(m_codec);
 		qWarning() << msg;
@@ -945,7 +1016,7 @@ void AudioDevice::playFFmpeg(const QString &driver)
 		{
 			if (!loggedDecodeError)
 			{
-				qWarning() << QString("Opus decode failed: %1").arg(ff_errstr(ret));
+				qWarning() << QString("%1 decode failed: %2").arg(m_codec, ff_errstr(ret));
 				loggedDecodeError = true;
 			}
 			continue;
@@ -1054,14 +1125,15 @@ void AudioDevice::playNative(const QString &api)
 
 	emit deviceFormatInUse(backend->formatDescription());
 
-	const AVCodec *in_codec = avcodec_find_decoder(AV_CODEC_ID_OPUS);
+	// Same as in playFFmpeg(): the codec the peer announced, by its name.
+	const AVCodec *in_codec = findCallAudioDecoder(m_codec);
 	AVCodecContext *dec_ctx = in_codec ? avcodec_alloc_context3(in_codec) : nullptr;
 	if (dec_ctx)
 	{
 		dec_ctx->sample_rate = m_sampleRate;
 		applyMonoLayout(dec_ctx);
 	}
-	if (m_codec != QLatin1String("opus") || !in_codec || !dec_ctx || avcodec_open2(dec_ctx, in_codec, nullptr) < 0)
+	if (!in_codec || !dec_ctx || avcodec_open2(dec_ctx, in_codec, nullptr) < 0)
 	{
 		QString msg = QString("Unsupported call audio codec: %1").arg(m_codec);
 		qWarning() << msg;
@@ -1110,7 +1182,7 @@ void AudioDevice::playNative(const QString &api)
 		{
 			if (!loggedDecodeError)
 			{
-				qWarning() << QString("Opus decode failed: %1").arg(ff_errstr(ret));
+				qWarning() << QString("%1 decode failed: %2").arg(m_codec, ff_errstr(ret));
 				loggedDecodeError = true;
 			}
 			continue;

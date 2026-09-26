@@ -94,6 +94,32 @@ private:
 	QComboBox *videoDev;
 	QPushButton *videoDevRefresh;
 
+	// Picture size and frame rate to ask the selected camera for. Both are
+	// filled from what the camera says it can do - the sizes from the camera,
+	// the rates from the size selected next to them - so they are refilled
+	// whenever the selection above them changes.
+	QComboBox *videoRes;
+	QComboBox *videoFps;
+
+	// What the selected camera reported, kept so that changing the resolution
+	// can refill the frame rates without asking the camera again. Enumerating
+	// is not free - on Windows it means instantiating the capture filter.
+	QList<VideoCaptureFormat> videoFormats;
+
+	// Encoding parameters for a call, on the "Call Settings" tab. The codec
+	// combo boxes carry the FFmpeg codec name as item data, which is what gets
+	// stored and what goes into the 0x74/0x75 messages.
+	QComboBox *callVideoCodec;
+	QComboBox *callAudioCodec;
+	QSpinBox *callVideoBitrate;
+	QSpinBox *callAudioBitrate;
+
+	// The audio bitrate the user chose, which is not always what
+	// callAudioBitrate shows: selecting a fixed rate codec puts that codec's
+	// rate in the box and disables it, and the chosen value has to survive
+	// that to come back when an adjustable codec is selected again.
+	int audioBitrateKbps;
+
 	// Local audio pipeline test: a few seconds of the selected microphone are
 	// captured and encoded, then decoded again and played back through the
 	// selected playback device - the same path a call takes, minus the
@@ -184,12 +210,25 @@ private:
 
 	void fillDevicesComboBox(QComboBox *cb, MediaDevice *dev, enum MediaDeviceStreamDirection dir);
 
+	// The picture size and frame rate the video tab currently has selected,
+	// used both by the local pipeline test and when the settings are stored.
+	int selectedVideoWidth() const;
+	int selectedVideoHeight() const;
+	int selectedVideoFrameRate() const;
+
 private slots:
 	void OK();
 	void Cancel();
 	void toggleIncomingConnections(bool checked);
 	void toggleMultipleLogins(bool checked);
 	void fillVideoDevices();
+	// Asks the newly selected camera what it can do and refills the two lists
+	// below it. fillVideoFrameRates() alone when only the size changed.
+	void fillVideoResolutions();
+	void fillVideoFrameRates();
+	// Greys out the audio bitrate box for a codec whose bitrate is not ours to
+	// choose - see audioBitrateKbps.
+	void callAudioCodecChanged();
 	// Device names are driver specific, so all three lists have to be filled
 	// again when the driver changes. Only ever connected on Linux.
 	void audioDriverChanged(int index);

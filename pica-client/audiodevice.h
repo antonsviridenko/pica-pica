@@ -47,7 +47,12 @@ public:
 	// device identifier as accepted by the driver named by
 	// PlatformDriverName() (e.g. an ALSA PCM name, a PulseAudio source name,
 	// a WASAPI endpoint id, a CoreAudio device UID), or "default".
-	Q_INVOKABLE void configureCapture(QString deviceName, QString codec, int sampleRate);
+	//
+	// codec is the FFmpeg name of the codec, which is also the name the 0x74
+	// message carries - "opus", "adpcm_g722" or "pcm_alaw". bitrate is in bits
+	// per second and only reaches an encoder with a rate to control: G.722 and
+	// A-law code a fixed number of bits per sample and simply ignore it.
+	Q_INVOKABLE void configureCapture(QString deviceName, QString codec, int sampleRate, int bitrate);
 	Q_INVOKABLE void configurePlayback(QString deviceName, QString codec, int sampleRate);
 
 	// Give this device the call's echo canceller. The capture direction runs
@@ -173,6 +178,8 @@ private:
 	QString m_deviceName;
 	QString m_codec;
 	int m_sampleRate;
+	// Capture direction only; see configureCapture().
+	int m_bitrate;
 
 	QAtomicInt m_abort;
 

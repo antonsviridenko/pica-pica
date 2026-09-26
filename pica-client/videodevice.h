@@ -63,6 +63,29 @@ private:
 	bool m_haveLastSeq;
 };
 
+// One picture size a camera can deliver, and what it can deliver it in.
+// Reported by VideoDevice::CaptureFormats() and shown by the settings dialog's
+// resolution and frame rate lists.
+struct VideoCaptureFormat
+{
+	int width;
+	int height;
+
+	// Frame rates the camera offers at this size, in whole frames per second,
+	// highest first. Empty when the camera would not say - which is not the
+	// same as "none": the capture code can still open it and let the camera
+	// pick, see VideoDevice::Capture().
+	QList<int> frameRates;
+
+	// Compressed formats available at this size, as FFmpeg codec names, most
+	// preferred first. The same names and the same order as
+	// CompressedFormats() reports for the whole camera, but per size - a
+	// camera routinely offers MJPEG at its larger sizes only, which is exactly
+	// what the "prefer compressed formats" setting turns on and what makes the
+	// choice of size worth showing alongside.
+	QStringList compressedFormats;
+};
+
 // Video counterpart of AudioDevice: a single instance is dedicated to one
 // direction - either capture+encode (Capture(), reading from a local camera)
 // or decode (Play(), fed from the network via enqueueFrame()). Each instance
@@ -83,18 +106,31 @@ public:
 	VideoDevice(QObject *parent = nullptr);
 	~VideoDevice();
 
+	// width, height and frameRate are what the camera is asked for; a camera
+	// that will not honour them is opened with them loosened rather than not
+	// at all, see Capture().
+	//
 	// preferCompressed asks for the camera's own compressed stream to be
 	// forwarded untouched when it offers one, saving the cost of decoding and
 	// re-encoding every frame. The codec that ends up being used is only
 	// known once the camera has been opened, and is reported by
 	// captureStarted() - it is not necessarily the one requested here.
 	//
+	// codec is the FFmpeg name of the codec to encode to - "h264", "hevc" or
+	// "vp9" - and bitrate the rate to encode at, in bits per second. Both
+	// apply to frames this class encodes itself; a camera stream being
+	// forwarded untouched is already encoded and neither has anything to act
+	// on. codec is preferred over the camera's other compressed formats when
+	// looking for one to forward, so choosing a codec the camera can produce
+	// itself gets that one rather than merely a compatible one.
+	//
 	// useVaapi asks for the frames to be encoded on the GPU. It is a request,
 	// not a guarantee: without VAAPI support built in, without usable
 	// hardware, or if the hardware encoder will not open, capture falls back
 	// to encoding in software.
-	Q_INVOKABLE void configureCapture(QString deviceName, int width, int height,
-	                                  bool preferCompressed, bool useVaapi);
+	Q_INVOKABLE void configureCapture(QString deviceName, int width, int height, int frameRate,
+	                                  bool preferCompressed, QString codec, int bitrate,
+	                                  bool useVaapi);
 
 	// useVaapi decodes on the GPU. useVaapiRender additionally keeps the
 	// decoded frames there and emits them through hwFrameReady() instead of
@@ -185,11 +221,20 @@ public:
 	// are decoded and re-encoded as usual.
 	static QStringList CompressedFormats(const QString &device);
 
+	// Every picture size the given camera can deliver, largest first, with the
+	// frame rates and compressed formats available at each. Empty on a
+	// platform where the camera cannot be asked - the caller then falls back
+	// to offering a set of common sizes, which the camera is free to refuse
+	// the same way it may refuse any other request.
+	static QList<VideoCaptureFormat> CaptureFormats(const QString &device);
+
 private:
 	QString m_deviceName;
 	QString m_codec;
 	int m_width;
 	int m_height;
+	int m_frameRate;
+	int m_bitrate;
 	bool m_preferCompressed;
 	bool m_useVaapi;
 	bool m_useVaapiRender;
@@ -206,7 +251,26 @@ private:
 	QMutex m_queueMutex;
 	QWaitCondition m_queueCond;
 	QQueue<QByteArray> m_frameQueue;
+
+	// Steady state: the newest frame wins, because for live video showing the
+	// current picture matters more than showing every picture.
 	static const int kMaxQueueDepth = 2;
+
+	// Until the decode loop has taken its first frame it is not behind - it is
+	// still opening the codec, which happens only after the peer's 0x75 has
+	// been processed, by which time its packets are already arriving. Applying
+	// the rule above during that window drops the stream's first keyframe and
+	// then the frames that follow it, which costs every picture until the next
+	// keyframe: with a camera's own stream forwarded untouched that can be ten
+	// seconds away. So a bounded backlog is held instead - a couple of seconds
+	// at a typical call frame rate - and the queue reverts to the depth above
+	// as soon as the decoder is actually consuming.
+	static const int kStartupQueueDepth = 30;
+
+	// Whether the decode loop has taken a frame yet; see enqueueFrame(). Read
+	// and written from both the decoding thread and whichever thread delivers
+	// packets, hence atomic.
+	QAtomicInt m_decoderStarted;
 
 	// Sends one encoded frame out as one or more protocol sized fragments.
 	void emitFragments(const unsigned char *data, int size);

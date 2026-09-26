@@ -181,6 +181,8 @@ pica-client/toneplayer/toneplayer.cpp \
 pica-client/toneplayer/toneplayer.h \
 pica-client/settings.cpp \
 pica-client/settings.h \
+pica-client/callsettings.cpp \
+pica-client/callsettings.h \
 pica-client/mediadevice.cpp \
 pica-client/mediadevice.h \
 pica-client/audiodevice.cpp \

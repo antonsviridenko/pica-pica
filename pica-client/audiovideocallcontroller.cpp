@@ -18,31 +18,10 @@
 #include "globals.h"
 #include "skynet.h"
 #include "settings.h"
+#include "callsettings.h"
 #include <QByteArray>
 #include <QDebug>
 #include <QMetaObject>
-
-// Capture/encode resolution announced to the peer in the 0x75 message. Fixed
-// for now - a resolution setting is a planned follow-up, see VideoDevice for
-// the rest of the encoding parameters.
-static const quint16 kVideoWidth = 640;
-static const quint16 kVideoHeight = 480;
-
-// Rate we capture and encode at, announced to the peer in the 0x74 message.
-//
-// 16kHz rather than 48kHz because it is what the echo canceller wants. AEC3
-// does its filtering in the 0-8kHz band whatever it is handed; at 48kHz it
-// splits the signal into four bands, cancels in the lowest and gates the rest,
-// which is more work for a result that is no better on speech.
-//
-// Costs nothing worth having for speech: Opus codes this as wideband, an 8kHz
-// audio bandwidth, which is well past telephone quality and past where voice
-// intelligibility stops improving.
-//
-// The playback direction is NOT this constant - it follows whatever the peer
-// announces (see incoming_audio_params()), so a call with an older build that
-// still sends 48kHz keeps working.
-static const int kCallSampleRate = 16000;
 
 
 AudioVideoCallController::AudioVideoCallController(QObject *parent)
@@ -174,6 +153,21 @@ void AudioVideoCallController::startAudioPipeline()
 {
 	Settings st(config_dbname);
 	QString capDev = st.loadValue("audio.capture_device", "default").toString();
+	const CallSettings cs = CallSettings::load();
+
+	// What we capture and encode at, announced to the peer in the 0x74
+	// message. It follows from the codec - see callAudioSampleRate().
+	//
+	// The playback direction is NOT this: it follows whatever the peer
+	// announces in its own 0x74 (see incoming_audio_params()), so a call with
+	// a peer that picked a different codec or rate keeps working.
+	const int sampleRate = callAudioSampleRate(cs.audioCodec);
+
+	// G.722 and A-law spend a fixed number of bits per sample and have no rate
+	// to ask for; the setting only means anything to Opus.
+	const int bitrate = callAudioBitrateAdjustable(cs.audioCodec)
+	                    ? cs.audioBitrateKbps * 1000
+	                    : 0;
 
 	m_audioSeq = 0;
 	m_callClock.start();
@@ -188,8 +182,12 @@ void AudioVideoCallController::startAudioPipeline()
 	// below us is doing the job or nobody is, and either way running this as
 	// well would only take a second bite out of the speech - the devices are
 	// opened accordingly, see AudioDevice::captureNative().
+	//
+	// Built at the rate the codec runs at rather than at a fixed one, so that
+	// choosing a codec does not quietly switch cancellation off: the capture
+	// side drops a canceller whose rate does not match its own.
 	if (AudioDevice::EchoCancellation() == EchoCancellationOwn)
-		m_echoCanceller = EchoCancellerPtr(new EchoCanceller(kCallSampleRate));
+		m_echoCanceller = EchoCancellerPtr(new EchoCanceller(sampleRate));
 	else
 		m_echoCanceller.clear();
 
@@ -205,10 +203,11 @@ void AudioVideoCallController::startAudioPipeline()
 	// encoding right away - the peer's decoder is only ready once it has
 	// processed this 0x74 message, but since the call is carried over TCP,
 	// packets sent immediately after are guaranteed to arrive after it.
-	skynet->SendAudioParams(m_peer_id, QStringLiteral("opus"), kCallSampleRate);
+	skynet->SendAudioParams(m_peer_id, cs.audioCodec, (quint16)sampleRate);
 
 	QMetaObject::invokeMethod(microphone, "configureCapture", Qt::QueuedConnection,
-	                           Q_ARG(QString, capDev), Q_ARG(QString, QStringLiteral("opus")), Q_ARG(int, kCallSampleRate));
+	                           Q_ARG(QString, capDev), Q_ARG(QString, cs.audioCodec),
+	                           Q_ARG(int, sampleRate), Q_ARG(int, bitrate));
 	QMetaObject::invokeMethod(microphone, "Capture", Qt::QueuedConnection);
 
 	// output is configured lazily, once the peer's own 0x74 (see
@@ -239,6 +238,7 @@ void AudioVideoCallController::startVideoPipeline()
 {
 	Settings st(config_dbname);
 	QString camDev = st.loadValue("video.capture_device", QString()).toString();
+	const CallSettings cs = CallSettings::load();
 
 	// Unlike the audio devices, which fall back to the platform's "default"
 	// device, there is no such name for cameras - so with nothing configured
@@ -278,8 +278,11 @@ void AudioVideoCallController::startVideoPipeline()
 	// video_capture_started()).
 	QMetaObject::invokeMethod(cam, "configureCapture", Qt::QueuedConnection,
 	                           Q_ARG(QString, camDev),
-	                           Q_ARG(int, kVideoWidth), Q_ARG(int, kVideoHeight),
-	                           Q_ARG(bool, preferCompressed), Q_ARG(bool, vaapiEncoding));
+	                           Q_ARG(int, cs.captureWidth), Q_ARG(int, cs.captureHeight),
+	                           Q_ARG(int, cs.captureFrameRate),
+	                           Q_ARG(bool, preferCompressed),
+	                           Q_ARG(QString, cs.videoCodec), Q_ARG(int, cs.videoBitrateKbps * 1000),
+	                           Q_ARG(bool, vaapiEncoding));
 	QMetaObject::invokeMethod(cam, "Capture", Qt::QueuedConnection);
 
 	// remotevideo is configured lazily, once the peer's own 0x75 (see

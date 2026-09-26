@@ -19,25 +19,28 @@
 #include "../globals.h"
 #include "../audiodevice.h"
 #include "../videodevice.h"
+#include "../callsettings.h"
 #include "../../PICA_netconf.h"
 #include "../../PICA_proto.h"
 
 #include <QGroupBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QFormLayout>
 #include <QLabel>
 #include <QDebug>
 #include <QVariant>
 #include <QListWidget>
 #include <QNetworkInterface>
 #include <QHostAddress>
+#include <QSize>
 #include <QTabWidget>
 #include <QTimer>
 
-// Audio pipeline test: how long the microphone is recorded for, and the
-// sample rate to record at - the same rate a call negotiates.
+// Audio pipeline test: how long the microphone is recorded for. The codec and
+// the rate come from the "Call Settings" tab, so the test runs the same path a
+// call would - see toggleAudioTest().
 static const int kAudioTestRecordMs = 5000;
-static const int kAudioTestSampleRate = 48000;
 
 // One encoded packet covers this much audio (the Opus encoder produces
 // 20 ms frames at 48 kHz), so feeding one packet per this many milliseconds
@@ -55,14 +58,41 @@ static const int kAudioTestStartTimeoutMs = 4000;
 // buffer and the sound card's own buffer to drain before closing the device.
 static const int kAudioTestDrainMs = 500;
 
-// Size requested from the camera by the video pipeline test, matching what a
-// call asks for.
-static const int kVideoTestWidth = 640;
-static const int kVideoTestHeight = 480;
+// Sizes and frame rates offered when the camera will not say what it supports
+// - a platform where they cannot be queried, or a camera that will not answer.
+// The camera is free to refuse any of them, the same way it may refuse
+// anything else it was asked for; VideoDevice::Capture() loosens the request
+// rather than failing.
+static const struct
+{
+	int width;
+	int height;
+} kFallbackResolutions[] =
+{
+	{ 1920, 1080 }, { 1280, 720 }, { 800, 600 }, { 640, 480 },
+	{ 640, 360 }, { 352, 288 }, { 320, 240 }, { 160, 120 }
+};
+
+static const int kFallbackFrameRates[] = { 30, 25, 24, 20, 15, 10, 5 };
+
+// Range the bitrate spin boxes accept, in kbit/s. Wide enough not to argue
+// with anyone: the low end is where a codec still produces something, the high
+// end well past what a call over a home connection can carry.
+static const int kMinVideoBitrateKbps = 50;
+static const int kMaxVideoBitrateKbps = 20000;
+static const int kMinAudioBitrateKbps = 6;
+static const int kMaxAudioBitrateKbps = 510;
 
 SettingsDialog::SettingsDialog(QWidget *parent) :
 	QDialog(parent)
 {
+	// The video tab's format lists follow the camera selection, and
+	// fillVideoDevices() below changes that before they have been built - so
+	// they have to be readable as "not there yet" from the moment anything can
+	// reach them.
+	videoRes = nullptr;
+	videoFps = nullptr;
+
 	QVBoxLayout *settingsLayout = new QVBoxLayout();
 
 	QTabWidget *tabW = new QTabWidget(this);
@@ -71,11 +101,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	QWidget* multilogintab = new QWidget(0);
 	QWidget* audiodevtab = new QWidget(0);
 	QWidget* videodevtab = new QWidget(0);
+	QWidget* calltab = new QWidget(0);
 
 	QVBoxLayout *directc2cLayout = new QVBoxLayout();
 	QVBoxLayout *multiloginlayout = new QVBoxLayout();
 	QVBoxLayout *audiodevlayout = new QVBoxLayout();
 	QVBoxLayout *videodevLayout = new QVBoxLayout();
+	QVBoxLayout *callLayout = new QVBoxLayout();
 
 //Direct connections
 	rbDisableDirectConns = new QRadioButton(tr("Disable direct connections"), this);
@@ -305,6 +337,29 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videoDevRefresh = new QPushButton(tr("Refresh 🔄"), this);
 	connect(videoDevRefresh, SIGNAL(clicked()), this, SLOT(fillVideoDevices()));
 
+	QLabel *lbVideoRes = new QLabel(tr("Resolution"), this);
+	videoRes = new QComboBox(this);
+	videoRes->setToolTip(tr("Picture sizes the selected camera offers. A size the camera can "
+	                        "deliver already compressed lists the formats in brackets; those "
+	                        "are the ones the \"prefer compressed formats\" setting below can "
+	                        "forward untouched, without decoding and re-encoding them here."));
+
+	QLabel *lbVideoFps = new QLabel(tr("Frame rate"), this);
+	videoFps = new QComboBox(this);
+	videoFps->setToolTip(tr("Frame rates the camera offers at the selected size."));
+
+	// Filled from the camera the device list above has selected, so the two
+	// have to follow it - and each other.
+	fillVideoResolutions();
+	connect(videoDev, SIGNAL(currentIndexChanged(int)), this, SLOT(fillVideoResolutions()));
+	connect(videoRes, SIGNAL(currentIndexChanged(int)), this, SLOT(fillVideoFrameRates()));
+
+	QHBoxLayout *videoFormatLayout = new QHBoxLayout();
+	videoFormatLayout->addWidget(lbVideoRes);
+	videoFormatLayout->addWidget(videoRes, 1);
+	videoFormatLayout->addWidget(lbVideoFps);
+	videoFormatLayout->addWidget(videoFps);
+
 	cbPreferCompressed = new QCheckBox(tr("Prefer compressed formats if provided by the camera"), this);
 
 #ifdef HAVE_VAAPI
@@ -336,6 +391,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	videodevLayout->addWidget(videoDev);
 	videodevLayout->addWidget(videoDevRefresh);
+	videodevLayout->addLayout(videoFormatLayout);
 	videodevLayout->addWidget(cbPreferCompressed);
 #ifdef HAVE_VAAPI
 	videodevLayout->addWidget(cbVaapiEncoding);
@@ -376,10 +432,73 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 #endif
 	testDecoderThread.start();
 
+//Call Settings
+	// What a call encodes with. The codec names stored here are FFmpeg names,
+	// which is also how the 0x74 and 0x75 messages name them - see
+	// callsettings.h.
+	callVideoCodec = new QComboBox(this);
+
+	for (int i = 0; i < kCallVideoCodecCount; i++)
+		callVideoCodec->addItem(QLatin1String(kCallVideoCodecs[i].displayName),
+		                        QLatin1String(kCallVideoCodecs[i].name));
+
+	callVideoCodec->setToolTip(tr("What outgoing video is encoded with. The peer is told which "
+	                              "codec is in use, so it does not have to be one it was "
+	                              "configured for.\n\n"
+	                              "This applies to video encoded here. With \"prefer compressed "
+	                              "formats\" switched on and a camera that delivers a compressed "
+	                              "stream itself, that stream is forwarded as it comes and the "
+	                              "camera's format is what the peer receives - this setting then "
+	                              "only decides which of the camera's formats is preferred."));
+
+	callAudioCodec = new QComboBox(this);
+
+	for (int i = 0; i < kCallAudioCodecCount; i++)
+		callAudioCodec->addItem(QLatin1String(kCallAudioCodecs[i].displayName),
+		                        QLatin1String(kCallAudioCodecs[i].name));
+
+	callAudioCodec->setToolTip(tr("What outgoing audio is encoded with. Opus is the one to want "
+	                              "for a voice call; G.722 and G.711 A-law are the telephony "
+	                              "codecs, fixed at 64 kbit/s and there for compatibility."));
+
+	callVideoBitrate = new QSpinBox(this);
+	callVideoBitrate->setRange(kMinVideoBitrateKbps, kMaxVideoBitrateKbps);
+	callVideoBitrate->setSuffix(tr(" kbps"));
+	callVideoBitrate->setValue(kDefaultVideoBitrateKbps);
+
+	callAudioBitrate = new QSpinBox(this);
+	callAudioBitrate->setRange(kMinAudioBitrateKbps, kMaxAudioBitrateKbps);
+	callAudioBitrate->setSuffix(tr(" kbps"));
+	callAudioBitrate->setValue(kDefaultAudioBitrateKbps);
+	audioBitrateKbps = kDefaultAudioBitrateKbps;
+
+	connect(callAudioCodec, SIGNAL(currentIndexChanged(int)), this, SLOT(callAudioCodecChanged()));
+
+	QFormLayout *callFormLayout = new QFormLayout();
+	callFormLayout->addRow(tr("Video Codec"), callVideoCodec);
+	callFormLayout->addRow(tr("Video Bitrate"), callVideoBitrate);
+	callFormLayout->addRow(tr("Audio Codec"), callAudioCodec);
+	callFormLayout->addRow(tr("Audio Bitrate"), callAudioBitrate);
+
+	// The other half of what a call is started with lives on the video tab,
+	// next to the camera that has to deliver it; say so rather than leaving
+	// this tab looking like the whole story.
+	QLabel *lbCallHint = new QLabel(tr("The picture size and frame rate a call is started with are "
+	                                   "on the Video Devices tab, next to the camera that has to "
+	                                   "deliver them."), this);
+	lbCallHint->setWordWrap(true);
+
+	callLayout->addLayout(callFormLayout);
+	callLayout->addWidget(lbCallHint);
+	callLayout->addStretch(1);
+
+	calltab->setLayout(callLayout);
+
 	tabW->addTab(directc2ctab, tr("Direct Connections"));
 	tabW->addTab(multilogintab, tr("Multiple logins"));
 	tabW->addTab(audiodevtab, tr("Audio Devices"));
 	tabW->addTab(videodevtab, tr("Video Devices"));
+	tabW->addTab(calltab, tr("Call Settings"));
 	tabW->addTab(soundstab, tr("Sounds"));
 	settingsLayout->addWidget(tabW);
 
@@ -511,9 +630,16 @@ void SettingsDialog::toggleAudioTest()
 	btAudioTest->setText(tr("Stop ⏹"));
 	audioTestStatus->setText(tr("Recording, say something..."));
 
+	// The codec selected on the "Call Settings" tab, at the rate a call with
+	// it would run at - same as the video test, this exercises what the
+	// current selections do rather than a fixed pipeline of its own.
+	const QString codec = callAudioCodec->itemData(callAudioCodec->currentIndex()).toString();
+	const int rate = callAudioSampleRate(codec);
+	const int bitrate = callAudioBitrateAdjustable(codec) ? callAudioBitrate->value() * 1000 : 0;
+
 	QMetaObject::invokeMethod(testMic, "configureCapture", Qt::QueuedConnection,
-	                           Q_ARG(QString, dev), Q_ARG(QString, QStringLiteral("opus")),
-	                           Q_ARG(int, kAudioTestSampleRate));
+	                           Q_ARG(QString, dev), Q_ARG(QString, codec),
+	                           Q_ARG(int, rate), Q_ARG(int, bitrate));
 	QMetaObject::invokeMethod(testMic, "Capture", Qt::QueuedConnection);
 
 	// Only a watchdog for the device failing to open at all. The recording
@@ -589,9 +715,13 @@ void SettingsDialog::startAudioTestPlayback()
 
 	audioTestStatus->setText(summary);
 
+	// Decoded with what it was encoded with, exactly as the receiving end of a
+	// call decodes with whatever the peer announced.
+	const QString codec = callAudioCodec->itemData(callAudioCodec->currentIndex()).toString();
+
 	QMetaObject::invokeMethod(testSpeaker, "configurePlayback", Qt::QueuedConnection,
-	                           Q_ARG(QString, dev), Q_ARG(QString, QStringLiteral("opus")),
-	                           Q_ARG(int, kAudioTestSampleRate));
+	                           Q_ARG(QString, dev), Q_ARG(QString, codec),
+	                           Q_ARG(int, callAudioSampleRate(codec)));
 	QMetaObject::invokeMethod(testSpeaker, "Play", Qt::QueuedConnection);
 
 	// The recording has to be handed over at the rate it plays at, not all at
@@ -715,10 +845,16 @@ void SettingsDialog::toggleVideoTest()
 
 	videoTestPathReport.clear();
 
+	// The settings as they stand in the dialog, not as they were last stored:
+	// the point of the test is to see what the current selections do before
+	// committing to them.
 	QMetaObject::invokeMethod(testCam, "configureCapture", Qt::QueuedConnection,
 	                           Q_ARG(QString, dev),
-	                           Q_ARG(int, kVideoTestWidth), Q_ARG(int, kVideoTestHeight),
+	                           Q_ARG(int, selectedVideoWidth()), Q_ARG(int, selectedVideoHeight()),
+	                           Q_ARG(int, selectedVideoFrameRate()),
 	                           Q_ARG(bool, cbPreferCompressed->isChecked()),
+	                           Q_ARG(QString, callVideoCodec->itemData(callVideoCodec->currentIndex()).toString()),
+	                           Q_ARG(int, callVideoBitrate->value() * 1000),
 	                           Q_ARG(bool, vaapiEncoding));
 	QMetaObject::invokeMethod(testCam, "Capture", Qt::QueuedConnection);
 
@@ -898,10 +1034,11 @@ void SettingsDialog::fillDevicesComboBox(QComboBox *cb, MediaDevice *dev, enum M
 									.arg(md.at(i).device)
 									.arg(md.at(i).humanReadable);
 
-			// Cameras that can deliver a compressed stream themselves say so,
-			// which is what the "prefer compressed formats" setting acts on.
-			if (!md.at(i).compressedFormats.isEmpty())
-				item += QString(QLatin1String(" [%1]")).arg(md.at(i).compressedFormats.join(QLatin1String(", ")));
+			// A camera's compressed formats are not listed here but in the
+			// resolution list, which is where they actually mean something: a
+			// camera offers them at some of its sizes and not at others, so
+			// naming them against the camera as a whole said less than it
+			// appeared to.
 
 			cb->addItem(item, md.at(i).device);
 		}
@@ -910,7 +1047,193 @@ void SettingsDialog::fillDevicesComboBox(QComboBox *cb, MediaDevice *dev, enum M
 void SettingsDialog::fillVideoDevices()
 {
 		VideoDevice vd;
+
+		// Refilling walks the current index through -1 and back, and each step
+		// of that would otherwise ask a camera what it can do - which is not
+		// free, on Windows it means instantiating the capture filter. So the
+		// format lists below are rebuilt once, at the end.
+		const QString previous = videoDev->itemData(videoDev->currentIndex()).toString();
+
+		videoDev->blockSignals(true);
 		fillDevicesComboBox(videoDev, &vd, CAPTURE);
+
+		// Refresh is for picking up a camera that was plugged in, not for
+		// moving the selection off the one already chosen.
+		int item = videoDev->findData(previous);
+		if (item >= 0)
+			videoDev->setCurrentIndex(item);
+
+		videoDev->blockSignals(false);
+
+		fillVideoResolutions();
+}
+
+void SettingsDialog::fillVideoResolutions()
+{
+	// Nothing to fill into yet while the constructor is still building the
+	// tab - fillVideoDevices() runs before these exist.
+	if (!videoRes || !videoFps)
+		return;
+
+	const QString dev = videoDev->itemData(videoDev->currentIndex()).toString();
+
+	videoFormats = dev.isEmpty() ? QList<VideoCaptureFormat>()
+	                             : VideoDevice::CaptureFormats(dev);
+
+	// Refilling moves the current index about; the frame rate list is rebuilt
+	// once at the end rather than on every one of those intermediate changes.
+	videoRes->blockSignals(true);
+	videoRes->clear();
+
+	if (videoFormats.isEmpty())
+	{
+		// Either the camera would not say or this platform cannot ask. Offer
+		// the common sizes rather than an empty list - a camera that cannot
+		// produce one of them is handled the same way as any other request it
+		// will not honour, see VideoDevice::Capture().
+		for (unsigned int i = 0; i < sizeof(kFallbackResolutions) / sizeof(kFallbackResolutions[0]); i++)
+		{
+			const int w = kFallbackResolutions[i].width;
+			const int h = kFallbackResolutions[i].height;
+
+			videoRes->addItem(QString(QLatin1String("%1x%2")).arg(w).arg(h), QSize(w, h));
+		}
+	}
+	else
+	{
+		for (int i = 0; i < videoFormats.size(); i++)
+		{
+			const VideoCaptureFormat &f = videoFormats.at(i);
+			QString item = QString(QLatin1String("%1x%2")).arg(f.width).arg(f.height);
+
+			// The formats this camera can hand over ready-made at this size,
+			// which is what "prefer compressed formats" below acts on.
+			if (!f.compressedFormats.isEmpty())
+				item += QString(QLatin1String(" [%1]")).arg(f.compressedFormats.join(QLatin1String(", ")));
+
+			videoRes->addItem(item, QSize(f.width, f.height));
+		}
+	}
+
+	// Keep the configured size selected across a device change where the new
+	// camera offers it too, rather than silently moving the setting to
+	// whatever happens to be first in the new list.
+	Settings st(config_dbname);
+	QSize wanted(st.loadValue("video.capture_width", kDefaultCaptureWidth).toInt(),
+	             st.loadValue("video.capture_height", kDefaultCaptureHeight).toInt());
+
+	int item = videoRes->findData(wanted);
+
+	if (item < 0)
+		item = videoRes->findData(QSize(kDefaultCaptureWidth, kDefaultCaptureHeight));
+
+	if (item >= 0)
+		videoRes->setCurrentIndex(item);
+
+	videoRes->blockSignals(false);
+
+	fillVideoFrameRates();
+}
+
+void SettingsDialog::fillVideoFrameRates()
+{
+	if (!videoFps)
+		return;
+
+	const QSize size = videoRes->itemData(videoRes->currentIndex()).toSize();
+	QList<int> rates;
+
+	for (int i = 0; i < videoFormats.size(); i++)
+	{
+		if (videoFormats.at(i).width == size.width() && videoFormats.at(i).height == size.height())
+		{
+			rates = videoFormats.at(i).frameRates;
+			break;
+		}
+	}
+
+	videoFps->blockSignals(true);
+	videoFps->clear();
+
+	if (rates.isEmpty())
+	{
+		// Same reasoning as for the sizes: a camera that named its sizes but
+		// not its rates, or one we could not ask at all.
+		for (unsigned int i = 0; i < sizeof(kFallbackFrameRates) / sizeof(kFallbackFrameRates[0]); i++)
+			rates << kFallbackFrameRates[i];
+	}
+
+	for (int i = 0; i < rates.size(); i++)
+		videoFps->addItem(tr("%1 fps").arg(rates.at(i)), rates.at(i));
+
+	Settings st(config_dbname);
+	int wanted = st.loadValue("video.capture_framerate", kDefaultCaptureFrameRate).toInt();
+
+	int item = videoFps->findData(wanted);
+
+	if (item < 0)
+		item = videoFps->findData(kDefaultCaptureFrameRate);
+
+	// Neither the configured rate nor the default is on offer at this size -
+	// take the highest the camera does offer, which is the first in the list.
+	if (item < 0 && videoFps->count() > 0)
+		item = 0;
+
+	if (item >= 0)
+		videoFps->setCurrentIndex(item);
+
+	videoFps->blockSignals(false);
+}
+
+int SettingsDialog::selectedVideoWidth() const
+{
+	const QSize size = videoRes->itemData(videoRes->currentIndex()).toSize();
+
+	return size.isValid() ? size.width() : kDefaultCaptureWidth;
+}
+
+int SettingsDialog::selectedVideoHeight() const
+{
+	const QSize size = videoRes->itemData(videoRes->currentIndex()).toSize();
+
+	return size.isValid() ? size.height() : kDefaultCaptureHeight;
+}
+
+int SettingsDialog::selectedVideoFrameRate() const
+{
+	bool ok = false;
+	const int fps = videoFps->itemData(videoFps->currentIndex()).toInt(&ok);
+
+	return (ok && fps > 0) ? fps : kDefaultCaptureFrameRate;
+}
+
+void SettingsDialog::callAudioCodecChanged()
+{
+	const QString codec = callAudioCodec->itemData(callAudioCodec->currentIndex()).toString();
+
+	if (callAudioBitrateAdjustable(codec))
+	{
+		// Coming back from a fixed rate codec, whose rate is showing in the
+		// box; the user's own choice is in audioBitrateKbps.
+		if (!callAudioBitrate->isEnabled())
+		{
+			callAudioBitrate->setEnabled(true);
+			callAudioBitrate->setValue(audioBitrateKbps);
+			callAudioBitrate->setToolTip(QString());
+		}
+
+		return;
+	}
+
+	if (callAudioBitrate->isEnabled())
+		audioBitrateKbps = callAudioBitrate->value();
+
+	// Show what the codec will actually run at rather than leaving a number
+	// behind that has nothing to do with it.
+	callAudioBitrate->setEnabled(false);
+	callAudioBitrate->setValue(callAudioFixedBitrateKbps(codec));
+	callAudioBitrate->setToolTip(tr("This codec codes a fixed number of bits per sample, so its "
+	                                "bitrate follows from the sample rate and cannot be chosen."));
 }
 
 void SettingsDialog::audioDriverChanged(int index)
@@ -1099,7 +1422,37 @@ void SettingsDialog::loadSettings()
 	if (videoDevItem >= 0)
 		videoDev->setCurrentIndex(videoDevItem);
 
+	// The resolution and frame rate lists pick the stored size and rate out of
+	// what the selected camera offers as they are filled, which the line above
+	// has just triggered where it changed the camera - see
+	// fillVideoResolutions().
+
 	cbPreferCompressed->setChecked(st.loadValue("video.prefer_compressed", 0).toBool());
+
+	// Call encoding parameters. Read through CallSettings rather than from st
+	// directly, so that the dialog and a call that is started without ever
+	// opening it agree on what "not configured" means.
+	const CallSettings cs = CallSettings::load();
+
+	int callVideoCodecItem = callVideoCodec->findData(cs.videoCodec);
+	if (callVideoCodecItem >= 0)
+		callVideoCodec->setCurrentIndex(callVideoCodecItem);
+
+	callVideoBitrate->setValue(qBound(kMinVideoBitrateKbps, cs.videoBitrateKbps, kMaxVideoBitrateKbps));
+
+	// Before the codec is selected: selecting one whose bitrate is fixed puts
+	// that codec's rate in the box and keeps this as the value to come back
+	// to, see callAudioCodecChanged().
+	audioBitrateKbps = qBound(kMinAudioBitrateKbps, cs.audioBitrateKbps, kMaxAudioBitrateKbps);
+	callAudioBitrate->setValue(audioBitrateKbps);
+
+	int callAudioCodecItem = callAudioCodec->findData(cs.audioCodec);
+	if (callAudioCodecItem >= 0)
+		callAudioCodec->setCurrentIndex(callAudioCodecItem);
+
+	// Explicitly, because setCurrentIndex() above only emits when the index
+	// actually changes - and the stored codec is often the one already showing.
+	callAudioCodecChanged();
 
 #ifdef HAVE_VAAPI
 	cbVaapiEncoding->setChecked(st.loadValue("video.vaapi_encoding", 0).toBool());
@@ -1182,7 +1535,22 @@ void SettingsDialog::storeSettings()
 	st.storeValue("multiple_logins.state", QString::number(mlpstate));
 
 	st.storeValue("video.capture_device", videoDev->itemData(videoDev->currentIndex()).toString());
+	st.storeValue("video.capture_width", QString::number(selectedVideoWidth()));
+	st.storeValue("video.capture_height", QString::number(selectedVideoHeight()));
+	st.storeValue("video.capture_framerate", QString::number(selectedVideoFrameRate()));
 	st.storeValue("video.prefer_compressed", cbPreferCompressed->isChecked() ? "1" : "0");
+
+	st.storeValue("call.video_codec", callVideoCodec->itemData(callVideoCodec->currentIndex()).toString());
+	st.storeValue("call.audio_codec", callAudioCodec->itemData(callAudioCodec->currentIndex()).toString());
+	st.storeValue("call.video_bitrate_kbps", QString::number(callVideoBitrate->value()));
+
+	// The box shows a fixed rate codec's own bitrate while such a codec is
+	// selected; what gets stored is the user's choice either way, so that
+	// switching back to Opus finds it again on the next visit.
+	if (callAudioBitrate->isEnabled())
+		audioBitrateKbps = callAudioBitrate->value();
+
+	st.storeValue("call.audio_bitrate_kbps", QString::number(audioBitrateKbps));
 #ifdef HAVE_VAAPI
 	st.storeValue("video.vaapi_encoding", cbVaapiEncoding->isChecked() ? "1" : "0");
 	st.storeValue("video.vaapi_decoding", cbVaapiDecoding->isChecked() ? "1" : "0");
