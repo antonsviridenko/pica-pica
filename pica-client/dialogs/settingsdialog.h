@@ -33,6 +33,7 @@
 #include "../mediadevice.h"
 #include "../audiodevice.h"
 #include "../videodevice.h"
+#include "../videoscaler.h"
 #include "../toneplayer/toneplayer.h"
 #ifdef HAVE_VAAPI
 #include "../vaapi.h"
@@ -44,6 +45,14 @@ class SettingsDialog : public QDialog
 public:
 	explicit SettingsDialog(QWidget *parent = 0);
 	~SettingsDialog();
+
+	// Watches videoPreview for its own resizes, which is where the size the
+	// test's frames should be decoded to is decided. Doing this from the
+	// dialog's resizeEvent() instead would read the label's geometry before
+	// the layout has updated it, and would miss the resizes the layout causes
+	// on its own - the tab's other rows changing height moves the preview
+	// without the dialog changing size at all.
+	bool eventFilter(QObject *watched, QEvent *event) override;
 
 signals:
 
@@ -200,7 +209,30 @@ private:
 	quint16 testVideoSeq;
 	bool videoTestRunning;
 
+	// The last frame the preview drew, kept so that it can follow a resize of
+	// the dialog rather than staying as it was until the next frame. Cleared
+	// when the test stops, since the preview goes back to showing status text
+	// and must not have a stale picture put back over it.
+	QImage lastTestFrame;
+
+	// Resizes a frame that does not already match the preview. Normally does
+	// nothing: testDecoder is told what size to produce - see
+	// reportVideoPreviewArea() - and only the frames in flight across a resize
+	// arrive at another size. Same arrangement as CallWindow's; the reasoning
+	// is in videoscaler.h.
+	VideoScaler videoTestScaler;
+
 	void stopVideoTest();
+
+	// Draws lastTestFrame at the size the preview is now.
+	void updateVideoPreview();
+
+	// Tells testDecoder what size to decode frames to, so that the resize
+	// happens inside the colour conversion it already runs instead of in a
+	// second pass here. The preview is smaller than the camera's picture, so
+	// this is the case that gains most - nothing gets converted only to be
+	// thrown away.
+	void reportVideoPreviewArea();
 
 	QPushButton *btOk;
 	QPushButton *btCancel;

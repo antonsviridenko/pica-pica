@@ -23,9 +23,13 @@
 #include <QLabel>
 #include <QTimer>
 #include <QImage>
+#include <QSize>
+#include "videoscaler.h"
 #ifdef HAVE_VAAPI
 #include "vaapi.h"
 #endif
+
+class QEvent;
 
 class CallWindow : public QWidget
 {
@@ -37,6 +41,12 @@ signals:
 	void accept_call_pressed();
 	void hang_call_pressed();
 	void callwindow_closed(CallWindow *sender_window);
+
+	// The area the remote video has to be drawn in, whenever it changes. The
+	// decoder produces frames at this size directly rather than the window
+	// resizing them after the fact - see VideoScaler for why that is worth
+	// routing across threads for.
+	void video_area_changed(QSize area);
 #ifdef HAVE_VAAPI
 	// Drawing frames straight out of GPU memory did not work on this system.
 	// The call controller answers by having them decoded into system memory
@@ -65,7 +75,39 @@ private:
 	QTimer *callTimer;
 	int callElapsedSeconds;
 
+	// The last frame received, kept so that the picture can follow a resize
+	// instead of staying as it was until the next frame arrives.
+	QImage lastRemoteFrame;
+
+	// Resizes a frame that does not already match the video area. Normally
+	// does nothing: the decoder is told what size to produce, and only the
+	// frames in flight across a resize arrive at another size.
+	VideoScaler videoScaler;
+
+	// Whether the video area has been given room yet, see showRemoteFrame().
+	bool videoAreaOpened;
+
+	// Draws lastRemoteFrame at the size the video area is now.
+	void updateRemoteFrame();
+
+	// Tells the decoder what size to produce frames at, if that has changed.
+	void reportVideoArea();
+
+	// Enlarges the window to fit the first frame's own resolution, once. An
+	// audio call keeps the compact window it had before, so when video does
+	// turn up there is no room for it; without this it would appear in
+	// whatever few pixels the layout could spare.
+	void openVideoArea(QSize frame);
+
 	void closeEvent(QCloseEvent *e);
+
+	// Watches lbVideo for its own resizes, which is where the video area's
+	// size is really decided. Doing this from the window's resizeEvent()
+	// instead would read the label's geometry before the layout has had a
+	// chance to update it, and would miss the resizes the layout causes by
+	// itself - lbTransport appearing shortens the video area without the
+	// window changing size at all.
+	bool eventFilter(QObject *watched, QEvent *event) override;
 
 public slots:
 	void call_started();

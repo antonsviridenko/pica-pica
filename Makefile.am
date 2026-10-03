@@ -196,6 +196,8 @@ pica-client/nativeaudio_wasapi.cpp \
 pica-client/nativeaudio_coreaudio.cpp \
 pica-client/videodevice.cpp \
 pica-client/videodevice.h \
+pica-client/videoscaler.cpp \
+pica-client/videoscaler.h \
 pica-client/videodshow.cpp \
  \
 pica-client/dialogs/addaccountdialog.cpp \

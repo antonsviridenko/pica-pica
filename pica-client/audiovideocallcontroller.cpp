@@ -374,6 +374,7 @@ void AudioVideoCallController::start_call(QByteArray peer_id)
 	/* decoded frames arrive from remotevideo's thread, so this is a queued
 	   connection; it dies with the window, which is deleted on close */
 	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
+	connect(callwindow, SIGNAL(video_area_changed(QSize)), this, SLOT(video_area_changed(QSize)));
 #ifdef HAVE_VAAPI
 	connect(remotevideo, SIGNAL(hwFrameReady(AVFramePtr)), callwindow, SLOT(showRemoteHwFrame(AVFramePtr)));
 	connect(callwindow, SIGNAL(video_rendering_failed()), this, SLOT(video_rendering_failed()));
@@ -397,6 +398,7 @@ void AudioVideoCallController::call_from(QByteArray peer_id)
 	connect(callwindow, SIGNAL(callwindow_closed(CallWindow*)), this, SLOT(callwindow_closed(CallWindow*)));
 	/* see the same connections in start_call() */
 	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
+	connect(callwindow, SIGNAL(video_area_changed(QSize)), this, SLOT(video_area_changed(QSize)));
 #ifdef HAVE_VAAPI
 	connect(remotevideo, SIGNAL(hwFrameReady(AVFramePtr)), callwindow, SLOT(showRemoteHwFrame(AVFramePtr)));
 	connect(callwindow, SIGNAL(video_rendering_failed()), this, SLOT(video_rendering_failed()));
@@ -593,6 +595,13 @@ void AudioVideoCallController::incoming_video_packet(QByteArray peer_id, quint16
 	// Direct call, not invokeMethod()/QueuedConnection - same reason as in
 	// incoming_audio_packet().
 	remotevideo->enqueueFrame(frame);
+}
+
+void AudioVideoCallController::video_area_changed(QSize area)
+{
+	// Direct call rather than invokeMethod() - same reason as in
+	// incoming_video_packet(): remotevideo's thread is blocked inside Play().
+	remotevideo->setDisplaySize(area);
 }
 
 #ifdef HAVE_VAAPI

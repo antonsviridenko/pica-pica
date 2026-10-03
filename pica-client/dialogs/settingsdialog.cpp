@@ -34,6 +34,7 @@
 #include <QNetworkInterface>
 #include <QHostAddress>
 #include <QSize>
+#include <QEvent>
 #include <QTabWidget>
 #include <QTimer>
 
@@ -92,6 +93,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	// reach them.
 	videoRes = nullptr;
 	videoFps = nullptr;
+
+	// Same problem, one step further along: videoPreview is watched for its own
+	// resizes and answers them by telling testDecoder what size to decode to,
+	// but the preview is built - and the layout that can resize it applied -
+	// before the decoder exists.
+	testDecoder = nullptr;
+	videoTestRunning = false;
 
 	QVBoxLayout *settingsLayout = new QVBoxLayout();
 
@@ -378,12 +386,21 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videoPreview->setAlignment(Qt::AlignCenter);
 	videoPreview->setMinimumSize(320, 240);
 	videoPreview->setFrameShape(QFrame::StyledPanel);
+	// A label holding a pixmap reports that pixmap's size as its minimum, which
+	// would stop the dialog being made smaller than the last frame drawn - and
+	// since each frame is drawn at the size of this label, the label could then
+	// never shrink either. Ignored breaks that: the label takes the space the
+	// layout gives it and asks for none. The status text it shows between tests
+	// has the 320x240 minimum above to sit in.
+	videoPreview->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+	videoPreview->installEventFilter(this);
 
 	videoTestStatus = new QLabel(this);
 	videoTestStatus->setAlignment(Qt::AlignCenter);
 
 #ifdef HAVE_VAAPI
 	videoPreviewGpu = VaapiRenderWidget::create(this);
+	// Letterboxes the surface itself, so it only needs to be given the room.
 	videoPreviewGpu->widget()->setMinimumSize(320, 240);
 	videoPreviewGpu->widget()->hide();
 	connect(videoPreviewGpu->widget(), SIGNAL(renderingFailed(QString)), this, SLOT(videoTestRenderFailed(QString)));
@@ -399,19 +416,21 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videodevLayout->addWidget(cbVaapiRendering);
 #endif
 	videodevLayout->addWidget(btVideoTest);
-	videodevLayout->addWidget(videoPreview);
+	// The preview takes the tab's spare height, where it used to go to a spacer
+	// at the bottom. Only one of the two preview widgets is ever visible and a
+	// hidden widget is given no space, so both can be stretched.
+	videodevLayout->addWidget(videoPreview, 1);
 #ifdef HAVE_VAAPI
-	videodevLayout->addWidget(videoPreviewGpu->widget());
+	videodevLayout->addWidget(videoPreviewGpu->widget(), 1);
 #endif
 	videodevLayout->addWidget(videoTestStatus);
-	videodevLayout->addStretch(1);
 
 	videodevtab->setLayout(videodevLayout);
 
 	// Capture+encode and decode ends of the test pipeline, each blocking its
 	// own thread while running, exactly as they do during a call. They stay
-	// idle until the Test button is pressed.
-	videoTestRunning = false;
+	// idle until the Test button is pressed. videoTestRunning is already false
+	// from the top of this constructor, where the preview needed it.
 	testVideoSeq = 0;
 
 	testCam = new VideoDevice();
@@ -838,6 +857,10 @@ void SettingsDialog::toggleVideoTest()
 	btVideoTest->setText(tr("Stop ⏹"));
 	videoPreview->setText(tr("Starting..."));
 
+	// Before the decoder is started, so that its very first frame comes back
+	// at the size the preview wants rather than the camera's own.
+	reportVideoPreviewArea();
+
 	bool vaapiEncoding = false;
 #ifdef HAVE_VAAPI
 	vaapiEncoding = cbVaapiEncoding->isChecked();
@@ -918,11 +941,18 @@ void SettingsDialog::stopVideoTest()
 	btVideoTest->setText(tr("Test 📷"));
 	videoPreview->clear();
 	videoTestStatus->clear();
+	lastTestFrame = QImage();
 #ifdef HAVE_VAAPI
 	videoPreviewGpu->clearFrame();
 	videoPreviewGpu->widget()->hide();
 	videoPreview->show();
 #endif
+
+	// Last, once the preview label is back in place: drops the display size so
+	// that a test started again does not begin against whatever the previous
+	// one left behind. videoTestRunning is already false, which is what makes
+	// this clear it rather than set it.
+	reportVideoPreviewArea();
 }
 
 void SettingsDialog::videoTestFragment(QByteArray data, bool is_last_fragment)
@@ -964,9 +994,56 @@ void SettingsDialog::videoTestFrame(QImage frame)
 	                         ? videoTestFormat
 	                         : tr("%1 - %2").arg(videoTestFormat, videoTestPathReport));
 
-	videoPreview->setPixmap(QPixmap::fromImage(frame).scaled(videoPreview->size(),
-	                                                         Qt::KeepAspectRatio,
-	                                                         Qt::SmoothTransformation));
+	lastTestFrame = frame;
+	updateVideoPreview();
+}
+
+void SettingsDialog::updateVideoPreview()
+{
+	// Only while the test is running: with it stopped the preview is showing
+	// status text instead, and putting the last frame back over that on a
+	// resize would be wrong.
+	if (!videoTestRunning || lastTestFrame.isNull() || videoPreview->isHidden())
+		return;
+
+	// Normally a no-op - testDecoder was told the size of this area and the
+	// frame arrived at it already. It earns its place across a resize, when
+	// frames converted at the old size have still to be drawn at the new one.
+	QImage scaled = videoTestScaler.scale(lastTestFrame, videoPreview->size());
+
+	if (scaled.isNull())
+		return;
+
+	videoPreview->setPixmap(QPixmap::fromImage(scaled));
+}
+
+void SettingsDialog::reportVideoPreviewArea()
+{
+	// The preview can be resized by the layout before the decoder has been
+	// built; see the note at the top of the constructor.
+	//
+	// isHidden() rather than isVisible(): what matters is whether this label is
+	// the renderer in use, not whether the dialog is on screen. When the GPU
+	// widget has the preview it scales frames itself, on the GPU, and wants
+	// them at their own resolution - see videoTestHwFrame().
+	if (!testDecoder || videoPreview->isHidden())
+		return;
+
+	// Direct call rather than invokeMethod() - testDecoder's thread is blocked
+	// inside Play(), so a queued call would sit behind the very loop it is
+	// meant to reach. Same rule as the Close() calls in stopVideoTest().
+	testDecoder->setDisplaySize(videoTestRunning ? videoPreview->size() : QSize());
+}
+
+bool SettingsDialog::eventFilter(QObject *watched, QEvent *event)
+{
+	if (watched == videoPreview && event->type() == QEvent::Resize)
+	{
+		reportVideoPreviewArea();
+		updateVideoPreview();
+	}
+
+	return QDialog::eventFilter(watched, event);
 }
 
 #ifdef HAVE_VAAPI
@@ -989,6 +1066,11 @@ void SettingsDialog::videoTestHwFrame(AVFramePtr frame)
 	{
 		videoPreview->hide();
 		videoPreviewGpu->widget()->show();
+
+		// The widget scales the surface itself, on the GPU, so the decoder
+		// has no reason to produce frames at any particular size - and it is
+		// not producing these ones at all.
+		testDecoder->setDisplaySize(QSize());
 	}
 
 	videoTestStatus->setText(videoTestPathReport.isEmpty()
@@ -1009,6 +1091,12 @@ void SettingsDialog::videoTestRenderFailed(QString message)
 	videoPreviewGpu->widget()->hide();
 	videoPreview->show();
 	videoPreview->setText(message);
+
+	// Frames are about to start arriving in system memory, so the decoder needs
+	// the size to produce them at. Sent explicitly rather than left to the
+	// label's resize, which does not fire if showing it did not change its
+	// geometry.
+	reportVideoPreviewArea();
 
 	// Direct call, for the same reason as in videoTestFragment().
 	testDecoder->disableHardwareRendering();

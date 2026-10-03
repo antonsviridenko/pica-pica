@@ -123,6 +123,10 @@ private slots:
 	void incoming_video_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 	void media_transport_changed(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload);
+
+	// Passes the window's video area on to the decoder, which produces frames
+	// at that size rather than leaving the window to resize each one.
+	void video_area_changed(QSize area);
 #ifdef HAVE_VAAPI
 	void video_rendering_failed();
 #endif
