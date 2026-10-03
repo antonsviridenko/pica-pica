@@ -27,7 +27,8 @@
 AudioVideoCallController::AudioVideoCallController(QObject *parent)
  : QObject(parent), callwindow(0), ringdevice(0), is_active(false),
    m_audioSeq(0),
-   m_videoSeq(0), m_videoFrameTimestamp(0), m_videoFrameStarted(false)
+   m_videoSeq(0), m_videoFrameTimestamp(0), m_videoFrameStarted(false),
+   m_requestedFrameRate(0)
 {
 	connect(skynet, SIGNAL(IncomingCall(QByteArray)), this, SLOT(call_from(QByteArray)));
 	connect(skynet, SIGNAL(CallFailed(QByteArray,QString)), this, SLOT(call_failed(QByteArray,QString)));
@@ -78,7 +79,7 @@ AudioVideoCallController::AudioVideoCallController(QObject *parent)
 	// the audio devices above.
 	cam = new VideoDevice();
 	cam->moveToThread(&cam_thread);
-	connect(cam, SIGNAL(captureStarted(QString,int,int)), this, SLOT(video_capture_started(QString,int,int)));
+	connect(cam, SIGNAL(captureStarted(QString,int,int,double)), this, SLOT(video_capture_started(QString,int,int,double)));
 	connect(cam, SIGNAL(packetReady(QByteArray,bool)), this, SLOT(send_video_packet(QByteArray,bool)));
 	cam_thread.start();
 
@@ -271,6 +272,10 @@ void AudioVideoCallController::startVideoPipeline()
 
 	bool preferCompressed = st.loadValue("video.prefer_compressed", 0).toBool();
 	bool vaapiEncoding = st.loadValue("video.vaapi_encoding", 0).toBool();
+
+	// Kept so that video_capture_started() can tell whether the camera
+	// honoured it, which is not something the camera reports.
+	m_requestedFrameRate = cs.captureFrameRate;
 
 	// The peer is told what we are sending only once the camera is open and
 	// the format is settled - with a compressed camera stream being forwarded
@@ -502,10 +507,20 @@ void AudioVideoCallController::incoming_audio_packet(QByteArray peer_id, quint16
 	output->enqueuePacket(seq_num, data);
 }
 
-void AudioVideoCallController::video_capture_started(QString codec, int width, int height)
+void AudioVideoCallController::video_capture_started(QString codec, int width, int height,
+                                                     double frameRate)
 {
 	if (!is_active)
 		return;
+
+	// Logged rather than announced: the 0x74 message has no field for it, and
+	// the peer does not need one - every frame carries its own timestamp. It
+	// is worth a line in the log all the same, since a camera that quietly
+	// substituted a lower rate than was asked for is otherwise invisible from
+	// the other end of a complaint about choppy video.
+	if (frameRate > 0.0 && frameRate < m_requestedFrameRate - 0.5)
+		qWarning() << QString("Camera delivering %1 fps, not the %2 that was requested")
+		              .arg(frameRate, 0, 'f', 1).arg(m_requestedFrameRate);
 
 	// Announced only now, because what the camera turned out to deliver
 	// decides it: a compressed camera stream is forwarded in the camera's own

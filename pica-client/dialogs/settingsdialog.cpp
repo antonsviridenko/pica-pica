@@ -100,6 +100,11 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	// before the decoder exists.
 	testDecoder = nullptr;
 	videoTestRunning = false;
+	videoTestGpuRendering = false;
+	videoCapturedFrames = 0;
+	videoDisplayedFrames = 0;
+	videoCaptureFps = 0.0;
+	videoDisplayFps = 0.0;
 
 	QVBoxLayout *settingsLayout = new QVBoxLayout();
 
@@ -396,7 +401,10 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videoPreview->installEventFilter(this);
 
 	videoTestStatus = new QLabel(this);
-	videoTestStatus->setAlignment(Qt::AlignCenter);
+	// Left aligned, not centred: this line grows and shrinks as the frame
+	// rate is measured and re-measured, and centring it makes the whole text
+	// jump sideways every time it changes length.
+	videoTestStatus->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
 #ifdef HAVE_VAAPI
 	videoPreviewGpu = VaapiRenderWidget::create(this);
@@ -427,6 +435,12 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	videodevtab->setLayout(videodevLayout);
 
+	// Recomputes the frame rates in the status line once a second, which is
+	// long enough for the number to sit still and be read.
+	videoFpsTimer = new QTimer(this);
+	videoFpsTimer->setInterval(1000);
+	connect(videoFpsTimer, SIGNAL(timeout()), this, SLOT(videoFpsTick()));
+
 	// Capture+encode and decode ends of the test pipeline, each blocking its
 	// own thread while running, exactly as they do during a call. They stay
 	// idle until the Test button is pressed. videoTestRunning is already false
@@ -435,7 +449,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	testCam = new VideoDevice();
 	testCam->moveToThread(&testCamThread);
-	connect(testCam, SIGNAL(captureStarted(QString,int,int)), this, SLOT(videoTestCaptureStarted(QString,int,int)));
+	connect(testCam, SIGNAL(captureStarted(QString,int,int,double)), this, SLOT(videoTestCaptureStarted(QString,int,int,double)));
 	connect(testCam, SIGNAL(packetReady(QByteArray,bool)), this, SLOT(videoTestFragment(QByteArray,bool)));
 	connect(testCam, SIGNAL(errorOccurred(QString)), this, SLOT(videoTestError(QString)));
 	connect(testCam, SIGNAL(accelerationInUse(QString)), this, SLOT(videoTestPath(QString)));
@@ -861,6 +875,14 @@ void SettingsDialog::toggleVideoTest()
 	// at the size the preview wants rather than the camera's own.
 	reportVideoPreviewArea();
 
+	videoTestGpuRendering = false;
+	videoCapturedFrames = 0;
+	videoDisplayedFrames = 0;
+	videoCaptureFps = 0.0;
+	videoDisplayFps = 0.0;
+	videoFpsElapsed.start();
+	videoFpsTimer->start();
+
 	bool vaapiEncoding = false;
 #ifdef HAVE_VAAPI
 	vaapiEncoding = cbVaapiEncoding->isChecked();
@@ -886,14 +908,25 @@ void SettingsDialog::toggleVideoTest()
 	// where the peer's 0x75 message arrives before its first video packet.
 }
 
-void SettingsDialog::videoTestCaptureStarted(QString codec, int width, int height)
+void SettingsDialog::videoTestCaptureStarted(QString codec, int width, int height,
+                                             double frameRate)
 {
 	if (!videoTestRunning)
 		return;
 
 	// Says which path the test is exercising: the camera's own compressed
 	// stream forwarded untouched, or frames decoded and re-encoded here.
-	videoTestFormat = tr("%1 %2x%3").arg(codec).arg(width).arg(height);
+	//
+	// The rate is the one the camera settled on, and is shown whether or not
+	// it is the one that was asked for - a camera substituting a lower rate
+	// does so silently, so seeing it here is the whole point. It is not the
+	// same figure as the measured rate in the status line: this is what the
+	// camera agreed to, that is what actually arrived, and the two differing
+	// means something is dropping frames rather than never producing them.
+	videoTestFormat = frameRate > 0.0
+	                  ? tr("%1 %2x%3 @%4").arg(codec).arg(width).arg(height)
+	                    .arg(frameRate, 0, 'f', frameRate < 10.0 ? 1 : 0)
+	                  : tr("%1 %2x%3").arg(codec).arg(width).arg(height);
 	videoPreview->setText(tr("Capturing %1...").arg(videoTestFormat));
 
 	bool vaapiDecoding = false;
@@ -938,6 +971,10 @@ void SettingsDialog::stopVideoTest()
 	videoTestRunning = false;
 	videoTestFormat.clear();
 	videoTestPathReport.clear();
+	videoTestGpuRendering = false;
+	videoFpsTimer->stop();
+	videoCaptureFps = 0.0;
+	videoDisplayFps = 0.0;
 	btVideoTest->setText(tr("Test 📷"));
 	videoPreview->clear();
 	videoTestStatus->clear();
@@ -972,7 +1009,14 @@ void SettingsDialog::videoTestFragment(QByteArray data, bool is_last_fragment)
 	testVideoSeq = (testVideoSeq + 1) & VideoFrameAssembler::SeqNumMask;
 
 	if (is_last_fragment)
+	{
 		seq |= VideoFrameAssembler::LastFragmentFlag;
+
+		// One encoded frame has just been completed, which in steady state is
+		// one frame off the camera. Counted here rather than at the camera
+		// because this is also what a call would be putting on the wire.
+		videoCapturedFrames++;
+	}
 
 	QByteArray frame = testAssembler.addFragment(seq, 0, data);
 
@@ -988,14 +1032,70 @@ void SettingsDialog::videoTestFrame(QImage frame)
 	if (!videoTestRunning || frame.isNull())
 		return;
 
+	videoDisplayedFrames++;
+
 	// The preview itself is showing pixels now, so what format came off the
 	// camera and which of the GPU or CPU did the work goes underneath it.
-	videoTestStatus->setText(videoTestPathReport.isEmpty()
-	                         ? videoTestFormat
-	                         : tr("%1 - %2").arg(videoTestFormat, videoTestPathReport));
+	updateVideoTestStatus();
 
 	lastTestFrame = frame;
 	updateVideoPreview();
+}
+
+void SettingsDialog::videoFpsTick()
+{
+	const qint64 elapsed = videoFpsElapsed.restart();
+
+	if (elapsed <= 0)
+		return;
+
+	videoCaptureFps = videoCapturedFrames * 1000.0 / elapsed;
+	videoDisplayFps = videoDisplayedFrames * 1000.0 / elapsed;
+	videoCapturedFrames = 0;
+	videoDisplayedFrames = 0;
+
+	updateVideoTestStatus();
+}
+
+void SettingsDialog::updateVideoTestStatus()
+{
+	if (!videoTestRunning)
+		return;
+
+	QString text = videoTestFormat;
+
+	if (!videoTestPathReport.isEmpty())
+		text = tr("%1 - %2").arg(text, videoTestPathReport);
+
+	if (videoTestGpuRendering)
+		text += tr(", GPU rendering");
+
+	// Nothing to say until the first second is up and a rate has been
+	// measured, and saying "0.0 fps" in the meantime would read as a fault.
+	if (videoCaptureFps > 0.0 || videoDisplayFps > 0.0)
+	{
+		const int asked = selectedVideoFrameRate();
+
+		// The two rates are usually the same, and printing both every time
+		// would bury the case that matters. They part company when the
+		// pipeline cannot keep up with the camera - frames are then dropped
+		// between the two, see VideoDevice::enqueueFrame().
+		if (qAbs(videoCaptureFps - videoDisplayFps) > 1.0)
+			text += tr(", %1 fps captured, %2 shown")
+			        .arg(videoCaptureFps, 0, 'f', 1).arg(videoDisplayFps, 0, 'f', 1);
+		else
+			text += tr(", %1 fps").arg(videoCaptureFps, 0, 'f', 1);
+
+		// A camera asked for more than it can deliver is not obliged to say
+		// so - it just sends fewer frames - so the shortfall is spelled out
+		// rather than left for the user to notice against the setting they
+		// chose. Half a frame of slack, since a camera holding its rate
+		// still reads a little under on any one second.
+		if (asked > 0 && videoCaptureFps < asked - 0.5)
+			text += tr(" of %1 requested").arg(asked);
+	}
+
+	videoTestStatus->setText(text);
 }
 
 void SettingsDialog::updateVideoPreview()
@@ -1073,9 +1173,9 @@ void SettingsDialog::videoTestHwFrame(AVFramePtr frame)
 		testDecoder->setDisplaySize(QSize());
 	}
 
-	videoTestStatus->setText(videoTestPathReport.isEmpty()
-	                         ? videoTestFormat
-	                         : tr("%1 - %2, GPU rendering").arg(videoTestFormat, videoTestPathReport));
+	videoDisplayedFrames++;
+	videoTestGpuRendering = true;
+	updateVideoTestStatus();
 
 	videoPreviewGpu->setFrame(frame);
 }
@@ -1091,6 +1191,11 @@ void SettingsDialog::videoTestRenderFailed(QString message)
 	videoPreviewGpu->widget()->hide();
 	videoPreview->show();
 	videoPreview->setText(message);
+
+	// The status line must stop claiming GPU rendering; frames are about to
+	// start coming back through system memory instead.
+	videoTestGpuRendering = false;
+	updateVideoTestStatus();
 
 	// Frames are about to start arriving in system memory, so the decoder needs
 	// the size to produce them at. Sent explicitly rather than left to the

@@ -64,6 +64,31 @@ private:
 	bool m_haveLastSeq;
 };
 
+// One pixel format a camera can deliver a particular size in, with the frame
+// rates it can deliver that combination at.
+//
+// The rates are kept per format rather than merged across them because they
+// genuinely differ, by a lot. Uncompressed video at 30fps needs more bandwidth
+// than USB 2.0 has for anything much above VGA, so a camera that manages
+// 1280x720 at 30fps in MJPEG manages only 10fps uncompressed, and 1920x1080 at
+// 5fps. A camera asked for more than a format can carry does not refuse: it
+// reports success and quietly sends fewer frames. Keeping this association is
+// what lets VideoDevice::Capture() ask for a format that can actually deliver
+// what was requested instead of finding out afterwards.
+struct VideoPixelFormat
+{
+	// FFmpeg codec name - "mjpeg", "h264", "hevc" - spelled as the v4l2
+	// demuxer's input_format option and the 0x75 message spell it. Empty for
+	// an uncompressed format, which is what a camera gives when asked for
+	// nothing in particular.
+	QString codec;
+
+	// Frame rates available at this size in this format, in whole frames per
+	// second, highest first. Empty when the camera would not say - which is
+	// not the same as "none", see VideoDevice::Capture().
+	QList<int> frameRates;
+};
+
 // One picture size a camera can deliver, and what it can deliver it in.
 // Reported by VideoDevice::CaptureFormats() and shown by the settings dialog's
 // resolution and frame rate lists.
@@ -72,10 +97,17 @@ struct VideoCaptureFormat
 	int width;
 	int height;
 
-	// Frame rates the camera offers at this size, in whole frames per second,
-	// highest first. Empty when the camera would not say - which is not the
-	// same as "none": the capture code can still open it and let the camera
-	// pick, see VideoDevice::Capture().
+	// Every pixel format this size is available in, uncompressed first and
+	// then the compressed ones in the same order as compressedFormats below.
+	// This is the detail the two lists after it flatten away.
+	QList<VideoPixelFormat> pixelFormats;
+
+	// Frame rates the camera offers at this size in its best format for the
+	// purpose - the union of the rates in pixelFormats. What the size can
+	// manage at all, rather than what any one format can: reaching the top of
+	// this list may mean capturing compressed and re-encoding, which is
+	// Capture()'s business and not the caller's. Highest first, and empty when
+	// the camera would not say.
 	QList<int> frameRates;
 
 	// Compressed formats available at this size, as FFmpeg codec names, most
@@ -86,6 +118,22 @@ struct VideoCaptureFormat
 	// choice of size worth showing alongside.
 	QStringList compressedFormats;
 };
+
+// Records that a size is available in `codec` - empty for uncompressed - at
+// `rates`, adding to that format's entry rather than replacing it, since two
+// of a platform's pixel formats can map to the same codec name. The rates go
+// into the size's own union as well.
+//
+// Shared by the v4l2 and the DirectShow enumerator so that both build the same
+// shape out of quite different source data.
+void pica_merge_capture_rates(VideoCaptureFormat &entry, const QString &codec,
+                              const QList<int> &rates);
+
+// Puts one size's formats into the order VideoCaptureFormat documents and sorts
+// every rate list highest first. Call once per size, after all of its formats
+// have been merged in and compressedFormats has been put in the platform's
+// preference order - that order is what pixelFormats is then arranged to match.
+void pica_finish_capture_format(VideoCaptureFormat &entry);
 
 // Video counterpart of AudioDevice: a single instance is dedicated to one
 // direction - either capture+encode (Capture(), reading from a local camera)
@@ -200,7 +248,15 @@ signals:
 	// being sent is known - either the camera's own compressed format, when
 	// forwarding it untouched, or the one this class encodes to. Carries the
 	// values to announce to the peer, before any packet is emitted.
-	void captureStarted(QString codec, int width, int height);
+	//
+	// frameRate is what the camera settled on, which is not necessarily what
+	// configureCapture() asked for: a camera asked for a rate a pixel format
+	// cannot carry opens anyway and then delivers fewer frames. Fractional
+	// because cameras really do offer rates like 7.5fps. Falls back to the
+	// requested rate when the camera would not say what it is doing, so a
+	// shortfall it kept quiet about shows up in the measured rate instead -
+	// see the settings dialog's fps counter.
+	void captureStarted(QString codec, int width, int height, double frameRate);
 
 	// One fragment of an encoded frame, ready to be sent over the network.
 	// isLastFragment marks the final fragment of a frame - it maps directly

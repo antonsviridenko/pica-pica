@@ -400,6 +400,78 @@ static QList<int> v4l2FrameRates(int fd, unsigned int pixelformat, int width, in
 }
 #endif
 
+void pica_merge_capture_rates(VideoCaptureFormat &entry, const QString &codec,
+                              const QList<int> &rates)
+{
+	int existing = -1;
+
+	for (int p = 0; p < entry.pixelFormats.size(); p++)
+	{
+		if (entry.pixelFormats.at(p).codec == codec)
+		{
+			existing = p;
+			break;
+		}
+	}
+
+	// Two of a platform's pixel formats can carry the same codec name - v4l2
+	// reports MJPEG and plain JPEG separately and both come out as "mjpeg" -
+	// so a format already seen is added to rather than started again.
+	if (existing < 0)
+	{
+		VideoPixelFormat pf;
+
+		pf.codec = codec;
+		entry.pixelFormats << pf;
+		existing = entry.pixelFormats.size() - 1;
+	}
+
+	VideoPixelFormat &pf = entry.pixelFormats[existing];
+
+	for (int r = 0; r < rates.size(); r++)
+	{
+		if (!pf.frameRates.contains(rates.at(r)))
+			pf.frameRates << rates.at(r);
+
+		if (!entry.frameRates.contains(rates.at(r)))
+			entry.frameRates << rates.at(r);
+	}
+}
+
+void pica_finish_capture_format(VideoCaptureFormat &entry)
+{
+	std::sort(entry.frameRates.begin(), entry.frameRates.end(), std::greater<int>());
+
+	// Uncompressed first, then the compressed formats in whatever order the
+	// platform put compressedFormats in, rather than the order the camera
+	// happened to list them.
+	QList<VideoPixelFormat> ordered;
+
+	for (int p = 0; p < entry.pixelFormats.size(); p++)
+	{
+		if (entry.pixelFormats.at(p).codec.isEmpty())
+			ordered << entry.pixelFormats.at(p);
+	}
+
+	for (int c = 0; c < entry.compressedFormats.size(); c++)
+	{
+		for (int p = 0; p < entry.pixelFormats.size(); p++)
+		{
+			if (entry.pixelFormats.at(p).codec == entry.compressedFormats.at(c))
+			{
+				ordered << entry.pixelFormats.at(p);
+				break;
+			}
+		}
+	}
+
+	for (int p = 0; p < ordered.size(); p++)
+		std::sort(ordered[p].frameRates.begin(), ordered[p].frameRates.end(),
+		          std::greater<int>());
+
+	entry.pixelFormats = ordered;
+}
+
 QList<VideoCaptureFormat> VideoDevice::CaptureFormats(const QString &device)
 {
 	QList<VideoCaptureFormat> result;
@@ -410,9 +482,10 @@ QList<VideoCaptureFormat> VideoDevice::CaptureFormats(const QString &device)
 		return result;
 
 	// Keyed on the size, because a camera reports its sizes once per pixel
-	// format and the same size usually comes back several times over. What
-	// differs between those is the format and the frame rates available in
-	// it, so both are merged into the one entry for the size.
+	// format and the same size usually comes back several times over. Each
+	// format it comes back in becomes an entry in pixelFormats, keeping the
+	// rates that format can manage with the format itself - see
+	// VideoPixelFormat for why that association matters.
 	QMap<QPair<int, int>, VideoCaptureFormat> bySize;
 
 	struct v4l2_fmtdesc fmt;
@@ -447,11 +520,11 @@ QList<VideoCaptureFormat> VideoDevice::CaptureFormats(const QString &device)
 			if (!codec.isEmpty() && !entry.compressedFormats.contains(codec))
 				entry.compressedFormats << codec;
 
-			QList<int> rates = v4l2FrameRates(fd, fmt.pixelformat, entry.width, entry.height);
-
-			for (int r = 0; r < rates.size(); r++)
-				if (!entry.frameRates.contains(rates.at(r)))
-					entry.frameRates << rates.at(r);
+			// Kept against the format it belongs to - MJPEG at 1280x720 and
+			// uncompressed at 1280x720 are not the same offer - and merged
+			// into the size's own list as well.
+			pica_merge_capture_rates(entry, codec,
+			                         v4l2FrameRates(fd, fmt.pixelformat, entry.width, entry.height));
 		}
 	}
 
@@ -476,7 +549,7 @@ QList<VideoCaptureFormat> VideoDevice::CaptureFormats(const QString &device)
 
 		entry.compressedFormats = ordered;
 
-		std::sort(entry.frameRates.begin(), entry.frameRates.end(), std::greater<int>());
+		pica_finish_capture_format(entry);
 
 		result << entry;
 	}
@@ -714,15 +787,211 @@ static QByteArray cameraOpenUrl(const QString &device)
 #endif
 }
 
+// Compressed formats in the order to prefer them as something to decode and
+// re-encode, which is not the order to prefer them for forwarding untouched -
+// that one is in kCompressedFormatPreference, and ranks by bytes on the wire.
+//
+// Here MJPEG comes first instead of last. Every frame is a standalone JPEG, so
+// there are no reference frames to track and no reordering delay, it is the
+// cheapest of the three to decode, and it is the one format essentially every
+// UVC camera offers. Decoding a camera's H.264 only to re-encode it costs more
+// and adds the decoder's delay for nothing, since the result is re-encoded to
+// the configured codec and bitrate either way.
+static const char * const kTranscodeSourcePreference[] = { "mjpeg", "h264", "hevc" };
+
+// One way of opening the camera: which pixel format to ask the driver for, what
+// to do with the packets that come back, and how much of the request to insist
+// on. Built by buildCaptureAttempts() and tried in order.
+struct CaptureAttempt
+{
+	// v4l2 input_format / dshow codec id to ask for. Empty leaves the choice
+	// to the camera, which means its default - uncompressed, on every camera
+	// seen so far.
+	QString inputFormat;
+
+	// Forward the camera's packets as they arrive instead of decoding and
+	// re-encoding them. Only ever set for a compressed inputFormat, and only
+	// when the "prefer compressed formats" setting asked for it: a compressed
+	// format is also worth asking for purely to get the frame rate, which is
+	// what the same format with this false means.
+	bool passthrough;
+
+	bool constrainSize;
+	bool constrainRate;
+
+	// Why this attempt is in the list, for the log when it fails.
+	QString reason;
+};
+
+// Whether a camera has said this format can manage this frame rate.
+//
+// An empty rate list means the camera would not say, which is not the same as
+// saying no - those formats are treated as capable and left to prove it at open
+// time, which is how this worked before any of it was enumerated.
+static bool formatHasRate(const VideoPixelFormat &format, int frameRate)
+{
+	return format.frameRates.isEmpty() || frameRate <= 0 ||
+	       format.frameRates.contains(frameRate);
+}
+
+// The orders to try opening the camera in, best first.
+//
+// The point of consulting the enumerated formats here is that a camera asked
+// for a frame rate a format cannot carry does not fail - it opens and then
+// delivers fewer frames, silently. USB 2.0 does not have the bandwidth for
+// uncompressed video at 30fps much above VGA, so asking for the camera's
+// default format at 1280x720@30 gets 10fps and no indication of it. Asking for
+// MJPEG at the same size gets 30, and decoding it costs far less than the
+// missing two thirds of the frames.
+//
+// Hence the order: forward a compressed stream if that was asked for, then
+// uncompressed if it can carry the rate - no decode, no second generation of
+// lossy compression - and then compressed as a source to decode and re-encode,
+// which is what lifts the frame rate above what the bus will carry raw.
+//
+// Everything above only considers formats the camera has said can do the job.
+// The tail then repeats the whole list with the rate and then the size dropped,
+// because listing a format and delivering it at a given size and rate are
+// separate claims and cameras routinely honour the first without the others.
+// Whatever eventually opens is what gets announced to the peer, so relaxing
+// these changes what is sent, not what is claimed.
+static QList<CaptureAttempt> buildCaptureAttempts(const QString &device, int width, int height,
+                                                  int frameRate, bool preferCompressed,
+                                                  const QString &configuredCodec)
+{
+	QList<CaptureAttempt> attempts;
+	QStringList passthroughOrder;
+
+	if (preferCompressed)
+	{
+		passthroughOrder = VideoDevice::CompressedFormats(device);
+
+		// The configured codec first when the camera can produce it itself:
+		// forwarding that one means the peer receives exactly what was asked
+		// for, rather than whichever compressed format the camera happened to
+		// rank highest. The rest keep their preference order behind it, since
+		// forwarding any of them still beats decoding and re-encoding.
+		if (passthroughOrder.removeAll(configuredCodec) > 0)
+			passthroughOrder.prepend(configuredCodec);
+	}
+
+	// What the camera says it can do at this size. Absent - an unsupported
+	// platform, or a camera that would not be enumerated - leaves every
+	// candidate below looking capable, which is the behaviour from before any
+	// of this was known.
+	VideoCaptureFormat atSize;
+
+	atSize.width = 0;
+	atSize.height = 0;
+
+	const QList<VideoCaptureFormat> formats = VideoDevice::CaptureFormats(device);
+
+	for (int i = 0; i < formats.size(); i++)
+	{
+		if (formats.at(i).width == width && formats.at(i).height == height)
+		{
+			atSize = formats.at(i);
+			break;
+		}
+	}
+
+	// Indexed by codec name, empty string being the uncompressed one. A format
+	// the camera did not list at this size is absent, and absent is not
+	// capable - unless nothing was enumerated at all, below.
+	const bool enumerated = !atSize.pixelFormats.isEmpty();
+
+	for (int i = 0; i < passthroughOrder.size(); i++)
+	{
+		const QString codec = passthroughOrder.at(i);
+		bool capable = !enumerated;
+
+		for (int p = 0; p < atSize.pixelFormats.size(); p++)
+		{
+			if (atSize.pixelFormats.at(p).codec == codec)
+			{
+				capable = formatHasRate(atSize.pixelFormats.at(p), frameRate);
+				break;
+			}
+		}
+
+		if (capable)
+			attempts << CaptureAttempt{ codec, true, true, true,
+			                            QStringLiteral("forwarded unchanged") };
+	}
+
+	bool uncompressedCapable = !enumerated;
+
+	for (int p = 0; p < atSize.pixelFormats.size(); p++)
+	{
+		if (atSize.pixelFormats.at(p).codec.isEmpty())
+		{
+			uncompressedCapable = formatHasRate(atSize.pixelFormats.at(p), frameRate);
+			break;
+		}
+	}
+
+	if (uncompressedCapable)
+		attempts << CaptureAttempt{ QString(), false, true, true,
+		                            QStringLiteral("uncompressed, re-encoded here") };
+
+	for (unsigned int i = 0; i < sizeof(kTranscodeSourcePreference) / sizeof(kTranscodeSourcePreference[0]); i++)
+	{
+		const QString codec = QLatin1String(kTranscodeSourcePreference[i]);
+
+		for (int p = 0; p < atSize.pixelFormats.size(); p++)
+		{
+			if (atSize.pixelFormats.at(p).codec == codec &&
+			    formatHasRate(atSize.pixelFormats.at(p), frameRate))
+			{
+				attempts << CaptureAttempt{ codec, false, true, true,
+				                            QStringLiteral("compressed for the frame rate, re-encoded here") };
+				break;
+			}
+		}
+	}
+
+	// The loosened tail. Same candidates, in the same order, with the rate
+	// given up and then the size as well - and without consulting what the
+	// camera claimed, since by this point its claims have been wrong.
+	QStringList tail = passthroughOrder;
+	QList<bool> tailPassthrough;
+
+	for (int i = 0; i < passthroughOrder.size(); i++)
+		tailPassthrough << true;
+
+	tail << QString();
+	tailPassthrough << false;
+
+	for (unsigned int i = 0; i < sizeof(kTranscodeSourcePreference) / sizeof(kTranscodeSourcePreference[0]); i++)
+	{
+		const QString codec = QLatin1String(kTranscodeSourcePreference[i]);
+
+		if (!atSize.compressedFormats.contains(codec))
+			continue;
+
+		tail << codec;
+		tailPassthrough << false;
+	}
+
+	for (int i = 0; i < tail.size(); i++)
+		attempts << CaptureAttempt{ tail.at(i), tailPassthrough.at(i), true, false,
+		                            QStringLiteral("any rate the camera will give") };
+
+	attempts << CaptureAttempt{ QString(), false, false, false,
+	                            QStringLiteral("anything the camera will give") };
+
+	return attempts;
+}
+
 // One attempt at opening the camera.
 //
-// passthroughCodec empty asks for whatever the camera gives; a width of zero
+// inputFormat empty asks for whatever the camera gives; a width of zero
 // drops the size and frame rate constraints as well. *ifmt_ctx is left null on
 // failure - avformat_open_input() frees and clears it - so the caller can just
 // try again.
 static int openCamera(const AVInputFormat *ifmt, const QByteArray &url,
                       int width, int height, int framerate,
-                      const QString &passthroughCodec, AVFormatContext **ifmt_ctx)
+                      const QString &inputFormat, AVFormatContext **ifmt_ctx)
 {
 	AVDictionary *opts = nullptr;
 
@@ -732,7 +1001,7 @@ static int openCamera(const AVInputFormat *ifmt, const QByteArray &url,
 	if (framerate > 0)
 		av_dict_set(&opts, "framerate", QString::number(framerate).toUtf8().constData(), 0);
 
-	if (!passthroughCodec.isEmpty())
+	if (!inputFormat.isEmpty())
 	{
 #ifdef Q_OS_WIN
 		// dshow has no input_format option. It picks the compressed stream
@@ -741,7 +1010,7 @@ static int openCamera(const AVInputFormat *ifmt, const QByteArray &url,
 		// has to be set on a context allocated here, since
 		// avformat_open_input() would otherwise make one only after the point
 		// where the demuxer reads it.
-		const AVCodec *dec = avcodec_find_decoder_by_name(passthroughCodec.toUtf8().constData());
+		const AVCodec *dec = avcodec_find_decoder_by_name(inputFormat.toUtf8().constData());
 
 		if (!dec)
 		{
@@ -759,7 +1028,7 @@ static int openCamera(const AVInputFormat *ifmt, const QByteArray &url,
 
 		(*ifmt_ctx)->video_codec_id = dec->id;
 #else
-		av_dict_set(&opts, "input_format", passthroughCodec.toUtf8().constData(), 0);
+		av_dict_set(&opts, "input_format", inputFormat.toUtf8().constData(), 0);
 #endif
 	}
 
@@ -790,88 +1059,51 @@ void VideoDevice::Capture()
 		return;
 	}
 
-	// Ask the camera for a compressed stream when told to and it offers one:
-	// its packets can then go straight onto the network, with no decoding and
-	// re-encoding in between. The formats are queried rather than guessed, so
-	// these are ones the camera has already said it can deliver, best first.
-	// The empty string on the end is the fallback of taking whatever comes and
-	// re-encoding it.
-	QStringList attempts;
-
-	if (m_preferCompressed)
-	{
-		attempts = CompressedFormats(m_deviceName);
-
-		// The configured codec first when the camera can produce it itself:
-		// forwarding that one means the peer receives exactly what was asked
-		// for, rather than whichever compressed format the camera happened to
-		// rank highest. The rest keep their preference order behind it, since
-		// forwarding any of them still beats decoding and re-encoding.
-		if (attempts.removeAll(m_codec) > 0)
-			attempts.prepend(m_codec);
-	}
-
-	attempts << QString();
-
-	// Listing a format and being able to produce it at a given size and frame
-	// rate are three separate claims, and cameras routinely honour the first
-	// without the others - an integrated webcam offering MJPEG but not at
-	// 640x480 15fps is what prompted this. So each candidate is tried with the
-	// constraints loosened a step at a time, giving up the frame rate before
-	// the size and both before giving up the format, since the format is worth
-	// the most: it decides whether anything has to be re-encoded at all.
-	//
-	// Whatever comes back is what gets announced to the peer - see
-	// captureStarted() and AudioVideoCallController::video_capture_started() -
-	// so relaxing these changes what is sent, not what is claimed.
-	static const struct
-	{
-		bool size;
-		bool rate;
-	} kConstraints[] =
-	{
-		{ true,  true  },
-		{ true,  false },
-		{ false, false },
-	};
+	// Which formats to try, in which order, and what to do with each - worked
+	// out from what the camera said it can deliver at this size and rate. See
+	// buildCaptureAttempts().
+	const QList<CaptureAttempt> attempts =
+	    buildCaptureAttempts(m_deviceName, m_width, m_height, m_frameRate,
+	                         m_preferCompressed, m_codec);
 
 	QString passthroughCodec;
 	AVFormatContext *ifmt_ctx = nullptr;
 	int ret = AVERROR(EINVAL);
-	bool opened = false;
 
-	for (int a = 0; a < attempts.size() && !opened; a++)
+	for (int a = 0; a < attempts.size(); a++)
 	{
-		for (unsigned int c = 0; c < sizeof(kConstraints) / sizeof(kConstraints[0]); c++)
+		const CaptureAttempt &attempt = attempts.at(a);
+
+		ret = openCamera(ifmt, deviceUtf8,
+		                 attempt.constrainSize ? m_width : 0,
+		                 attempt.constrainSize ? m_height : 0,
+		                 attempt.constrainRate ? m_frameRate : 0,
+		                 attempt.inputFormat, &ifmt_ctx);
+
+		if (ret >= 0)
 		{
-			ret = openCamera(ifmt, deviceUtf8,
-			                 kConstraints[c].size ? m_width : 0,
-			                 kConstraints[c].size ? m_height : 0,
-			                 kConstraints[c].rate ? m_frameRate : 0,
-			                 attempts.at(a), &ifmt_ctx);
-
-			if (ret >= 0)
-			{
-				passthroughCodec = attempts.at(a);
-				opened = true;
-				break;
-			}
-
-			QString asked;
-
-			if (!kConstraints[c].size)
-				asked = QStringLiteral("any size or rate");
-			else if (kConstraints[c].rate)
-				asked = QString("%1x%2 @%3").arg(m_width).arg(m_height).arg(m_frameRate);
-			else
-				asked = QString("%1x%2 at any rate").arg(m_width).arg(m_height);
-
-			qWarning() << QString("Camera '%1': no %2 at %3 (%4)")
-			              .arg(m_deviceName,
-			                   attempts.at(a).isEmpty() ? QStringLiteral("stream") : attempts.at(a),
-			                   asked,
-			                   ff_errstr(ret));
+			// Only a forwarding attempt makes this a passthrough; the same
+			// format asked for to get the frame rate goes to the transcode
+			// loop instead.
+			passthroughCodec = attempt.passthrough ? attempt.inputFormat : QString();
+			break;
 		}
+
+		QString asked;
+
+		if (!attempt.constrainSize)
+			asked = QStringLiteral("any size or rate");
+		else if (attempt.constrainRate)
+			asked = QString("%1x%2 @%3").arg(m_width).arg(m_height).arg(m_frameRate);
+		else
+			asked = QString("%1x%2 at any rate").arg(m_width).arg(m_height);
+
+		qWarning() << QString("Camera '%1': no %2 at %3 - %4 (%5)")
+		              .arg(m_deviceName,
+		                   attempt.inputFormat.isEmpty() ? QStringLiteral("stream") : attempt.inputFormat,
+		                   asked,
+		                   attempt.reason,
+		                   ff_errstr(ret));
 	}
 
 	if (ret < 0)
@@ -957,6 +1189,25 @@ void VideoDevice::emitFragments(const unsigned char *data, int size)
 	}
 }
 
+// The frame rate the camera actually settled on, which is not necessarily the
+// one that was asked for - and when the open had to fall back to letting the
+// camera choose, was not asked for at all. Encoding at a rate the frames do
+// not arrive at gives a stream whose timestamps disagree with reality, and it
+// is also what captureStarted() reports, so that the rate a camera quietly
+// substituted is visible rather than having to be measured.
+static AVRational cameraFrameRate(AVStream *in_st, int fallbackRate)
+{
+	AVRational fr = in_st->avg_frame_rate;
+
+	if (fr.num <= 0 || fr.den <= 0)
+		fr = in_st->r_frame_rate;
+
+	if (fr.num <= 0 || fr.den <= 0)
+		fr = AVRational{ fallbackRate, 1 };
+
+	return fr;
+}
+
 void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st, const QString &codec)
 {
 	// The camera decides the picture size here, since nothing rescales it on
@@ -964,7 +1215,8 @@ void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st,
 	int width = in_st->codecpar->width > 0 ? in_st->codecpar->width : m_width;
 	int height = in_st->codecpar->height > 0 ? in_st->codecpar->height : m_height;
 
-	emit captureStarted(codec, width, height);
+	emit captureStarted(codec, width, height,
+	                    av_q2d(cameraFrameRate(in_st, m_frameRate)));
 
 	// Nothing encodes here at all - the camera's own packets go out as they
 	// arrive - so any hardware encoding setting simply has nothing to act on.
@@ -995,21 +1247,38 @@ void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st,
 	av_packet_free(&pkt);
 }
 
-// The frame rate the camera actually settled on, which is not necessarily the
-// one that was asked for - and when the open had to fall back to letting the
-// camera choose, was not asked for at all. Encoding at a rate the frames do
-// not arrive at gives a stream whose timestamps disagree with reality.
-static AVRational cameraFrameRate(AVStream *in_st, int fallbackRate)
+// The pixel format to hand libswscale for a decoded camera frame, and whether
+// that frame's values use the full 0-255 range rather than the 16-235 one.
+//
+// MJPEG decodes to one of the yuvj* formats, which mean "the yuv* of the same
+// name, with full range values". libswscale still understands them and infers
+// the range, but warns that they are deprecated - and since capturing MJPEG
+// and re-encoding it is now the ordinary path for anything above VGA on USB
+// 2.0, that warning would otherwise be printed for most calls. Saying the same
+// thing the way libswscale asks for it keeps the range explicit instead of
+// inferred, and the log readable.
+static AVPixelFormat swscaleSourceFormat(AVPixelFormat format, bool *fullRange)
 {
-	AVRational fr = in_st->avg_frame_rate;
+	*fullRange = true;
 
-	if (fr.num <= 0 || fr.den <= 0)
-		fr = in_st->r_frame_rate;
+	switch (format)
+	{
+	case AV_PIX_FMT_YUVJ420P:
+		return AV_PIX_FMT_YUV420P;
+	case AV_PIX_FMT_YUVJ422P:
+		return AV_PIX_FMT_YUV422P;
+	case AV_PIX_FMT_YUVJ444P:
+		return AV_PIX_FMT_YUV444P;
+	case AV_PIX_FMT_YUVJ440P:
+		return AV_PIX_FMT_YUV440P;
+	case AV_PIX_FMT_YUVJ411P:
+		return AV_PIX_FMT_YUV411P;
+	default:
+		break;
+	}
 
-	if (fr.num <= 0 || fr.den <= 0)
-		fr = AVRational{ fallbackRate, 1 };
-
-	return fr;
+	*fullRange = false;
+	return format;
 }
 
 void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
@@ -1173,9 +1442,19 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 		}
 	}
 
+	// Which format the camera is actually delivering, reported alongside the
+	// encoder because the two together explain the frame rate: an uncompressed
+	// camera stream is what caps the rate on a USB 2.0 bus, and seeing
+	// "mjpeg" here is what says that cap has been stepped around. See
+	// buildCaptureAttempts().
+	const QString source = in_st->codecpar->codec_id == AV_CODEC_ID_RAWVIDEO
+	                       ? QStringLiteral("uncompressed")
+	                       : QString::fromLatin1(avcodec_get_name(in_st->codecpar->codec_id));
+
 	emit accelerationInUse(hardware
-	                       ? QString("GPU encoding (VAAPI %1)").arg(QLatin1String(kVideoEncoders[encIdx].codec))
-	                       : QString("CPU encoding (%1)").arg(swEncoderName));
+	                       ? QString("GPU encoding (VAAPI %1) from %2")
+	                         .arg(QLatin1String(kVideoEncoders[encIdx].codec), source)
+	                       : QString("CPU encoding (%1) from %2").arg(swEncoderName, source));
 
 	// Everything the camera sends is scaled to the encoder's size and re-encoded,
 	// so this is what the peer will receive regardless of what the camera
@@ -1183,8 +1462,12 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 	// out literally, so that changing the encoder above cannot leave the peer
 	// being told something else - avcodec_get_name() yields exactly the
 	// FFmpeg codec names the 0x75 message is defined in terms of.
+	//
+	// The rate is the camera's, not the encoder's: the encoder is configured
+	// from it (see frameRate above) and encodes every frame it is given, so
+	// what the camera delivers is what goes out.
 	emit captureStarted(QLatin1String(avcodec_get_name(enc_ctx->codec_id)),
-	                    enc_ctx->width, enc_ctx->height);
+	                    enc_ctx->width, enc_ctx->height, av_q2d(frameRate));
 
 	// What the camera's frames are scaled into. With a hardware encoder this
 	// is only a staging buffer in system memory - NV12, which is what VAAPI
@@ -1247,7 +1530,11 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 			// what was requested.
 			if (!sws)
 			{
-				sws = sws_getContext(cam_frame->width, cam_frame->height, (AVPixelFormat)cam_frame->format,
+				bool srcFullRange = false;
+				const AVPixelFormat srcFormat =
+				    swscaleSourceFormat((AVPixelFormat)cam_frame->format, &srcFullRange);
+
+				sws = sws_getContext(cam_frame->width, cam_frame->height, srcFormat,
 				                     enc_ctx->width, enc_ctx->height, sw_pix_fmt,
 				                     SWS_BILINEAR, nullptr, nullptr, nullptr);
 				if (!sws)
@@ -1259,6 +1546,18 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 					}
 					av_frame_unref(cam_frame);
 					continue;
+				}
+
+				// The range the format name no longer carries. The encoder
+				// wants the studio range, so this is a real conversion and not
+				// just a label: without it a JPEG frame's blacks and whites
+				// would be clipped rather than compressed into 16-235.
+				if (srcFullRange)
+				{
+					const int *coefs = sws_getCoefficients(SWS_CS_DEFAULT);
+
+					sws_setColorspaceDetails(sws, coefs, 1, coefs, 0,
+					                         0, 1 << 16, 1 << 16);
 				}
 			}
 

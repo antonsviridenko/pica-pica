@@ -222,7 +222,30 @@ private:
 	// is in videoscaler.h.
 	VideoScaler videoTestScaler;
 
+	// Measured frame rates for the status line. Two of them, because they
+	// answer different questions: whether the camera is actually delivering
+	// the rate it was asked for, and whether the rest of the pipeline keeps up
+	// with what it delivers. A camera asked for more than it can manage is not
+	// told so - it quietly delivers fewer frames instead - so the only way to
+	// know is to count them.
+	QTimer *videoFpsTimer;
+	QElapsedTimer videoFpsElapsed;
+	int videoCapturedFrames;
+	int videoDisplayedFrames;
+	double videoCaptureFps;
+	double videoDisplayFps;
+	// Whether the preview is being drawn straight from GPU memory, which the
+	// status line says and which only the frames themselves reveal.
+	bool videoTestGpuRendering;
+
 	void stopVideoTest();
+
+	// Builds the line under the preview out of everything known about the
+	// running test - format, which end did the encoding and decoding, whether
+	// the preview is drawn on the GPU, and the measured frame rates. One place
+	// for it, since the frame rates change it once a second while frames
+	// arriving change the rest of it.
+	void updateVideoTestStatus();
 
 	// Draws lastTestFrame at the size the preview is now.
 	void updateVideoPreview();
@@ -281,10 +304,15 @@ private slots:
 	void audioTestPath(QString description);
 
 	void toggleVideoTest();
-	void videoTestCaptureStarted(QString codec, int width, int height);
+	void videoTestCaptureStarted(QString codec, int width, int height, double frameRate);
 	void videoTestPath(QString description);
 	void videoTestFragment(QByteArray data, bool is_last_fragment);
 	void videoTestFrame(QImage frame);
+	// Turns the frames counted since the last tick into the rates the status
+	// line shows. On a timer rather than computed as frames arrive, so that a
+	// pipeline that has stalled reads as 0 fps instead of staying at whatever
+	// it managed last.
+	void videoFpsTick();
 #ifdef HAVE_VAAPI
 	void videoTestHwFrame(AVFramePtr frame);
 	void videoTestRenderFailed(QString message);

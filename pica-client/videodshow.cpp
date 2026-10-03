@@ -448,12 +448,16 @@ QList<VideoCaptureFormat> pica_dshow_capture_formats(const QString &device)
 
 						const QString fourcc = fourccToString(bih->biCompression);
 
+						// Empty for an uncompressed media type, which is what
+						// pica_merge_capture_rates() wants for one.
+						QString codec;
+
 						for (unsigned int f = 0; f < sizeof(kDshowCompressedFormats) / sizeof(kDshowCompressedFormats[0]); f++)
 						{
 							if (fourcc != QLatin1String(kDshowCompressedFormats[f].fourcc))
 								continue;
 
-							QString codec = QLatin1String(kDshowCompressedFormats[f].ffmpeg_codec);
+							codec = QLatin1String(kDshowCompressedFormats[f].ffmpeg_codec);
 
 							if (!entry.compressedFormats.contains(codec))
 								entry.compressedFormats << codec;
@@ -468,10 +472,17 @@ QList<VideoCaptureFormat> pica_dshow_capture_formats(const QString &device)
 						const double maxFps = intervalToFps(scc->MinFrameInterval);
 						const double minFps = intervalToFps(scc->MaxFrameInterval);
 
+						// This media type is one size in one format, so the
+						// rates it offers belong to that format - an
+						// uncompressed pin capping out well below a compressed
+						// one at the same size is the whole reason they are
+						// kept apart, see VideoPixelFormat.
+						QList<int> rates;
+
 						int nominal = qRound(intervalToFps(avgTimePerFrame));
 
-						if (nominal > 0 && !entry.frameRates.contains(nominal))
-							entry.frameRates << nominal;
+						if (nominal > 0)
+							rates << nominal;
 
 						// A pin that accepts a range of intervals will take
 						// anything within it, so there is no list to show -
@@ -481,9 +492,11 @@ QList<VideoCaptureFormat> pica_dshow_capture_formats(const QString &device)
 						{
 							const int fps = kDshowStandardFrameRates[r];
 
-							if (fps >= minFps && fps <= maxFps && !entry.frameRates.contains(fps))
-								entry.frameRates << fps;
+							if (fps >= minFps && fps <= maxFps && !rates.contains(fps))
+								rates << fps;
 						}
+
+						pica_merge_capture_rates(entry, codec, rates);
 
 						freeMediaType(mt);
 					}
@@ -519,7 +532,7 @@ QList<VideoCaptureFormat> pica_dshow_capture_formats(const QString &device)
 
 		entry.compressedFormats = ordered;
 
-		std::sort(entry.frameRates.begin(), entry.frameRates.end(), std::greater<int>());
+		pica_finish_capture_format(entry);
 
 		result << entry;
 	}

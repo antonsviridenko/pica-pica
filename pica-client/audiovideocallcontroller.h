@@ -95,6 +95,11 @@ private:
 	// Reassembly of incoming 0x77 fragments into whole encoded frames.
 	VideoFrameAssembler m_videoAssembler;
 
+	// The capture frame rate this call asked the camera for, so that
+	// video_capture_started() can say when the camera delivered less. Zero
+	// before the video pipeline has been started.
+	int m_requestedFrameRate;
+
 	void playEarpieceTone(void (TonePlayer::*tone)());
 	void playRingTone();
 	void stopTones();
@@ -117,7 +122,7 @@ private slots:
 	void capture_clipping(double pinnedPercent, double peakDb);
 	void incoming_audio_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
 
-	void video_capture_started(QString codec, int width, int height);
+	void video_capture_started(QString codec, int width, int height, double frameRate);
 	void send_video_packet(QByteArray data, bool is_last_fragment);
 	void incoming_video_params(QByteArray peer_id, QString codec, quint16 width, quint16 height);
 	void incoming_video_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
