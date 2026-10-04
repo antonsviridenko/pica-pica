@@ -24,7 +24,7 @@ set -o nounset
 set -o pipefail
 
 MXE_REPO_URL='https://github.com/mxe/mxe.git'
-MXE_COMMIT=${MXE_COMMIT:-4efbb3567463a6d0a4d8ad7b822af0881bb1d9f8}
+MXE_COMMIT=${MXE_COMMIT:-a9135e50775889ef9448cf12b72da0ea25aa04c1}
 MXE_TARGETS='i686-w64-mingw32.shared x86_64-w64-mingw32.shared'
 MXE_PACKAGES='cc qtbase ffmpeg openssl miniupnpc libevent sqlite webrtc-audio-processing nsis'
 MXE_PATCHES='mxe_qtbase_strip_excess_deps.patch mxe_ffmpeg_strip_excess_deps.patch'
