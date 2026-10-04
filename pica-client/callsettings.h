@@ -60,6 +60,28 @@ const int kDefaultCaptureWidth = 640;
 const int kDefaultCaptureHeight = 480;
 const int kDefaultCaptureFrameRate = 15;
 
+// The hardware paths video may be encoded or decoded through, as flags to
+// combine - one per checkbox on the "Video Devices" tab, and named after the
+// FFmpeg component behind each. Which of them a build offers depends on the
+// platform: VAAPI where there is libva, the rest on Windows only, and Direct3D
+// 12 only with an FFmpeg new enough to have it (HAVE_D3D12VA).
+//
+// Each is a request rather than a guarantee. A path FFmpeg was built without,
+// one with no usable device, or one that will not open for the stream at hand
+// is passed over for the next one enabled, and with none left the work is
+// done in software - see VideoDevice for the order they are tried in.
+enum VideoAcceleration
+{
+	// Encoding and decoding.
+	VideoAccelerationVaapi           = 0x01,
+	VideoAccelerationD3d12va         = 0x02,
+	// Encoding only: FFmpeg has no Media Foundation decoders.
+	VideoAccelerationMediaFoundation = 0x04,
+	// Decoding only: FFmpeg has no Direct3D 11 or DXVA2 encoders.
+	VideoAccelerationD3d11va         = 0x08,
+	VideoAccelerationDxva2           = 0x10
+};
+
 struct CallSettings
 {
 	// FFmpeg codec names, e.g. "h264" and "opus".
@@ -76,6 +98,12 @@ struct CallSettings
 	int captureWidth;
 	int captureHeight;
 	int captureFrameRate;
+
+	// VideoAcceleration flags for the two directions, out of the checkboxes
+	// this build offers. Rendering straight from GPU memory is not among them:
+	// it belongs to the window drawing the frames rather than to the decoder.
+	int videoEncodingAcceleration;
+	int videoDecodingAcceleration;
 
 	// Reads the stored settings, filling in the defaults above for anything
 	// that was never set. Must be called from a thread that may touch the

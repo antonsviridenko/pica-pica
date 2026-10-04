@@ -227,7 +227,7 @@ test -x ../../configure || die "../../configure not found, run ./autogen.sh in t
 rm -rf build_pica-pica
 mkdir -p build_pica-pica
 cd build_pica-pica
-../../../configure --host=$arch --prefix=$PREFIX
+../../../configure --host=$arch --prefix=$PREFIX --enable-d3d12va
 make -j$(nproc)
 make install
 make clean

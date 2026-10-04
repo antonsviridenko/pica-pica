@@ -101,6 +101,31 @@ CallSettings CallSettings::load()
 	cs.captureHeight = st.loadValue("video.capture_height", kDefaultCaptureHeight).toInt();
 	cs.captureFrameRate = st.loadValue("video.capture_framerate", kDefaultCaptureFrameRate).toInt();
 
+	// Only the keys this build has checkboxes for: a database carried over
+	// from another platform must not switch on a path that cannot exist here.
+	cs.videoEncodingAcceleration = 0;
+	cs.videoDecodingAcceleration = 0;
+#ifdef HAVE_VAAPI
+	if (st.loadValue("video.vaapi_encoding", 0).toBool())
+		cs.videoEncodingAcceleration |= VideoAccelerationVaapi;
+	if (st.loadValue("video.vaapi_decoding", 0).toBool())
+		cs.videoDecodingAcceleration |= VideoAccelerationVaapi;
+#endif
+#ifdef HAVE_D3D12VA
+	if (st.loadValue("video.d3d12va_encoding", 0).toBool())
+		cs.videoEncodingAcceleration |= VideoAccelerationD3d12va;
+	if (st.loadValue("video.d3d12va_decoding", 0).toBool())
+		cs.videoDecodingAcceleration |= VideoAccelerationD3d12va;
+#endif
+#ifdef Q_OS_WIN
+	if (st.loadValue("video.mediafoundation_encoding", 0).toBool())
+		cs.videoEncodingAcceleration |= VideoAccelerationMediaFoundation;
+	if (st.loadValue("video.d3d11va_decoding", 0).toBool())
+		cs.videoDecodingAcceleration |= VideoAccelerationD3d11va;
+	if (st.loadValue("video.dxva2_decoding", 0).toBool())
+		cs.videoDecodingAcceleration |= VideoAccelerationDxva2;
+#endif
+
 	// A stored value that makes no sense - a hand-edited database, or a
 	// setting written by a build that offered something this one does not -
 	// would otherwise be passed to the encoder and fail the call rather than

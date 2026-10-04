@@ -18,6 +18,7 @@
 #define VIDEODEVICE_H
 
 #include "mediadevice.h"
+#include "callsettings.h"
 #include "vaapi.h"
 #include <QObject>
 #include <QString>
@@ -173,22 +174,31 @@ public:
 	// looking for one to forward, so choosing a codec the camera can produce
 	// itself gets that one rather than merely a compatible one.
 	//
-	// useVaapi asks for the frames to be encoded on the GPU, through whichever
-	// accelerator the build has - VAAPI where there is libva, Direct3D 12 on
-	// Windows. It is a request, not a guarantee: with no such support built
-	// in, without usable hardware, or if the hardware encoder will not open,
-	// capture falls back to encoding in software.
+	// acceleration is a set of VideoAcceleration flags naming the hardware
+	// encoders that may be tried, in this order when several are set: VAAPI,
+	// Direct3D 12, Media Foundation. Each is a request, not a guarantee: one not
+	// built in, without usable hardware, or that will not open is passed over
+	// for the next, and with none left capture encodes in software. Flags for
+	// decoding-only paths are ignored.
 	Q_INVOKABLE void configureCapture(QString deviceName, int width, int height, int frameRate,
 	                                  bool preferCompressed, QString codec, int bitrate,
-	                                  bool useVaapi);
+	                                  int acceleration);
 
-	// useVaapi decodes on the GPU. useVaapiRender additionally keeps the
-	// decoded frames there and emits them through hwFrameReady() instead of
-	// frameReady(), for a renderer that can draw a VA surface directly; it
-	// implies GPU decoding, since there is no surface to draw otherwise. Both
-	// fall back to software the same way capture does.
+	// acceleration is the decoding counterpart of configureCapture()'s: the
+	// VideoAcceleration flags for the GPU decoders that may be tried, in this
+	// order: VAAPI, Direct3D 11, Direct3D 12, DXVA2. The first whose device
+	// comes up is the one used - whether the GPU can decode the particular
+	// stream is only found out from the stream itself, and a GPU that cannot
+	// leaves decoding in software rather than moving on to the next API.
+	//
+	// useVaapiRender additionally keeps the decoded frames on the GPU and emits
+	// them through hwFrameReady() instead of frameReady(), for a renderer that
+	// can draw a VA surface directly; it implies VAAPI decoding, since there is
+	// no surface to draw otherwise. The Windows decoders always bring their
+	// frames back to system memory - nothing in the client can draw a Direct3D
+	// surface yet.
 	Q_INVOKABLE void configurePlayback(QString codec, int width, int height,
-	                                   bool useVaapi, bool useVaapiRender);
+	                                   int acceleration, bool useVaapiRender);
 
 	// Push one complete encoded frame (already reassembled from 0x77
 	// fragments by the caller) into the decode queue. Safe to call from any
@@ -312,6 +322,14 @@ public:
 	// the same way it may refuse any other request.
 	static QList<VideoCaptureFormat> CaptureFormats(const QString &device);
 
+	// Whether the FFmpeg the client runs with was built with what one
+	// acceleration flag needs in the given direction: a hardware encoder for at
+	// least one of the call codecs, or the hardware context and a hwaccel for
+	// at least one of their decoders. Says nothing about whether this machine's
+	// GPU can use it - only whether there is anything to try at all, which is
+	// what the settings dialog needs to know before offering it.
+	static bool AccelerationBuiltIn(VideoAcceleration acceleration, bool encoding);
+
 private:
 	QString m_deviceName;
 	QString m_codec;
@@ -320,7 +338,9 @@ private:
 	int m_frameRate;
 	int m_bitrate;
 	bool m_preferCompressed;
-	bool m_useVaapi;
+	// VideoAcceleration flags; which of them apply depends on the direction
+	// this instance was configured for.
+	int m_acceleration;
 	bool m_useVaapiRender;
 
 	QAtomicInt m_abort;

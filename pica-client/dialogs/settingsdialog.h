@@ -199,6 +199,31 @@ private:
 	// from GPU memory; only one of the two is ever visible.
 	VaapiRenderWidget *videoPreviewGpu;
 #endif
+	// One checkbox per Windows GPU path, encoding and decoding separately,
+	// since which of them works depends on the GPU and its driver and is only
+	// found out by trying - see VideoAcceleration. When several are ticked
+	// VideoDevice tries them in a fixed order, so each one can also be tested
+	// on its own by unticking the others.
+#ifdef HAVE_D3D12VA
+	QCheckBox *cbD3d12vaEncoding;
+	QCheckBox *cbD3d12vaDecoding;
+#endif
+#ifdef Q_OS_WIN
+	QCheckBox *cbMediaFoundationEncoding;
+	QCheckBox *cbD3d11vaDecoding;
+	QCheckBox *cbDxva2Decoding;
+#endif
+	// Greys out a checkbox for a path the FFmpeg the client runs with was
+	// built without, saying so in its tooltip, rather than letting it be
+	// ticked and then quietly fall back to software.
+	void offerAcceleration(QCheckBox *cb, VideoAcceleration acceleration, bool encoding);
+
+	// VideoAcceleration flags out of the checkboxes as they stand, for the
+	// local pipeline test - which runs on what the dialog shows rather than
+	// on what was last stored.
+	int selectedVideoEncodingAcceleration() const;
+	int selectedVideoDecodingAcceleration() const;
+
 	VideoDevice *testCam;
 	VideoDevice *testDecoder;
 	QThread testCamThread;

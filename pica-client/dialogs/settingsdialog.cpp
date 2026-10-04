@@ -26,6 +26,7 @@
 #include <QGroupBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
 #include <QFormLayout>
 #include <QLabel>
 #include <QDebug>
@@ -375,24 +376,72 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	cbPreferCompressed = new QCheckBox(tr("Prefer compressed formats if provided by the camera"), this);
 
-#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
-	// Encoding is offered wherever there is an accelerator to encode on,
-	// named after the one this build uses; decoding and rendering below are
-	// VAAPI only, since the surfaces a D3D12 decoder produces have no way yet
-	// to reach the widget that would draw them.
 #ifdef HAVE_VAAPI
 	cbVaapiEncoding = new QCheckBox(tr("enable VAAPI-accelerated hardware encoding"), this);
-#else
-	cbVaapiEncoding = new QCheckBox(tr("enable Direct3D 12 accelerated hardware encoding"), this);
-#endif
-#endif
-
-#ifdef HAVE_VAAPI
 	cbVaapiDecoding = new QCheckBox(tr("enable VAAPI-accelerated hardware decoding"), this);
 	cbVaapiRendering = new QCheckBox(tr("enable VAAPI accelerated hardware rendering"), this);
 	// Drawing a VA surface means having decoded into one first, so rendering
 	// brings decoding along with it whether or not it was asked for.
 	cbVaapiRendering->setToolTip(tr("Requires hardware decoding, which is enabled along with it"));
+	offerAcceleration(cbVaapiEncoding, VideoAccelerationVaapi, true);
+	offerAcceleration(cbVaapiDecoding, VideoAccelerationVaapi, false);
+#endif
+
+#ifdef Q_OS_WIN
+	// Encoding and decoding side by side rather than one checkbox per line:
+	// five lines of them would push the preview below off a small screen.
+	QGroupBox *gbHwAccel = new QGroupBox(tr("GPU acceleration"), this);
+	QGridLayout *hwAccelLayout = new QGridLayout();
+	int encodingRow = 1;
+	int decodingRow = 1;
+
+	hwAccelLayout->addWidget(new QLabel(tr("Encoding:"), this), 0, 0);
+	hwAccelLayout->addWidget(new QLabel(tr("Decoding:"), this), 0, 1);
+
+	// Listed in the order VideoDevice tries them, which is what decides the
+	// one used when several are ticked.
+#ifdef HAVE_D3D12VA
+	cbD3d12vaEncoding = new QCheckBox(tr("Direct3D 12"), this);
+	cbD3d12vaEncoding->setToolTip(tr("Encodes on the GPU through Direct3D 12 Video. Needs a "
+	                                 "recent Windows and a GPU driver that implements Direct3D "
+	                                 "12 video encoding.\n"
+	                                 "Tried before Media Foundation when both are ticked."));
+	offerAcceleration(cbD3d12vaEncoding, VideoAccelerationD3d12va, true);
+	hwAccelLayout->addWidget(cbD3d12vaEncoding, encodingRow++, 0);
+#endif
+
+	cbMediaFoundationEncoding = new QCheckBox(tr("Media Foundation"), this);
+	cbMediaFoundationEncoding->setToolTip(tr("Encodes on the GPU through the hardware encoder "
+	                                         "the GPU driver registers with Windows. Works with "
+	                                         "older GPUs and drivers too. Microsoft's software "
+	                                         "encoder is never used through this - without a "
+	                                         "hardware one, encoding falls back to libx264."));
+	offerAcceleration(cbMediaFoundationEncoding, VideoAccelerationMediaFoundation, true);
+	hwAccelLayout->addWidget(cbMediaFoundationEncoding, encodingRow++, 0);
+
+	cbD3d11vaDecoding = new QCheckBox(tr("Direct3D 11"), this);
+	cbD3d11vaDecoding->setToolTip(tr("Decodes on the GPU through Direct3D 11 Video, the most "
+	                                 "widely supported way on Windows 8 and later.\n"
+	                                 "Tried first when several are ticked."));
+	offerAcceleration(cbD3d11vaDecoding, VideoAccelerationD3d11va, false);
+	hwAccelLayout->addWidget(cbD3d11vaDecoding, decodingRow++, 1);
+
+#ifdef HAVE_D3D12VA
+	cbD3d12vaDecoding = new QCheckBox(tr("Direct3D 12"), this);
+	cbD3d12vaDecoding->setToolTip(tr("Decodes on the GPU through Direct3D 12 Video.\n"
+	                                 "Tried after Direct3D 11 when both are ticked."));
+	offerAcceleration(cbD3d12vaDecoding, VideoAccelerationD3d12va, false);
+	hwAccelLayout->addWidget(cbD3d12vaDecoding, decodingRow++, 1);
+#endif
+
+	cbDxva2Decoding = new QCheckBox(tr("DXVA2"), this);
+	cbDxva2Decoding->setToolTip(tr("Decodes on the GPU through DirectX Video Acceleration 2, "
+	                               "on top of Direct3D 9 - for GPUs and drivers too old for "
+	                               "the others.\nTried last when several are ticked."));
+	offerAcceleration(cbDxva2Decoding, VideoAccelerationDxva2, false);
+	hwAccelLayout->addWidget(cbDxva2Decoding, decodingRow++, 1);
+
+	gbHwAccel->setLayout(hwAccelLayout);
 #endif
 
 	btVideoTest = new QPushButton(tr("Test 📷"), this);
@@ -429,12 +478,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videodevLayout->addWidget(videoDevRefresh);
 	videodevLayout->addLayout(videoFormatLayout);
 	videodevLayout->addWidget(cbPreferCompressed);
-#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
-	videodevLayout->addWidget(cbVaapiEncoding);
-#endif
 #ifdef HAVE_VAAPI
+	videodevLayout->addWidget(cbVaapiEncoding);
 	videodevLayout->addWidget(cbVaapiDecoding);
 	videodevLayout->addWidget(cbVaapiRendering);
+#endif
+#ifdef Q_OS_WIN
+	videodevLayout->addWidget(gbHwAccel);
 #endif
 	videodevLayout->addWidget(btVideoTest);
 	// The preview takes the tab's spare height, where it used to go to a spacer
@@ -896,11 +946,6 @@ void SettingsDialog::toggleVideoTest()
 	videoFpsElapsed.start();
 	videoFpsTimer->start();
 
-	bool vaapiEncoding = false;
-#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
-	vaapiEncoding = cbVaapiEncoding->isChecked();
-#endif
-
 	videoTestPathReport.clear();
 
 	// The settings as they stand in the dialog, not as they were last stored:
@@ -913,7 +958,7 @@ void SettingsDialog::toggleVideoTest()
 	                           Q_ARG(bool, cbPreferCompressed->isChecked()),
 	                           Q_ARG(QString, callVideoCodec->itemData(callVideoCodec->currentIndex()).toString()),
 	                           Q_ARG(int, callVideoBitrate->value() * 1000),
-	                           Q_ARG(bool, vaapiEncoding));
+	                           Q_ARG(int, selectedVideoEncodingAcceleration()));
 	QMetaObject::invokeMethod(testCam, "Capture", Qt::QueuedConnection);
 
 	// The decoder is only started once the camera has settled on a format,
@@ -942,10 +987,8 @@ void SettingsDialog::videoTestCaptureStarted(QString codec, int width, int heigh
 	                  : tr("%1 %2x%3").arg(codec).arg(width).arg(height);
 	videoPreview->setText(tr("Capturing %1...").arg(videoTestFormat));
 
-	bool vaapiDecoding = false;
 	bool vaapiRendering = false;
 #ifdef HAVE_VAAPI
-	vaapiDecoding = cbVaapiDecoding->isChecked();
 	// Asking for frames to be kept in GPU memory once it is known that they
 	// cannot be drawn from there would only mean starting each test with a
 	// blank preview until it failed again.
@@ -955,7 +998,8 @@ void SettingsDialog::videoTestCaptureStarted(QString codec, int width, int heigh
 	QMetaObject::invokeMethod(testDecoder, "configurePlayback", Qt::QueuedConnection,
 	                           Q_ARG(QString, codec),
 	                           Q_ARG(int, width), Q_ARG(int, height),
-	                           Q_ARG(bool, vaapiDecoding), Q_ARG(bool, vaapiRendering));
+	                           Q_ARG(int, selectedVideoDecodingAcceleration()),
+	                           Q_ARG(bool, vaapiRendering));
 	QMetaObject::invokeMethod(testDecoder, "Play", Qt::QueuedConnection);
 }
 
@@ -1413,6 +1457,64 @@ int SettingsDialog::selectedVideoFrameRate() const
 	return (ok && fps > 0) ? fps : kDefaultCaptureFrameRate;
 }
 
+void SettingsDialog::offerAcceleration(QCheckBox *cb, VideoAcceleration acceleration, bool encoding)
+{
+	if (VideoDevice::AccelerationBuiltIn(acceleration, encoding))
+		return;
+
+	cb->setEnabled(false);
+	cb->setToolTip(encoding
+	               ? tr("Not available: the FFmpeg this program runs with was built without "
+	                    "these encoders.")
+	               : tr("Not available: the FFmpeg this program runs with was built without "
+	                    "support for these decoders."));
+}
+
+int SettingsDialog::selectedVideoEncodingAcceleration() const
+{
+	int flags = 0;
+
+	// isEnabled() as well, so that a path greyed out by offerAcceleration()
+	// but ticked in a stored setting is not passed on - it would only be
+	// skipped with a warning further down.
+#ifdef HAVE_VAAPI
+	if (cbVaapiEncoding->isEnabled() && cbVaapiEncoding->isChecked())
+		flags |= VideoAccelerationVaapi;
+#endif
+#ifdef HAVE_D3D12VA
+	if (cbD3d12vaEncoding->isEnabled() && cbD3d12vaEncoding->isChecked())
+		flags |= VideoAccelerationD3d12va;
+#endif
+#ifdef Q_OS_WIN
+	if (cbMediaFoundationEncoding->isEnabled() && cbMediaFoundationEncoding->isChecked())
+		flags |= VideoAccelerationMediaFoundation;
+#endif
+
+	return flags;
+}
+
+int SettingsDialog::selectedVideoDecodingAcceleration() const
+{
+	int flags = 0;
+
+#ifdef HAVE_VAAPI
+	if (cbVaapiDecoding->isEnabled() && cbVaapiDecoding->isChecked())
+		flags |= VideoAccelerationVaapi;
+#endif
+#ifdef HAVE_D3D12VA
+	if (cbD3d12vaDecoding->isEnabled() && cbD3d12vaDecoding->isChecked())
+		flags |= VideoAccelerationD3d12va;
+#endif
+#ifdef Q_OS_WIN
+	if (cbD3d11vaDecoding->isEnabled() && cbD3d11vaDecoding->isChecked())
+		flags |= VideoAccelerationD3d11va;
+	if (cbDxva2Decoding->isEnabled() && cbDxva2Decoding->isChecked())
+		flags |= VideoAccelerationDxva2;
+#endif
+
+	return flags;
+}
+
 void SettingsDialog::callAudioCodecChanged()
 {
 	const QString codec = callAudioCodec->itemData(callAudioCodec->currentIndex()).toString();
@@ -1660,12 +1762,19 @@ void SettingsDialog::loadSettings()
 	// actually changes - and the stored codec is often the one already showing.
 	callAudioCodecChanged();
 
-#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
-	cbVaapiEncoding->setChecked(st.loadValue("video.vaapi_encoding", 0).toBool());
-#endif
 #ifdef HAVE_VAAPI
+	cbVaapiEncoding->setChecked(st.loadValue("video.vaapi_encoding", 0).toBool());
 	cbVaapiDecoding->setChecked(st.loadValue("video.vaapi_decoding", 0).toBool());
 	cbVaapiRendering->setChecked(st.loadValue("video.vaapi_rendering", 0).toBool());
+#endif
+#ifdef HAVE_D3D12VA
+	cbD3d12vaEncoding->setChecked(st.loadValue("video.d3d12va_encoding", 0).toBool());
+	cbD3d12vaDecoding->setChecked(st.loadValue("video.d3d12va_decoding", 0).toBool());
+#endif
+#ifdef Q_OS_WIN
+	cbMediaFoundationEncoding->setChecked(st.loadValue("video.mediafoundation_encoding", 0).toBool());
+	cbD3d11vaDecoding->setChecked(st.loadValue("video.d3d11va_decoding", 0).toBool());
+	cbDxva2Decoding->setChecked(st.loadValue("video.dxva2_decoding", 0).toBool());
 #endif
 
 	QString audioCapDevVal = st.loadValue("audio.capture_device", "default").toString();
@@ -1759,12 +1868,19 @@ void SettingsDialog::storeSettings()
 		audioBitrateKbps = callAudioBitrate->value();
 
 	st.storeValue("call.audio_bitrate_kbps", QString::number(audioBitrateKbps));
-#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
-	st.storeValue("video.vaapi_encoding", cbVaapiEncoding->isChecked() ? "1" : "0");
-#endif
 #ifdef HAVE_VAAPI
+	st.storeValue("video.vaapi_encoding", cbVaapiEncoding->isChecked() ? "1" : "0");
 	st.storeValue("video.vaapi_decoding", cbVaapiDecoding->isChecked() ? "1" : "0");
 	st.storeValue("video.vaapi_rendering", cbVaapiRendering->isChecked() ? "1" : "0");
+#endif
+#ifdef HAVE_D3D12VA
+	st.storeValue("video.d3d12va_encoding", cbD3d12vaEncoding->isChecked() ? "1" : "0");
+	st.storeValue("video.d3d12va_decoding", cbD3d12vaDecoding->isChecked() ? "1" : "0");
+#endif
+#ifdef Q_OS_WIN
+	st.storeValue("video.mediafoundation_encoding", cbMediaFoundationEncoding->isChecked() ? "1" : "0");
+	st.storeValue("video.d3d11va_decoding", cbD3d11vaDecoding->isChecked() ? "1" : "0");
+	st.storeValue("video.dxva2_decoding", cbDxva2Decoding->isChecked() ? "1" : "0");
 #endif
 	st.storeValue("audio.capture_device", audioCaptureDev->itemData(audioCaptureDev->currentIndex()).toString());
 	st.storeValue("audio.playback_device", audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString());

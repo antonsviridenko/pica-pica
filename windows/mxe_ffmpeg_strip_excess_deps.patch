@@ -30,9 +30,9 @@ index 8dd80d8..4c7daec 100644
 +# package provides their headers yet, so configure prints a warning for each of
 +# them and leaves them out. That is deliberate: adding ffnvcodec (NVIDIA),
 +# libvpl (Intel QSV) or the AMF headers as a dependency is then the only change
-+# needed to get them. The MediaFoundation encoders (h264_mf, hevc_mf) and the
-+# dxva2/d3d11va/d3d12va hardware decoders need nothing but mingw-w64 and are
-+# available right away.
++# needed to get them. The Media Foundation and Direct3D 12 encoders (h264_mf,
++# hevc_mf, h264_d3d12va, hevc_d3d12va) and the dxva2/d3d11va/d3d12va decoders
++# need nothing but mingw-w64 and are available right away.
  define $(PKG)_BUILD
      cd '$(BUILD_DIR)' && '$(SOURCE_DIR)/configure' \
          --cross-prefix='$(TARGET)'- \
@@ -72,7 +72,7 @@ index 8dd80d8..4c7daec 100644
 +        --enable-decoder=h264,hevc,vp9,libvpx_vp9,mjpeg,rawvideo,opus,libopus,adpcm_g722,pcm_alaw,pcm_mulaw,pcm_s16le \
 +        --enable-encoder=libx264,libx265,libvpx_vp9,mjpeg,libopus,opus,adpcm_g722,pcm_alaw,pcm_mulaw,pcm_s16le \
 +        --enable-hwaccel=h264_dxva2,h264_d3d11va,h264_d3d11va2,h264_d3d12va,hevc_dxva2,hevc_d3d11va,hevc_d3d11va2,hevc_d3d12va,vp9_dxva2,vp9_d3d11va,vp9_d3d11va2,vp9_d3d12va \
-+        --enable-encoder=h264_mf,hevc_mf \
++        --enable-encoder=h264_mf,hevc_mf,h264_d3d12va,hevc_d3d12va \
 +        --enable-hwaccel=h264_nvdec,hevc_nvdec,vp9_nvdec,mjpeg_nvdec \
 +        --enable-decoder=h264_qsv,hevc_qsv,vp9_qsv,mjpeg_qsv,h264_cuvid,hevc_cuvid,vp9_cuvid,mjpeg_cuvid \
 +        --enable-encoder=h264_nvenc,hevc_nvenc,h264_qsv,hevc_qsv,h264_amf,hevc_amf \

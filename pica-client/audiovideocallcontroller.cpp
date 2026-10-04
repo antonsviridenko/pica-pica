@@ -271,7 +271,6 @@ void AudioVideoCallController::startVideoPipeline()
 	cam->setMaxFragmentSize(PICA_MEDIA_SAFE_PAYLOAD);
 
 	bool preferCompressed = st.loadValue("video.prefer_compressed", 0).toBool();
-	bool vaapiEncoding = st.loadValue("video.vaapi_encoding", 0).toBool();
 
 	// Kept so that video_capture_started() can tell whether the camera
 	// honoured it, which is not something the camera reports.
@@ -287,7 +286,7 @@ void AudioVideoCallController::startVideoPipeline()
 	                           Q_ARG(int, cs.captureFrameRate),
 	                           Q_ARG(bool, preferCompressed),
 	                           Q_ARG(QString, cs.videoCodec), Q_ARG(int, cs.videoBitrateKbps * 1000),
-	                           Q_ARG(bool, vaapiEncoding));
+	                           Q_ARG(int, cs.videoEncodingAcceleration));
 	QMetaObject::invokeMethod(cam, "Capture", Qt::QueuedConnection);
 
 	// remotevideo is configured lazily, once the peer's own 0x75 (see
@@ -580,7 +579,7 @@ void AudioVideoCallController::incoming_video_params(QByteArray peer_id, QString
 		return;
 
 	Settings st(config_dbname);
-	bool vaapiDecoding = st.loadValue("video.vaapi_decoding", 0).toBool();
+	const CallSettings cs = CallSettings::load();
 	bool vaapiRendering = st.loadValue("video.vaapi_rendering", 0).toBool();
 
 #ifdef HAVE_VAAPI
@@ -592,7 +591,7 @@ void AudioVideoCallController::incoming_video_params(QByteArray peer_id, QString
 
 	QMetaObject::invokeMethod(remotevideo, "configurePlayback", Qt::QueuedConnection,
 	                           Q_ARG(QString, codec), Q_ARG(int, (int)width), Q_ARG(int, (int)height),
-	                           Q_ARG(bool, vaapiDecoding), Q_ARG(bool, vaapiRendering));
+	                           Q_ARG(int, cs.videoDecodingAcceleration), Q_ARG(bool, vaapiRendering));
 	QMetaObject::invokeMethod(remotevideo, "Play", Qt::QueuedConnection);
 }
 
