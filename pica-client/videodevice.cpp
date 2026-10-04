@@ -31,6 +31,10 @@
 #include <algorithm>
 #include <functional>
 
+#ifdef Q_OS_WIN
+#include <objbase.h>
+#endif
+
 #ifdef Q_OS_LINUX
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
@@ -1079,15 +1083,63 @@ static int openCamera(const AVInputFormat *ifmt, const QByteArray &url,
 #endif
 	}
 
+#ifdef Q_OS_WIN
+	// The dshow demuxer calls CoInitialize(0) and CoUninitialize() once each
+	// for every camera it opens - the latter on a failed open as well, and
+	// whether or not the former succeeded. Capture() keeps this thread in the
+	// multithreaded apartment, where dshow's CoInitialize(0) fails and counts
+	// for nothing, so its CoUninitialize() would take away the reference
+	// Capture() holds. This reference is the one for it to take instead.
+	// Should dshow not get as far as either call, it is merely left over,
+	// which keeps the thread in the apartment it should be in anyway.
+	CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+#endif
+
 	int ret = avformat_open_input(ifmt_ctx, url.constData(), ifmt, &opts);
 	av_dict_free(&opts);
 
 	return ret;
 }
 
+#ifdef Q_OS_WIN
+// Holds the calling thread in COM's multithreaded apartment for as long as it
+// exists, if the thread is not already committed to the single-threaded one.
+//
+// Media Foundation, which the h264_mf and hevc_mf encoders go through, refuses
+// a thread in the single-threaded apartment - and that is where the dshow
+// demuxer puts the capture thread when it opens the camera, unless the thread
+// has joined the multithreaded one first. DirectShow itself works in either.
+class ComMultithreadedScope
+{
+public:
+	ComMultithreadedScope() : m_hr(CoInitializeEx(nullptr, COINIT_MULTITHREADED))
+	{
+		if (m_hr == RPC_E_CHANGED_MODE)
+			qWarning() << "The capture thread is already in COM's single-threaded apartment, "
+			              "Media Foundation encoding will not be available";
+	}
+
+	~ComMultithreadedScope()
+	{
+		if (SUCCEEDED(m_hr))
+			CoUninitialize();
+	}
+
+private:
+	HRESULT m_hr;
+};
+#endif
+
 void VideoDevice::Capture()
 {
 	m_abort.storeRelaxed(0);
+
+#ifdef Q_OS_WIN
+	// Before the camera is opened - see ComMultithreadedScope - and for the
+	// whole of the capture, since the encoder is used on this thread until the
+	// loop below returns.
+	ComMultithreadedScope comApartment;
+#endif
 
 	avdevice_register_all();
 #if LIBAVFORMAT_VERSION_MAJOR < 58
@@ -1397,7 +1449,9 @@ static AVCodecContext *openHwEncoder(const AVCodec *enc, AVBufferRef *hw_device_
 
 	if (ret < 0)
 	{
-		qWarning() << QString("The %1 encoder would not open (%2), encoding in software")
+		// Not "encoding in software" here: the caller may have another way of
+		// opening it left to try.
+		qWarning() << QString("The %1 encoder would not open (%2)")
 		              .arg(QLatin1String(enc->name), ff_errstr(ret));
 		av_buffer_unref(hw_frames_ref);
 		avcodec_free_context(&enc_ctx);
@@ -1561,20 +1615,66 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 
 		if (hw_device_ref)
 		{
-			// The D3D12 encoders keep up to async_depth frames in flight and
-			// hand a packet back only once that many have gone in, so the
-			// default of two holds every frame back by one - a frame interval
-			// of latency for nothing, with one frame at a time coming in.
-			AVDictionary *options = nullptr;
+			// Given only a bitrate, FFmpeg picks the rate control itself and
+			// asks the driver for VBR and then CBR - nothing else. A driver can
+			// refuse both, AMD's does, so QVBR is asked for explicitly after
+			// that: still held to the bitrate, with a quality target on top.
+			// Null is FFmpeg's own choice.
+			static const char * const kRateControls[] = { nullptr, "QVBR" };
 
-			av_dict_set(&options, "async_depth", "1", 0);
+			for (unsigned int r = 0; !enc_ctx && r < sizeof(kRateControls) / sizeof(kRateControls[0]); r++)
+			{
+				// The D3D12 encoders keep up to async_depth frames in flight
+				// and hand a packet back only once that many have gone in, so
+				// the default of two holds every frame back by one - a frame
+				// interval of latency for nothing, with one frame at a time
+				// coming in.
+				AVDictionary *options = nullptr;
 
-			enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_D3D12,
-			                        m_width, m_height, frameRate, m_bitrate, gopSize,
-			                        &options, &hw_frames_ref);
+				av_dict_set(&options, "async_depth", "1", 0);
+				if (kRateControls[r])
+					av_dict_set(&options, "rc_mode", kRateControls[r], 0);
+
+				enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_D3D12,
+				                        m_width, m_height, frameRate, m_bitrate, gopSize,
+				                        &options, &hw_frames_ref);
+				av_dict_free(&options);
+			}
+
 			hardware = enc_ctx != nullptr;
 
-			av_dict_free(&options);
+			// None of the modes that follow a bitrate. Constant QP has no
+			// bitrate limit at all - a moving picture can take many times what
+			// the call was set to - so it is not used, but whether the driver
+			// has it is worth a line in the log: it decides whether this GPU
+			// could be used with rate control of our own instead.
+			if (!hardware)
+			{
+				AVDictionary *options = nullptr;
+				AVBufferRef *probe_frames_ref = nullptr;
+
+				av_dict_set(&options, "rc_mode", "CQP", 0);
+
+				AVCodecContext *probe = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_D3D12,
+				                                      m_width, m_height, frameRate, m_bitrate,
+				                                      gopSize, &options, &probe_frames_ref);
+				av_dict_free(&options);
+
+				// FFmpeg's own messages above say why each attempt failed;
+				// this says what the attempts were, and what the probe found.
+				qWarning() << QString("The %1 encoder would not open with any rate control that "
+				                      "follows a bitrate (FFmpeg's choice, then QVBR); it %2 with "
+				                      "constant QP. Encoding in software")
+				              .arg(QLatin1String(enc->name),
+				                   probe ? QStringLiteral("does open") : QStringLiteral("does not open either"));
+
+				if (probe)
+				{
+					avcodec_free_context(&probe);
+					av_buffer_unref(&probe_frames_ref);
+				}
+			}
+
 			av_buffer_unref(&hw_device_ref);
 		}
 		else if (enc)
