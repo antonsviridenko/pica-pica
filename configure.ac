@@ -92,6 +92,16 @@ AC_ARG_ENABLE([vaapi],
     AS_HELP_STRING([--disable-vaapi],
       [Disable VAAPI accelerated video encoding, decoding and rendering]))
 
+#checking if Direct3D 12 hardware encoding is wanted. The Windows counterpart
+#of the VAAPI encoding path above - there is no libva there, but FFmpeg can
+#reach the same GPU encoders through D3D12 Video. Autodetected the same way,
+#and only ever looked for when building for Windows.
+AC_ARG_ENABLE([d3d12va],
+    AS_HELP_STRING([--enable-d3d12va],
+      [Enable Direct3D 12 accelerated video encoding, Windows only (default: autodetect)])
+    AS_HELP_STRING([--disable-d3d12va],
+      [Disable Direct3D 12 accelerated video encoding]))
+
 #checking if PulseAudio device enumeration is wanted. Only affects what the
 #settings dialog can list; see the check further down.
 AC_ARG_ENABLE([pulse],
@@ -313,6 +323,48 @@ AS_IF([test "x$PICA_VAAPI_ENABLED" = "xyes" && test "x$enable_vaapi_x11" != "xno
         [AC_MSG_WARN(["libva-x11, libX11 or libGL not found - building without X11 rendering, hardware rendering will need an EGL session"])])
     ])
 ])
+
+#check whether FFmpeg knows how to encode through Direct3D 12, which is how a
+#Windows build reaches the GPU: libva is not part of that platform, but the
+#hwcontext machinery the VAAPI path uses carries a D3D12 device type as well,
+#and libavcodec has h264_d3d12va and hevc_d3d12va encoders to go with it.
+#
+#Nothing is linked for this - libavutil loads d3d12.dll itself when a device is
+#created - so all there is to check is that the headers are new enough to name
+#the device type and the pixel format. Whether those encoders were compiled
+#into the libavcodec being built against, and whether the machine the client
+#ends up running on has a GPU that can encode, are both runtime questions,
+#answered by falling back to the software encoder.
+AS_IF([test "x$TARGET_OS" = "xwindows" && test "x$enable_d3d12va" != "xno"], [
+  AC_MSG_CHECKING([whether FFmpeg supports Direct3D 12 video encoding])
+
+  pica_save_CPPFLAGS="$CPPFLAGS"
+  CPPFLAGS="$CPPFLAGS $FFMPEG_CFLAGS"
+
+  AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM(
+      [[#include <libavutil/hwcontext.h>
+        #include <libavutil/pixfmt.h>]],
+      [[enum AVHWDeviceType device = AV_HWDEVICE_TYPE_D3D12VA;
+        enum AVPixelFormat format = AV_PIX_FMT_D3D12;
+        (void)device; (void)format;]])],
+    [
+      PICA_D3D12VA_ENABLED=yes
+      AC_DEFINE([HAVE_D3D12VA], [1], [Define to 1 if FFmpeg can encode video through Direct3D 12])
+      AC_MSG_RESULT([yes])
+    ],
+    [
+      AC_MSG_RESULT([no])
+      AS_IF([test "x$enable_d3d12va" = "xyes"],
+        [AC_MSG_ERROR(["Direct3D 12 encoding was requested but this FFmpeg has no D3D12 hardware context"])],
+        [AC_MSG_WARN(["this FFmpeg has no D3D12 hardware context - building without Direct3D 12 encoding"])])
+    ])
+
+  CPPFLAGS="$pica_save_CPPFLAGS"
+])
+
+AS_IF([test "x$TARGET_OS" != "xwindows" && test "x$enable_d3d12va" = "xyes"],
+  [AC_MSG_ERROR(["Direct3D 12 encoding was requested but it only exists on Windows"])])
 ])
 
 AM_CONDITIONAL([PICA_VAAPI], [test "x$PICA_VAAPI_ENABLED" = "xyes"])

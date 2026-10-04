@@ -173,10 +173,11 @@ public:
 	// looking for one to forward, so choosing a codec the camera can produce
 	// itself gets that one rather than merely a compatible one.
 	//
-	// useVaapi asks for the frames to be encoded on the GPU. It is a request,
-	// not a guarantee: without VAAPI support built in, without usable
-	// hardware, or if the hardware encoder will not open, capture falls back
-	// to encoding in software.
+	// useVaapi asks for the frames to be encoded on the GPU, through whichever
+	// accelerator the build has - VAAPI where there is libva, Direct3D 12 on
+	// Windows. It is a request, not a guarantee: with no such support built
+	// in, without usable hardware, or if the hardware encoder will not open,
+	// capture falls back to encoding in software.
 	Q_INVOKABLE void configureCapture(QString deviceName, int width, int height, int frameRate,
 	                                  bool preferCompressed, QString codec, int bitrate,
 	                                  bool useVaapi);

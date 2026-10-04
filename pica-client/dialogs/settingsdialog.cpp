@@ -375,8 +375,19 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	cbPreferCompressed = new QCheckBox(tr("Prefer compressed formats if provided by the camera"), this);
 
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
+	// Encoding is offered wherever there is an accelerator to encode on,
+	// named after the one this build uses; decoding and rendering below are
+	// VAAPI only, since the surfaces a D3D12 decoder produces have no way yet
+	// to reach the widget that would draw them.
 #ifdef HAVE_VAAPI
 	cbVaapiEncoding = new QCheckBox(tr("enable VAAPI-accelerated hardware encoding"), this);
+#else
+	cbVaapiEncoding = new QCheckBox(tr("enable Direct3D 12 accelerated hardware encoding"), this);
+#endif
+#endif
+
+#ifdef HAVE_VAAPI
 	cbVaapiDecoding = new QCheckBox(tr("enable VAAPI-accelerated hardware decoding"), this);
 	cbVaapiRendering = new QCheckBox(tr("enable VAAPI accelerated hardware rendering"), this);
 	// Drawing a VA surface means having decoded into one first, so rendering
@@ -418,8 +429,10 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	videodevLayout->addWidget(videoDevRefresh);
 	videodevLayout->addLayout(videoFormatLayout);
 	videodevLayout->addWidget(cbPreferCompressed);
-#ifdef HAVE_VAAPI
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
 	videodevLayout->addWidget(cbVaapiEncoding);
+#endif
+#ifdef HAVE_VAAPI
 	videodevLayout->addWidget(cbVaapiDecoding);
 	videodevLayout->addWidget(cbVaapiRendering);
 #endif
@@ -884,7 +897,7 @@ void SettingsDialog::toggleVideoTest()
 	videoFpsTimer->start();
 
 	bool vaapiEncoding = false;
-#ifdef HAVE_VAAPI
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
 	vaapiEncoding = cbVaapiEncoding->isChecked();
 #endif
 
@@ -1647,8 +1660,10 @@ void SettingsDialog::loadSettings()
 	// actually changes - and the stored codec is often the one already showing.
 	callAudioCodecChanged();
 
-#ifdef HAVE_VAAPI
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
 	cbVaapiEncoding->setChecked(st.loadValue("video.vaapi_encoding", 0).toBool());
+#endif
+#ifdef HAVE_VAAPI
 	cbVaapiDecoding->setChecked(st.loadValue("video.vaapi_decoding", 0).toBool());
 	cbVaapiRendering->setChecked(st.loadValue("video.vaapi_rendering", 0).toBool());
 #endif
@@ -1744,8 +1759,10 @@ void SettingsDialog::storeSettings()
 		audioBitrateKbps = callAudioBitrate->value();
 
 	st.storeValue("call.audio_bitrate_kbps", QString::number(audioBitrateKbps));
-#ifdef HAVE_VAAPI
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
 	st.storeValue("video.vaapi_encoding", cbVaapiEncoding->isChecked() ? "1" : "0");
+#endif
+#ifdef HAVE_VAAPI
 	st.storeValue("video.vaapi_decoding", cbVaapiDecoding->isChecked() ? "1" : "0");
 	st.storeValue("video.vaapi_rendering", cbVaapiRendering->isChecked() ? "1" : "0");
 #endif

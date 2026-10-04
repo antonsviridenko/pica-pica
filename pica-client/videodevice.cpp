@@ -57,7 +57,7 @@ extern "C" {
 #include <libavutil/mem.h>
 #include <libavutil/error.h>
 #include <libswscale/swscale.h>
-#ifdef HAVE_VAAPI
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
 #include <libavutil/hwcontext.h>
 #endif
 }
@@ -110,21 +110,28 @@ static const struct
 #endif
 
 // Which FFmpeg encoder produces each of the codecs the "Video Codec" setting
-// offers, on the GPU and in software. Two names per codec because FFmpeg names
-// its external library encoders after the library rather than after the codec,
-// and the id as well so that a build without the library named here can still
-// fall back to whatever other encoder it has for the same codec.
+// offers, on the GPU and in software. Several names per codec because FFmpeg
+// names its external library encoders after the library rather than after the
+// codec, and names a hardware one after the API that drives it - VAAPI where
+// there is libva, Direct3D 12 on Windows. The id as well, so that a build
+// without the library named here can still fall back to whatever other encoder
+// it has for the same codec.
+//
+// A null hardware name means that API has no encoder for the codec: D3D12
+// Video defines H.264, HEVC and AV1 encoding and no VP9, so a call set to VP9
+// encodes in software on Windows however the acceleration setting stands.
 static const struct
 {
 	const char *codec;
 	AVCodecID id;
 	const char *vaapiEncoder;
+	const char *d3d12vaEncoder;
 	const char *swEncoder;
 } kVideoEncoders[] =
 {
-	{ "h264", AV_CODEC_ID_H264, "h264_vaapi", "libx264"    },
-	{ "hevc", AV_CODEC_ID_HEVC, "hevc_vaapi", "libx265"    },
-	{ "vp9",  AV_CODEC_ID_VP9,  "vp9_vaapi",  "libvpx-vp9" }
+	{ "h264", AV_CODEC_ID_H264, "h264_vaapi", "h264_d3d12va", "libx264"    },
+	{ "hevc", AV_CODEC_ID_HEVC, "hevc_vaapi", "hevc_d3d12va", "libx265"    },
+	{ "vp9",  AV_CODEC_ID_VP9,  "vp9_vaapi",  nullptr,        "libvpx-vp9" }
 };
 
 static int videoEncoderIndex(const QString &codec)
@@ -1281,6 +1288,83 @@ static AVPixelFormat swscaleSourceFormat(AVPixelFormat format, bool *fullRange)
 	return format;
 }
 
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
+// Opens one of FFmpeg's hardware encoders on a device that has already been
+// created, and makes the pool of GPU surfaces it takes its input from.
+//
+// Shared by the VAAPI and the Direct3D 12 paths, which differ only in the
+// device handed in here and in the pixel format naming the memory the surfaces
+// live in - from the pool onwards it is the same hwcontext machinery, and the
+// encoder is configured exactly as the software one is below.
+//
+// Returns the opened context with the pool it draws from in *hw_frames_ref, or
+// null with nothing left allocated and the reason logged, which leaves the
+// caller to encode in software.
+static AVCodecContext *openHwEncoder(const AVCodec *enc, AVBufferRef *hw_device_ref,
+                                     AVPixelFormat hw_pix_fmt, int width, int height,
+                                     AVRational frameRate, int64_t bitrate, int gopSize,
+                                     AVBufferRef **hw_frames_ref)
+{
+	AVCodecContext *enc_ctx = avcodec_alloc_context3(enc);
+
+	*hw_frames_ref = enc_ctx ? av_hwframe_ctx_alloc(hw_device_ref) : nullptr;
+
+	if (!*hw_frames_ref)
+	{
+		qWarning() << QString("Could not create a surface pool for the %1 encoder, encoding in software")
+		              .arg(QLatin1String(enc->name));
+		if (enc_ctx) avcodec_free_context(&enc_ctx);
+		return nullptr;
+	}
+
+	// The pool the encoder draws its input surfaces from. NV12 is what these
+	// encoders take; the frames themselves live in GPU memory, which is what
+	// hw_pix_fmt denotes.
+	AVHWFramesContext *frames_ctx = (AVHWFramesContext *)(*hw_frames_ref)->data;
+	frames_ctx->format = hw_pix_fmt;
+	frames_ctx->sw_format = AV_PIX_FMT_NV12;
+	frames_ctx->width = width;
+	frames_ctx->height = height;
+	frames_ctx->initial_pool_size = 20;
+
+	int ret = av_hwframe_ctx_init(*hw_frames_ref);
+
+	if (ret < 0)
+	{
+		qWarning() << QString("Could not initialise the surface pool for the %1 encoder (%2), encoding in software")
+		              .arg(QLatin1String(enc->name), ff_errstr(ret));
+		av_buffer_unref(hw_frames_ref);
+		avcodec_free_context(&enc_ctx);
+		return nullptr;
+	}
+
+	enc_ctx->width = width;
+	enc_ctx->height = height;
+	enc_ctx->pix_fmt = hw_pix_fmt;
+	enc_ctx->time_base = av_inv_q(frameRate);
+	enc_ctx->framerate = frameRate;
+	enc_ctx->bit_rate = bitrate;
+	enc_ctx->gop_size = gopSize;
+	enc_ctx->max_b_frames = 0;
+	enc_ctx->hw_frames_ctx = av_buffer_ref(*hw_frames_ref);
+
+	// No preset/tune here: those belong to the software encoders and mean
+	// nothing to a hardware one.
+	ret = avcodec_open2(enc_ctx, enc, nullptr);
+
+	if (ret < 0)
+	{
+		qWarning() << QString("The %1 encoder would not open (%2), encoding in software")
+		              .arg(QLatin1String(enc->name), ff_errstr(ret));
+		av_buffer_unref(hw_frames_ref);
+		avcodec_free_context(&enc_ctx);
+		return nullptr;
+	}
+
+	return enc_ctx;
+}
+#endif
+
 void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 {
 	const AVRational frameRate = cameraFrameRate(in_st, m_frameRate);
@@ -1315,9 +1399,9 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 	}
 
 	// The GPU encoder is tried first when asked for, and anything that goes
-	// wrong on the way - no such encoder built into FFmpeg, no usable VAAPI
-	// device, no surface pool, the encoder refusing to open - just leaves
-	// hardware false and takes the software path below.
+	// wrong on the way - no such encoder built into FFmpeg, no usable device,
+	// no surface pool, the encoder refusing to open - just leaves hardware
+	// false and takes the software path below.
 	bool hardware = false;
 	const AVCodec *enc = nullptr;
 	AVCodecContext *enc_ctx = nullptr;
@@ -1331,46 +1415,10 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 
 		if (hw_device_ref)
 		{
-			enc_ctx = avcodec_alloc_context3(enc);
-			hw_frames_ref = enc_ctx ? av_hwframe_ctx_alloc(hw_device_ref) : nullptr;
-
-			if (hw_frames_ref)
-			{
-				// The pool the encoder draws its input surfaces from. NV12 is
-				// what VAAPI encoders take; the frames themselves live in GPU
-				// memory, which is what AV_PIX_FMT_VAAPI denotes.
-				AVHWFramesContext *frames_ctx = (AVHWFramesContext *)hw_frames_ref->data;
-				frames_ctx->format = AV_PIX_FMT_VAAPI;
-				frames_ctx->sw_format = AV_PIX_FMT_NV12;
-				frames_ctx->width = m_width;
-				frames_ctx->height = m_height;
-				frames_ctx->initial_pool_size = 20;
-
-				if (av_hwframe_ctx_init(hw_frames_ref) >= 0)
-				{
-					enc_ctx->width = m_width;
-					enc_ctx->height = m_height;
-					enc_ctx->pix_fmt = AV_PIX_FMT_VAAPI;
-					enc_ctx->time_base = av_inv_q(frameRate);
-					enc_ctx->framerate = frameRate;
-					enc_ctx->bit_rate = m_bitrate;
-					enc_ctx->gop_size = gopSize;
-					enc_ctx->max_b_frames = 0;
-					enc_ctx->hw_frames_ctx = av_buffer_ref(hw_frames_ref);
-
-					// No preset/tune here: those belong to the software
-					// encoders and mean nothing to a VAAPI one.
-					if ((ret = avcodec_open2(enc_ctx, enc, nullptr)) >= 0)
-						hardware = true;
-					else
-						qWarning() << QString("The VAAPI %1 encoder would not open (%2), encoding in software")
-						              .arg(QLatin1String(kVideoEncoders[encIdx].codec), ff_errstr(ret));
-				}
-				else
-				{
-					qWarning() << "Could not create a VAAPI surface pool, encoding in software";
-				}
-			}
+			enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_VAAPI,
+			                        m_width, m_height, frameRate, m_bitrate, gopSize,
+			                        &hw_frames_ref);
+			hardware = enc_ctx != nullptr;
 
 			av_buffer_unref(&hw_device_ref);
 		}
@@ -1385,11 +1433,62 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 		}
 
 		if (!hardware)
-		{
-			if (enc_ctx) avcodec_free_context(&enc_ctx);
-			if (hw_frames_ref) av_buffer_unref(&hw_frames_ref);
 			enc = nullptr;
+	}
+#endif
+
+#ifdef HAVE_D3D12VA
+	// What the same request means on Windows, where the GPU is reached
+	// through D3D12 Video rather than through libva. Written as a fallback
+	// after the VAAPI attempt rather than as its alternative so that a build
+	// that somehow has both - libva has a Windows port of its own - still
+	// gets a hardware encoder if only one of the two comes up.
+	//
+	// The device is created per capture session and dropped with it, unlike
+	// the VAAPI one: nothing else in the client holds a D3D12 device, since
+	// decoding and rendering do not go through it.
+	if (!hardware && m_useVaapi)
+	{
+		const char *encoderName = kVideoEncoders[encIdx].d3d12vaEncoder;
+
+		enc = encoderName ? avcodec_find_encoder_by_name(encoderName) : nullptr;
+
+		AVBufferRef *hw_device_ref = nullptr;
+		ret = enc ? av_hwdevice_ctx_create(&hw_device_ref, AV_HWDEVICE_TYPE_D3D12VA,
+		                                   nullptr, nullptr, 0)
+		          : 0;
+
+		if (hw_device_ref)
+		{
+			enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_D3D12,
+			                        m_width, m_height, frameRate, m_bitrate, gopSize,
+			                        &hw_frames_ref);
+			hardware = enc_ctx != nullptr;
+
+			av_buffer_unref(&hw_device_ref);
 		}
+		else if (enc)
+		{
+			// Where the GPU or the version of Windows cannot encode at all,
+			// which is a plain answer rather than a fault: D3D12 video
+			// encoding needs Windows 11, or Windows 10 with the Agility SDK
+			// alongside the client.
+			qWarning() << QString("No usable Direct3D 12 encoding device (%1), encoding in software")
+			              .arg(ff_errstr(ret));
+		}
+		else if (encoderName)
+		{
+			qWarning() << QString("FFmpeg has no %1 encoder, encoding in software")
+			              .arg(QLatin1String(encoderName));
+		}
+		else
+		{
+			qWarning() << QString("Direct3D 12 cannot encode %1, encoding in software")
+			              .arg(QLatin1String(kVideoEncoders[encIdx].codec));
+		}
+
+		if (!hardware)
+			enc = nullptr;
 	}
 #endif
 
@@ -1451,9 +1550,12 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 	                       ? QStringLiteral("uncompressed")
 	                       : QString::fromLatin1(avcodec_get_name(in_st->codecpar->codec_id));
 
+	// Named from the encoder that was actually opened rather than written out
+	// per API: "h264_vaapi" and "hevc_d3d12va" say both which codec and which
+	// accelerator settled it, and cannot drift from what is running.
 	emit accelerationInUse(hardware
-	                       ? QString("GPU encoding (VAAPI %1) from %2")
-	                         .arg(QLatin1String(kVideoEncoders[encIdx].codec), source)
+	                       ? QString("GPU encoding (%1) from %2")
+	                         .arg(QLatin1String(enc->name), source)
 	                       : QString("CPU encoding (%1) from %2").arg(swEncoderName, source));
 
 	// Everything the camera sends is scaled to the encoder's size and re-encoded,
@@ -1470,9 +1572,9 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 	                    enc_ctx->width, enc_ctx->height, av_q2d(frameRate));
 
 	// What the camera's frames are scaled into. With a hardware encoder this
-	// is only a staging buffer in system memory - NV12, which is what VAAPI
-	// takes - that gets uploaded to a GPU surface below; the encoder itself
-	// consumes AV_PIX_FMT_VAAPI frames and never sees this one.
+	// is only a staging buffer in system memory - NV12, which is what the
+	// GPU encoders take - that gets uploaded to a GPU surface below; the
+	// encoder itself consumes surfaces and never sees this frame.
 	AVPixelFormat sw_pix_fmt = hardware ? AV_PIX_FMT_NV12 : enc_ctx->pix_fmt;
 
 	AVFrame *enc_frame = av_frame_alloc();
@@ -1576,7 +1678,7 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 			// What actually goes to the encoder: the staging frame itself in
 			// software, or a GPU surface holding a copy of it in hardware.
 			AVFrame *frame_to_encode = enc_frame;
-#ifdef HAVE_VAAPI
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
 			AVFrame *hw_frame = nullptr;
 
 			if (hardware)
@@ -1602,7 +1704,7 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 #endif
 
 			int send_ret = avcodec_send_frame(enc_ctx, frame_to_encode);
-#ifdef HAVE_VAAPI
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
 			if (hw_frame)
 				av_frame_free(&hw_frame);
 #endif
