@@ -1573,6 +1573,19 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 			enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_VAAPI,
 			                        m_width, m_height, frameRate, m_bitrate, gopSize,
 			                        nullptr, &hw_frames_ref);
+
+			// Newer Intel GPUs (iHD driver, Gen11+) expose only the low-power
+			// VAEntrypointEncSliceLP, which FFmpeg will not pick unless asked.
+			if (!enc_ctx)
+			{
+				AVDictionary *opts = nullptr;
+				av_dict_set(&opts, "low_power", "1", 0);
+				enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_VAAPI,
+				                        m_width, m_height, frameRate, m_bitrate, gopSize,
+				                        &opts, &hw_frames_ref);
+				av_dict_free(&opts);
+			}
+
 			hardware = enc_ctx != nullptr;
 
 			av_buffer_unref(&hw_device_ref);
