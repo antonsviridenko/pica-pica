@@ -40,6 +40,7 @@ public:
 	QAction *showblacklistAct;
 	QAction *movetoblacklistAct;
 	QAction *removefromblacklistAct;
+	QAction *newgroupAct;
 protected:
 	void contextMenuEvent(QContextMenuEvent *event);
 
@@ -48,6 +49,7 @@ private:
 	Contacts* storage;
 	QList<Contacts::ContactRecord> contact_records;
 	QMap<QListWidgetItem*, Contacts::ContactRecord*> wgitem_to_recs;
+	QMap<QListWidgetItem*, QByteArray> wgitem_to_groups;
 
 	//ChatWindow *cw_debug_remove;
 
@@ -67,6 +69,7 @@ private slots:
 	void show_blacklist(bool checked);
 	void move_to_blacklist();
 	void remove_from_blacklist();
+	void new_group();
 
 	//void debug_onmsginput(QString msg, ChatWindow *sender_window);//debug remove after debug
 };

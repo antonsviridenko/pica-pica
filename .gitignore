@@ -142,3 +142,29 @@ compile_commands.json
 
 # End of https://www.gitignore.io/api/c,qt,c++
 
+
+### Project build outputs ###
+/Makefile
+.deps/
+.dirstamp
+/pica-node
+/pica-client/pica-client
+/windows/installer32.nsi
+/windows/installer64.nsi
+/windows/*.exe.manifest
+
+# debhelper build artifacts
+/debian/.debhelper/
+/debian/autoreconf.after
+/debian/autoreconf.before
+/debian/debhelper-build-stamp
+/debian/files
+/debian/*.debhelper
+/debian/*.debhelper.log
+/debian/*.substvars
+/debian/pica-client/
+/debian/pica-node/
+/debian/tmp/
+
+# runtime data
+/nodelist.db

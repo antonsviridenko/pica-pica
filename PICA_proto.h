@@ -59,6 +59,13 @@
 
 #define PICA_PROTO_MSGUTF8 0x30
 #define PICA_PROTO_MSGOK 0x40
+/* Opaque payload interpreted by the application (message IDs, groups,
+ * history sync). Sent only to peers that announced support, see
+ * PICA_PROTO_INITRESPOK_EXTMARK - older clients drop the connection on
+ * unknown message types. */
+#define PICA_PROTO_EXTMSG 0x31
+/* Caller tells a supporting callee that it supports EXTMSG too */
+#define PICA_PROTO_EXTHELLO 0x32
 #define PICA_PROTO_SENDFILEREQUEST 0x50
 #define PICA_PROTO_ACCEPTEDFILE 0x51
 #define PICA_PROTO_DENIEDFILE 0x52
@@ -122,6 +129,10 @@
 #define PICA_PROTO_DIRECTC2C_SWITCH_SIZE 4
 
 #define PICA_PROTO_MSGOK_SIZE 4
+#define PICA_PROTO_EXTHELLO_SIZE 4
+/* Second tail octet of a c2c INITRESPOK sent by a callee that supports
+ * EXTMSG. Older clients send 'K' there and never look at it. */
+#define PICA_PROTO_INITRESPOK_EXTMARK 'X'
 
 #define PICA_PROTO_ACCEPTEDFILE_SIZE 4
 #define PICA_PROTO_DENIEDFILE_SIZE 4

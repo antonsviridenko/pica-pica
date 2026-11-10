@@ -405,6 +405,77 @@ static bool update_database()
 		schema_ver = 3;
 	}
 
+	if (schema_ver == 3)
+	{
+		// message IDs, hash chain and signatures, per-recipient outbox, groups, history sync
+		const char *v4[] =
+		{
+			"alter table history add column msg_id blob;",
+			"alter table history add column group_id blob;",
+			"alter table history add column prev_hash blob;",
+			"alter table history add column sig blob;",
+			"update history set msg_id = randomblob(16) where msg_id is null;",
+			"create unique index history_msg_id on history (account_id, msg_id);",
+			"create table outbox \
+			( \
+				id integer primary key autoincrement, \
+				account_id blob not null, \
+				peer_id blob not null, \
+				msg_id blob not null, \
+				kind int not null, \
+				unique (account_id, peer_id, msg_id), \
+				foreign key(account_id) references accounts(id) on delete cascade \
+			);",
+			"insert into outbox (account_id, peer_id, msg_id, kind) \
+				select account_id, contact_id, msg_id, 0 from history where is_me=1 and is_delivered=0 order by id;",
+			"create table groups \
+			( \
+				account_id blob not null, \
+				id blob not null, \
+				name varchar(64), \
+				owner_id blob not null, \
+				version int not null, \
+				sig blob, \
+				primary key (account_id, id), \
+				foreign key(account_id) references accounts(id) on delete cascade \
+			);",
+			"create table group_members \
+			( \
+				account_id blob not null, \
+				group_id blob not null, \
+				member_id blob not null, \
+				primary key (account_id, group_id, member_id), \
+				foreign key(account_id) references accounts(id) on delete cascade \
+			);",
+			"create table sync_state \
+			( \
+				account_id blob not null, \
+				peer_id blob not null, \
+				conv_id blob not null, \
+				last_sync int not null, \
+				primary key (account_id, peer_id, conv_id) on conflict replace, \
+				foreign key(account_id) references accounts(id) on delete cascade \
+			);",
+			"insert into schema_version values (4, strftime('%s','now'));"
+		};
+
+		QSqlDatabase::database().transaction();
+
+		for (size_t i = 0; i < sizeof v4 / sizeof v4[0]; i++)
+		{
+			query.exec(v4[i]);
+
+			if (query.lastError().isValid())
+			{
+				QSqlDatabase::database().rollback();
+				goto showerror;
+			}
+		}
+
+		QSqlDatabase::database().commit();
+		schema_ver = 4;
+	}
+
 	if (query.lastError().isValid())
 showerror:
 	{
@@ -444,8 +515,8 @@ static bool create_config_dir()
 		if (!create_database())
 			return false;
 	}
-	else
-		update_database();
+
+	update_database(); // a new database is created at schema version 3 and upgraded from there
 
 	QFile::setPermissions(config_dbname, QFile::ReadOwner | QFile::WriteOwner);
 

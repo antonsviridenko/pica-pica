@@ -65,6 +65,8 @@ static unsigned int procmsg_FOUND(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_CLNODELIST(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_MSGUTF8(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_MSGOK(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_EXTMSG(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_EXTHELLO(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_PINGREQ(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_SENDFILEREQUEST(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_ACCEPTEDFILE(unsigned char*, unsigned int, void*);
@@ -119,6 +121,8 @@ const struct PICA_msginfo  c2c_messages[] =
 {
 	{PICA_PROTO_MSGUTF8, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MSGUTF8},
 	{PICA_PROTO_MSGOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_MSGOK_SIZE, procmsg_MSGOK},
+	{PICA_PROTO_EXTMSG, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_EXTMSG},
+	{PICA_PROTO_EXTHELLO, PICA_MSG_FIXED_SIZE, PICA_PROTO_EXTHELLO_SIZE, procmsg_EXTHELLO},
 	{PICA_PROTO_CALLREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLREQ_SIZE, procmsg_CALLREQ},
 	{PICA_PROTO_CALLANS, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLANS_SIZE, procmsg_CALLANS},
 	{PICA_PROTO_CALLREJ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLREJ_SIZE, procmsg_CALLREJ},
@@ -557,7 +561,7 @@ static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb, void
 			return 0;
 
 		mp->tail[0] = 'O';
-		mp->tail[1] = 'K';
+		mp->tail[1] = callbacks.ext_msg_cb ? PICA_PROTO_INITRESPOK_EXTMARK : 'K';
 
 		cc->state = PICA_C2C_STATE_ACTIVE;
 
@@ -597,6 +601,18 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, vo
 	{
 	case PICA_PROTO_INITRESPOK:
 		cc->state = PICA_C2C_STATE_ACTIVE;
+
+		if (buf[3] == PICA_PROTO_INITRESPOK_EXTMARK && callbacks.ext_msg_cb)
+		{
+			struct PICA_proto_msg *mp = c2c_writebuf_push(cc, PICA_PROTO_EXTHELLO, PICA_PROTO_EXTHELLO_SIZE);
+
+			if (!mp)
+				return 0;
+
+			RAND_pseudo_bytes(mp->tail, 2);
+			cc->peer_ext = 1;
+		}
+
 		callbacks.c2c_established_cb(cc->peer_id, SSL_get_cipher_name(cc->ssl));
 
 		if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
@@ -994,6 +1010,33 @@ static unsigned int procmsg_MSGOK(unsigned char* buf, unsigned int nb, void* p)
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
 	callbacks.msgok_cb(chan -> peer_id);
+	return 1;
+}
+
+static unsigned int procmsg_EXTHELLO(unsigned char* buf, unsigned int nb, void* p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+
+	if (chan->state != PICA_C2C_STATE_ACTIVE || chan->outgoing)
+		return 0;
+
+	chan->peer_ext = 1;
+
+	if (callbacks.c2c_ext_cb)
+		callbacks.c2c_ext_cb(chan->peer_id);
+
+	return 1;
+}
+
+static unsigned int procmsg_EXTMSG(unsigned char* buf, unsigned int nb, void* p)
+{
+	struct PICA_c2c *chan = (struct PICA_c2c *)p;
+
+	if (chan->state != PICA_C2C_STATE_ACTIVE || !chan->peer_ext)
+		return 0;
+
+	if (callbacks.ext_msg_cb)
+		callbacks.ext_msg_cb(chan->peer_id, (const char *)buf + 4, nb - 4);
 	return 1;
 }
 
@@ -3573,6 +3616,84 @@ int PICA_send_msg(struct PICA_c2c *chn, char *buf, unsigned int len)
 		return PICA_ERRNOMEM;
 
 	return PICA_OK;
+}
+
+int PICA_send_ext(struct PICA_c2c *chn, const char *buf, unsigned int len)
+{
+	struct PICA_proto_msg *mp;
+
+	if (!chn->peer_ext)
+		return PICA_ERRINVARG;
+
+	if (len > PICA_PROTO_C2CMSG_MAXDATASIZE)
+		return PICA_ERRMSGSIZE;
+
+	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_EXTMSG, len + 4)))
+	{
+		*((uint16_t*)mp->tail) = len;
+		memcpy(mp->tail + 2, buf, len);
+	}
+	else
+		return PICA_ERRNOMEM;
+
+	return PICA_OK;
+}
+
+int PICA_acc_sign(const struct PICA_acc *acc, const void *data, size_t len, unsigned char **sig, size_t *siglen)
+{
+	// key is read once per account; the client only signs from its network thread
+	static EVP_PKEY *pkey = NULL;
+	static const struct PICA_acc *pkey_acc = NULL;
+	void *datas[2] = {(void *)data, NULL};
+	size_t lengths[2] = {len, 0};
+
+	if (pkey_acc != acc)
+	{
+		FILE *f = fopen(acc->pkey_file, "r");
+
+		if (!f)
+			return PICA_ERRFILEOPEN;
+
+		EVP_PKEY_free(pkey);
+		pkey = PEM_read_PrivateKey(f, NULL, acc->password_cb, (void *)acc->id);
+		fclose(f);
+		pkey_acc = pkey ? acc : NULL;
+
+		if (!pkey)
+			return PICA_ERRSSL;
+	}
+
+	return PICA_do_signature(pkey, datas, lengths, sig, siglen) == 1 ? PICA_OK : PICA_ERRSSL;
+}
+
+int PICA_verify_by_cert(const char *cert_pem, const unsigned char *id, const void *data, size_t len, const unsigned char *sig, size_t siglen)
+{
+	unsigned char cert_id[PICA_ID_SIZE];
+	void *datas[2] = {(void *)data, NULL};
+	size_t lengths[2] = {len, 0};
+	EVP_PKEY *pubkey = NULL;
+	X509 *x;
+	BIO *biomem;
+	int ret = 0;
+
+	biomem = BIO_new_mem_buf((void *)cert_pem, -1);
+
+	if (!biomem)
+		return 0;
+
+	x = PEM_read_bio_X509(biomem, NULL, 0, NULL);
+	BIO_free(biomem);
+
+	if (!x)
+		return 0;
+
+	if (PICA_id_from_X509(x, cert_id) && memcmp(cert_id, id, PICA_ID_SIZE) == 0
+	        && (pubkey = X509_get_pubkey(x)))
+		ret = PICA_signverify(pubkey, datas, lengths, (unsigned char *)sig, siglen) == 1;
+
+	EVP_PKEY_free(pubkey);
+	X509_free(x);
+	return ret;
 }
 
 int PICA_send_file(struct PICA_c2c *chn, const char *filepath)
