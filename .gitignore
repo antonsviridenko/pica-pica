@@ -142,3 +142,4 @@ compile_commands.json
 
 # End of https://www.gitignore.io/api/c,qt,c++
 
+/deb_packaging/out-local/
