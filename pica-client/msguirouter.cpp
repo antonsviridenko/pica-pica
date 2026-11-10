@@ -113,6 +113,8 @@ void MsgUIRouter::msg_from_peer(QByteArray from, QByteArray author, QString msg)
 
 	if (!chatwindows[from]->isActiveWindow())
 	{
+		systray->ShowMessage(chatwindows[from]->getPeerName(), msg.left(100));
+
 		if (blinkqueue.isEmpty())
 		{
 			systray->StartBlinking();

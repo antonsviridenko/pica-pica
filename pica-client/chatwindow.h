@@ -51,6 +51,11 @@ public:
 		return peer_id_;
 	};
 
+	QString getPeerName()
+	{
+		return peer_name_;
+	};
+
 	bool isGroup()
 	{
 		return is_group_;

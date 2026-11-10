@@ -182,7 +182,7 @@ void ChatWindow::put_message(QString msg, QByteArray id, bool is_me, QByteArray 
 	int pos;
 
 	pos = draw_message(msg, name_of(id), QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"),
-	                   is_me ? "#0000ff" : "#ff0000", false);
+	                   is_me ? "#2a6fdb" : "#c0392b", false);
 
 	if (is_me)
 		undelivered_msgs[msg_id] = pos;
@@ -195,7 +195,7 @@ int ChatWindow::draw_message(QString msg, QString nickname, QString datetime, QS
 	int ret;
 
 	if (is_delivered)
-		delivered_mark = "+";
+		delivered_mark = "&#x2713;";
 	else
 		delivered_mark = "&nbsp;";
 
@@ -233,7 +233,7 @@ void ChatWindow::print_history(QList<History::HistoryRecord> H)
 
 		dt.setTime_t(r.timestamp);
 		draw_message(r.message, name_of(hist.Author(r)), dt.toString("yyyy-MM-dd hh:mm:ss"),
-		             r.is_me ? "#0000ff" : "#ff0000", r.is_delivered);
+		             r.is_me ? "#2a6fdb" : "#c0392b", r.is_delivered);
 	}
 }
 
@@ -254,7 +254,7 @@ void ChatWindow::msg_delivered(QByteArray msg_id)
 	QTextCursor c(chatw->document());
 	c.setPosition(undelivered_msgs.take(msg_id));
 	c.deleteChar();
-	c.insertText("+");
+	c.insertText(QString(QChar(0x2713)));
 }
 
 void ChatWindow::msg_informational(QString text)
@@ -262,7 +262,7 @@ void ChatWindow::msg_informational(QString text)
 	QString color;
 	QTextCharFormat fmt;
 
-	color = "#303030";
+	color = "gray";
 
 	fmt = chatw->currentCharFormat();
 

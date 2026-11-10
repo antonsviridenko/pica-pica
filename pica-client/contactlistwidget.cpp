@@ -32,6 +32,12 @@
 #include <QInputDialog>
 #include <QTimer>
 
+// name first; the ID stays in the tooltip, short ID only when the peer has not told us a name yet
+static QString contact_label(const Contacts::ContactRecord &r)
+{
+	return r.name.isEmpty() ? QString(r.id.toBase64().left(12)) + "..." : r.name;
+}
+
 ContactListWidget::ContactListWidget(QWidget *parent) :
 	QListWidget(parent)
 {
@@ -132,7 +138,7 @@ void ContactListWidget::setContactsStorage(Contacts *ct, bool show_blacklisted)
 
 	for (int i = 0; i < contact_records.size(); i++)
 	{
-		addItem(QString("(%1...) %2").arg(contact_records[i].id.toBase64().left(8).constData()).arg(contact_records[i].name));
+		addItem(contact_label(contact_records[i]));
 		wgitem_to_recs[this->item(i)] = &contact_records[i];
 		this->item(i)->setStatusTip(contact_records[i].id.toBase64());
 		this->item(i)->setToolTip(contact_records[i].id.toBase64().constData());
@@ -152,7 +158,7 @@ void ContactListWidget::setContactsStorage(Contacts *ct, bool show_blacklisted)
 
 		for (int i = 0; i < bl.size(); i++)
 		{
-			addItem(QString("(%1...) %2").arg(bl[i].id.toBase64().left(8).constData()).arg(bl[i].name));
+			addItem(contact_label(bl[i]));
 			wgitem_to_recs[this->item(i + offset)] = &contact_records[i + offset - 1];
 			this->item(i + offset)->setStatusTip(bl[i].id.toBase64());
 			this->item(i + offset)->setToolTip(bl[i].id.toBase64().constData());
@@ -216,7 +222,8 @@ void ContactListWidget::add_contact()
 			return;
 		}
 
-		addItem(QString("(%1) ").arg(user_id.toBase64().constData()));
+		addItem(contact_label(r));
+		item(count() - 1)->setToolTip(user_id.toBase64().constData());
 		contact_records.append(r);
 		wgitem_to_recs[this->item(this->count() - 1)] = &contact_records.last();
 

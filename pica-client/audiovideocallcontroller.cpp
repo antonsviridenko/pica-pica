@@ -16,6 +16,7 @@
 */
 #include "audiovideocallcontroller.h"
 #include "globals.h"
+#include "picasystray.h"
 #include "skynet.h"
 #include "settings.h"
 #include "callsettings.h"
@@ -408,6 +409,9 @@ void AudioVideoCallController::call_from(QByteArray peer_id)
 	connect(callwindow, SIGNAL(video_rendering_failed()), this, SLOT(video_rendering_failed()));
 #endif
 	callwindow->show();
+	callwindow->raise();
+	callwindow->activateWindow();
+	systray->ShowMessage(tr("Incoming call"), callwindow->windowTitle());
 
 	/* play ring tone */
 	playRingTone();

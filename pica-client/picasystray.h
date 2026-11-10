@@ -32,6 +32,7 @@ public:
 	explicit PicaSysTray(QObject *parent = 0);
 	void StartBlinking();
 	void StopBlinking();
+	void ShowMessage(QString title, QString text);
 
 signals:
 	void doubleclicked();
