@@ -759,6 +759,13 @@ unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char* buf, unsigned in
 	if (cc->directc2c_state != PICA_DIRECTC2C_STATE_ACTIVE && cc->directc2c_state != PICA_DIRECTC2C_STATE_CONNECTING)
 		return 0;
 
+	/* A SWITCH may legitimately arrive while our own direct link is still
+	 * CONNECTING, but switching reads to it before its SSL object exists
+	 * would hand SSL_read() a NULL. Refuse until the direct session is there.
+	 */
+	if (!cc->direct || !cc->direct->ssl)
+		return 0;
+
 	cc->switched_to_directc2c_read = 1;
 
 	return 1;
