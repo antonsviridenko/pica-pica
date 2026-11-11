@@ -1023,6 +1023,13 @@ static unsigned int procmsg_MSGOK(unsigned char* buf, unsigned int nb, void* p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
+	/* A delivery receipt is only meaningful once the channel is active, same
+	 * as procmsg_MSGUTF8 - the c2c stream is also parsed in the pre-active
+	 * WAITINGREP/WAITINGC2CPROTOVER states.
+	 */
+	if (chan->state != PICA_C2C_STATE_ACTIVE)
+		return 0;
+
 	callbacks.msgok_cb(chan -> peer_id);
 	return 1;
 }
