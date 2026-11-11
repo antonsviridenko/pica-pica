@@ -483,6 +483,14 @@ void AudioVideoCallController::incoming_audio_params(QByteArray peer_id, QString
 	if (!is_active || peer_id != m_peer_id)
 		return;
 
+	// The codec name is peer-supplied and would otherwise be handed straight
+	// to the FFmpeg decoder - accept only the ones the client itself sends.
+	if (!callAudioCodecAccepted(codec))
+	{
+		qWarning() << "rejecting unsupported call audio codec from peer:" << codec;
+		return;
+	}
+
 	Settings st(config_dbname);
 	QString playDev = st.loadValue("audio.playback_device", "default").toString();
 
@@ -577,6 +585,14 @@ void AudioVideoCallController::incoming_video_params(QByteArray peer_id, QString
 {
 	if (!is_active || peer_id != m_peer_id)
 		return;
+
+	// As in incoming_audio_params(): the peer-supplied codec name must be one
+	// we actually send before it reaches avcodec_find_decoder_by_name().
+	if (!callVideoCodecAccepted(codec))
+	{
+		qWarning() << "rejecting unsupported call video codec from peer:" << codec;
+		return;
+	}
 
 	Settings st(config_dbname);
 	const CallSettings cs = CallSettings::load();
