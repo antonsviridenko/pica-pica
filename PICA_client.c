@@ -3344,10 +3344,16 @@ int PICA_write_c2c(struct PICA_c2c *chn)
 {
 	int ret = PICA_ERRINVARG;
 
-	if (chn->state != PICA_C2C_STATE_ACTIVE && chn->state != PICA_C2C_STATE_CONNID && chn->state != PICA_C2C_STATE_WAITINGREP)
+	if (chn->state != PICA_C2C_STATE_ACTIVE && chn->state != PICA_C2C_STATE_CONNID
+	        && chn->state != PICA_C2C_STATE_WAITINGREP && chn->state != PICA_C2C_STATE_WAITINGC2CPROTOVER)
 	{
+		/* WAITINGC2CPROTOVER is a legitimate write state: the callee sends
+		 * VERDIFFER from there on a protocol-version mismatch. Any state that
+		 * really is unexpected closes this one channel - a library must not
+		 * take the whole host process down over a peer-driven condition.
+		 */
 		fputs("PICA_write_c2c() was called for incorrect state!\n", stderr);
-		exit(-1);
+		return PICA_ERRSERV;
 	}
 
 	{
@@ -3415,8 +3421,9 @@ int PICA_read_c2c(struct PICA_c2c *chn)
 
 	if (chn->state != PICA_C2C_STATE_WAITINGREP && chn->state != PICA_C2C_STATE_WAITINGC2CPROTOVER && chn->state != PICA_C2C_STATE_ACTIVE)
 	{
+		/* Close this one channel rather than exit()-ing the host process. */
 		fputs("PICA_read_c2c() was called for incorrect state!\n", stderr);
-		exit(-1);
+		return PICA_ERRSERV;
 	}
 
 	if (chn->switched_to_directc2c_read)
