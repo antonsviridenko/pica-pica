@@ -1880,6 +1880,22 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 		return 1;
 	}
 
+	/* The per-connection last-timestamp check above resets to 0 on every
+	 * reconnect, so on its own it cannot stop a captured (validly signed)
+	 * MULTILOGIN from being replayed later. Require the timestamp to be within
+	 * PICA_TIMETOLERANCE of now as well, bounding any replay to that window.
+	 */
+	{
+		uint64_t now = (uint64_t) time(NULL);
+
+		if (timestamp > now + PICA_TIMETOLERANCE
+		        || timestamp + PICA_TIMETOLERANCE < now)
+		{
+			fprintf(stderr, "MULTILOGIN timestamp out of tolerance, ignoring\n");
+			return 1;
+		}
+	}
+
 	f = fopen(c2n->acc->cert_file, "r");
 
 	if (!f)
