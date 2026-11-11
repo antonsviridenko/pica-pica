@@ -500,6 +500,13 @@ static int c2c_start(struct PICA_c2c *chnl)
 {
 	int ret, err_ret;
 
+	/* Defensive: c2c_start() opens a new socket and resets the channel to
+	 * CONNECTING without touching chnl->ssl or the write buffer. Running it
+	 * on a channel that is past NEW would strand the existing session and
+	 * reroute buffered data, so refuse unless the channel is still new.
+	 */
+	if (chnl->state != PICA_C2C_STATE_NEW)
+		return PICA_ERRINVARG;
 
 	chnl->sck_data = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
@@ -849,7 +856,12 @@ static unsigned int procmsg_NOTFOUND(unsigned char* buf, unsigned int nb, void* 
 	ipt = ci->chan_list_end;
 	while(ipt)
 	{
-		if (memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
+		/* Same guard as procmsg_FOUND(): act only on a channel still waiting
+		 * for the search result, so a spurious NOTFOUND from the node cannot
+		 * tear down an already established channel found by peer_id alone.
+		 */
+		if (ipt->outgoing && ipt->state == PICA_C2C_STATE_NEW
+		        && memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
 		{
 			rq = ipt;
 			break;
@@ -879,7 +891,13 @@ static unsigned int procmsg_FOUND(unsigned char* buf, unsigned int nb, void* p)
 	ipt = ci->chan_list_end;
 	while(ipt)
 	{
-		if (memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
+		/* Only a freshly requested outgoing channel is waiting for FOUND.
+		 * Matching on peer_id alone would also pick up an already ACTIVE
+		 * channel and let c2c_start() tear it back down to an anonymous
+		 * session, flushing any buffered end-to-end message to the node.
+		 */
+		if (ipt->outgoing && ipt->state == PICA_C2C_STATE_NEW
+		        && memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
 		{
 			rq = ipt;
 			break;
