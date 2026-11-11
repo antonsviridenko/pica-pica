@@ -1180,8 +1180,9 @@ unsigned int procmsg_N2NALLOW(unsigned char* buf, unsigned int size, void* ptr)
 	 * non-NULL p1 - gating on it both prevents a client_wbuf_push(NULL) on a
 	 * callee-local (p1 == NULL) link an attacker can create with
 	 * N2NCONNREQOUTG, and stops a stray N2NALLOW from disturbing other links.
+	 * callee_node == n ties the reply to the node that answered the search.
 	 */
-	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP)
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP && cc->callee_node == n)
 	{
 		if ((mp = client_wbuf_push(cc->p1, PICA_PROTO_FOUND, PICA_PROTO_FOUND_SIZE)))
 		{
@@ -1208,9 +1209,10 @@ unsigned int procmsg_N2NNOTFOUND(unsigned char* buf, unsigned int size, void* pt
 
 	/* Same gate as N2NALLOW: act only on the caller-local link awaiting this
 	 * reply, so a callee-local link (p1 == NULL) cannot crash client_wbuf_push
-	 * and a stray N2NNOTFOUND cannot delete an unrelated link.
+	 * and a stray N2NNOTFOUND cannot delete an unrelated link. callee_node == n
+	 * ties the reply to the node that answered the search.
 	 */
-	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP)
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP && cc->callee_node == n)
 	{
 		if ((mp = client_wbuf_push(cc->p1, PICA_PROTO_NOTFOUND, PICA_PROTO_NOTFOUND_SIZE)))
 		{
@@ -1243,7 +1245,11 @@ unsigned int procmsg_N2NMSG(unsigned char* buf, unsigned int size, void* ptr)
 
 	cc = cclink_list_search(sender_id, receiver_id);
 
-	if (cc && cc->state == PICA_CCLINK_N2NCLE_ACTIVE)
+	/* Accept relayed data only from the node that owns the remote (caller)
+	 * half of this link, so a third node cannot inject into or overflow a
+	 * relay between two other users' clients.
+	 */
+	if (cc && cc->state == PICA_CCLINK_N2NCLE_ACTIVE && cc->caller_node == n)
 	{
 		if (datalen + cc->bufpos_p1p2 > cc->buflen_p1p2)
 		{
@@ -1258,7 +1264,8 @@ unsigned int procmsg_N2NMSG(unsigned char* buf, unsigned int size, void* ptr)
 ///////////////
 	cc = cclink_list_search(receiver_id, sender_id);
 
-	if (cc && cc->state == PICA_CCLINK_N2NCLR_ACTIVE)
+	/* Likewise, only from the node that owns the remote (callee) half. */
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_ACTIVE && cc->callee_node == n)
 	{
 		if (datalen + cc->bufpos_p2p1 > cc->buflen_p2p1)
 		{
