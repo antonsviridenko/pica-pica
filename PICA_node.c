@@ -1298,6 +1298,41 @@ struct cclink* cclink_list_search(const unsigned char *caller_id, const unsigned
 void cclink_list_delete(struct cclink *l)
 {
 	PICA_debug1("cclink_list_delete(%p)", (void*)l);
+
+	/* A CONNID connection may still be mid anon-TLS-shutdown with its socket
+	 * handed to this link (sck_p1/sck_p2) and nc->iconn.cc pointing here. If
+	 * the link is torn down first (WAITACTIVE timeout, or a client
+	 * disconnecting), that newconn would later double-close the socket and
+	 * re-delete this freed link from newconn_close(). Retire it now: drop its
+	 * event and anon SSL and relinquish the fd, which is closed below.
+	 */
+	{
+		int i;
+		for (i = 0; i < MAX_NEWCONNS; i++)
+		{
+			struct newconn *nc = &newconns[i];
+
+			if (nc->type == NEWCONN_C2C && nc->iconn.cc == l)
+			{
+				if (nc->ev)
+				{
+					event_del(nc->ev);
+					event_free(nc->ev);
+					nc->ev = NULL;
+				}
+				if (nc->anonssl)
+				{
+					SSL_free(nc->anonssl);
+					nc->anonssl = NULL;
+				}
+				nc->iconn.cc = NULL;
+				nc->sck = -1;   /* owned and closed by the link below */
+				nc->pos = 0;
+				nc->type = NEWCONN_UNKNOWN;
+			}
+		}
+	}
+
 //удаление из глобального списка
 	if (l->prev)
 		l->prev->next = l->next;
