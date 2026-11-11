@@ -735,14 +735,19 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsi
 	if (cc->outgoing != PICA_C2C_INCOMING)
 		return 0;
 
+	/* FAILED tells us to connect to the peer instead, but we can only do
+	 * that if the peer actually sent us its address list (which allocates
+	 * cc->direct). Without it there is nothing to connect to.
+	 */
+	if (!cc->direct)
+		return 0;
+
 	ret = directc2c_connect_next(cc->direct, cc);
 
 	if (ret == PICA_ERRNOTFOUND)
-	{
 		cc->directc2c_state = PICA_DIRECTC2C_STATE_FAILEDTOCONNECT;
-	}
-
-	cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
+	else
+		cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
 
 	return 1;
 }
