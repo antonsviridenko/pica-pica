@@ -1093,6 +1093,10 @@ static int validate_file_name(const char *buf, unsigned int len)
 {
 	int ret = PICA_OK;
 	char *str = malloc(len + 1);
+
+	if (!str)
+		return PICA_ERRNOMEM;
+
 	memcpy(str, buf, len);
 	str[len] = '\0';
 
@@ -1115,9 +1119,22 @@ static unsigned int procmsg_SENDFILEREQUEST(unsigned char* buf, unsigned int nb,
 	int ret;
 
 	char *filename = buf + 12;
-	unsigned int filenamesize = *(uint16_t*)(buf + 2) - 8;
+	uint16_t payload_len = *(uint16_t*)(buf + 2);
+	unsigned int filenamesize;
 
 	if (chan->recvfilestate != PICA_CHANRECVFILESTATE_IDLE)
+		return 0;
+
+	/* payload = 8-byte file size + file name. Guard the subtraction so a
+	 * short length field cannot underflow filenamesize to ~4 GB, and hold
+	 * the sender to the documented name-length limit.
+	 */
+	if (payload_len < 8)
+		return 0;
+
+	filenamesize = payload_len - 8;
+
+	if (filenamesize == 0 || filenamesize > PICA_PROTO_C2CMSG_MAXFILENAMESIZE)
 		return 0;
 
 	if (validate_file_name(filename, filenamesize) != PICA_OK)
