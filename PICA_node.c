@@ -956,7 +956,7 @@ unsigned int procmsg_NODELISTREQ(unsigned char* buf, unsigned int size, void* pt
 		switch(nlp->addr_type)
 		{
 		case PICA_PROTO_NEWNODE_IPV4:
-			if ( PICA_PROTO_NODELISTREQ == buf[0] &&
+			if ( PICA_PROTO_NODELISTREQ == buf[0] && n->node_addr &&
 			        ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->addr == ((struct PICA_nodeaddr_ipv4*)n->node_addr)->addr    &&
 			        ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->port == ((struct PICA_nodeaddr_ipv4*)n->node_addr)->port )
 				break;//exclude requester's address
