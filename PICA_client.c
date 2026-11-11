@@ -1261,8 +1261,14 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 	case PICA_PROTO_FILECONTROL_CANCEL:
 	case PICA_PROTO_FILECONTROL_IOERROR:
 		chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
-		fclose(chan->recvfile_stream);
-		chan->recvfile_stream = NULL;
+		/* The stream exists only once the offer was accepted; a CANCEL in
+		 * WAITACCEPT (sender withdrew a pending offer) leaves it NULL.
+		 */
+		if (chan->recvfile_stream)
+		{
+			fclose(chan->recvfile_stream);
+			chan->recvfile_stream = NULL;
+		}
 		break;
 
 	case PICA_PROTO_FILECONTROL_VOID:
@@ -1291,8 +1297,12 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 	case PICA_PROTO_FILECONTROL_CANCEL:
 	case PICA_PROTO_FILECONTROL_IOERROR:
 		chan->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
-		fclose(chan->sendfile_stream);
-		chan->sendfile_stream = NULL;
+		/* Symmetric guard: only close a stream that was actually opened. */
+		if (chan->sendfile_stream)
+		{
+			fclose(chan->sendfile_stream);
+			chan->sendfile_stream = NULL;
+		}
 		break;
 
 	case PICA_PROTO_FILECONTROL_VOID:
