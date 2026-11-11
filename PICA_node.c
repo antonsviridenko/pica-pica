@@ -268,6 +268,13 @@ unsigned int procmsg_INITREQ(unsigned char* buf, unsigned int size, void* ptr)
 
 	PICA_debug1("received INITREQ");
 
+	/* Exactly one request message per newconn. A second (e.g. two INITREQs in
+	 * one record) would create a second client on the same socket and orphan
+	 * the first, which later closes a socket it no longer owns.
+	 */
+	if (nc->type != NEWCONN_UNKNOWN)
+		return 0;
+
 	nc->type = NEWCONN_C2N;
 
 	if (buf[2] == PICA_PROTO_VER_HIGH && buf[3] == PICA_PROTO_VER_LOW)
@@ -350,6 +357,10 @@ unsigned int procmsg_CONNID(unsigned char* buf, unsigned int size, void* ptr)
 
 	PICA_debug1("received CONNID");
 
+	/* One request message per newconn - see procmsg_INITREQ(). */
+	if (nc->type != NEWCONN_UNKNOWN)
+		return 0;
+
 	nc->type = NEWCONN_C2C;
 
 	caller_id = buf + 2;
@@ -404,6 +415,10 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 	struct PICA_proto_msg *mp;
 
 	PICA_debug1("received NODECONNREQ");
+
+	/* One request message per newconn - see procmsg_INITREQ(). */
+	if (nc->type != NEWCONN_UNKNOWN)
+		return 0;
 
 	nc->type = NEWCONN_N2N;
 
