@@ -1160,7 +1160,13 @@ unsigned int procmsg_N2NALLOW(unsigned char* buf, unsigned int size, void* ptr)
 
 	cc = cclink_list_search(caller_id, callee_id);
 
-	if (cc)
+	/* N2NALLOW is the reply this (caller's) node awaits in N2NCLR_WAITREP.
+	 * That state only exists on caller-local links, which always have a
+	 * non-NULL p1 - gating on it both prevents a client_wbuf_push(NULL) on a
+	 * callee-local (p1 == NULL) link an attacker can create with
+	 * N2NCONNREQOUTG, and stops a stray N2NALLOW from disturbing other links.
+	 */
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP)
 	{
 		if ((mp = client_wbuf_push(cc->p1, PICA_PROTO_FOUND, PICA_PROTO_FOUND_SIZE)))
 		{
@@ -1185,7 +1191,11 @@ unsigned int procmsg_N2NNOTFOUND(unsigned char* buf, unsigned int size, void* pt
 
 	cc = cclink_list_search(caller_id, callee_id);
 
-	if (cc)
+	/* Same gate as N2NALLOW: act only on the caller-local link awaiting this
+	 * reply, so a callee-local link (p1 == NULL) cannot crash client_wbuf_push
+	 * and a stray N2NNOTFOUND cannot delete an unrelated link.
+	 */
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP)
 	{
 		if ((mp = client_wbuf_push(cc->p1, PICA_PROTO_NOTFOUND, PICA_PROTO_NOTFOUND_SIZE)))
 		{
