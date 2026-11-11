@@ -2861,8 +2861,17 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 		while(d)
 		{
+			struct PICA_directc2c *dnext = d->next;
+
 			if (d->state == PICA_DIRECTC2C_CONNSTATE_ACTIVE)
 			{
+				/* d leaves the listener list either way - adopted by a c2c or
+				 * closed. Splice it out first, using the next pointer captured
+				 * above, so nothing is read back out of a freed node.
+				 */
+				*pdprev = dnext;
+				d->next = NULL;
+
 				if ((c2c = find_matching_c2c(c2n, d)) && (PICA_verify_peer_cert_common(&d->peer_cert, d->ssl, c2c->peer_id) == PICA_OK))
 				{
 					if (c2c->direct)
@@ -2875,6 +2884,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 					if (ret != PICA_OK)
 					{
 						PICA_close_directc2c(d);
+						c2c->direct = NULL;
 						c2c->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;
 					}
 					else
@@ -2882,21 +2892,19 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 						callbacks.direct_c2c_established_cb(c2c->peer_id, SSL_get_cipher_name(d->ssl));
 						c2c->directc2c_state = PICA_DIRECTC2C_STATE_ACTIVE;
 					}
-
-					//remove from listener's list
-					*pdprev = d->next;
-					d->next = 0;
 				}
 				else
 				{
-					//close and remove from listener's list
-					*pdprev = d->next;
 					PICA_close_directc2c(d);
 				}
+				/* pdprev stays put: d was spliced out above */
 			}
-			pdprev = &d->next;
-			d = d->next;
-			//-- killptr?
+			else
+			{
+				pdprev = &d->next;
+			}
+
+			d = dnext;
 		}
 	}
 	//process outgoing connections
@@ -3016,9 +3024,26 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET s, const s
 {
 	PICA_TRACEFUNC
 	struct PICA_directc2c *nc;
+	unsigned int count = 0;
 	int ret;
 
+	/* Bound the number of half-open incoming connections, so a peer cannot
+	 * exhaust memory/descriptors by opening many and never finishing them.
+	 */
+	for (nc = lst->accepted_connections; nc; nc = nc->next)
+		if (++count >= PICA_DIRECTC2C_MAX_ACCEPTED)
+		{
+			CLOSE(s);
+			return;
+		}
+
 	nc = calloc(1, sizeof(struct PICA_directc2c));
+
+	if (!nc)
+	{
+		CLOSE(s);
+		return;
+	}
 
 	nc->is_outgoing = PICA_DIRECTC2C_INCOMING;
 	nc->sck = s;
@@ -3030,6 +3055,14 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET s, const s
 	nc->addr = *peer_addr;
 	nc->ssl = SSL_new(lst->acc->ctx);
 	nc->state = PICA_DIRECTC2C_CONNSTATE_NEW;
+	nc->accepted_tmst = time(0);
+
+	if (!nc->ssl)
+	{
+		CLOSE(s);
+		free(nc);
+		return;
+	}
 
 	SSL_set_fd(nc->ssl, nc->sck);
 
@@ -3038,18 +3071,17 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET s, const s
 
 	ret = SSL_accept(nc->ssl);
 
-	if (ret == 0)
+	if (ret <= 0)
 	{
-		free(nc);
-		return;
-	}
-
-	if (ret < 0)
-	{
-		ret = SSL_get_error(nc->ssl, ret);
-
-		if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
+		/* Only a WANT_READ/WANT_WRITE means the handshake is merely unfinished;
+		 * anything else is a real failure. Free the SSL object and close the
+		 * socket on the failure path - dropping only the struct would leak both.
+		 */
+		if (!(ret < 0 && (SSL_get_error(nc->ssl, ret) == SSL_ERROR_WANT_READ
+		                  || SSL_get_error(nc->ssl, ret) == SSL_ERROR_WANT_WRITE)))
 		{
+			SSL_free(nc->ssl);
+			CLOSE(nc->sck);
 			free(nc);
 			return;
 		}
@@ -3132,6 +3164,14 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 
 		if ((ret = process_listener_conn(conn, rfds, wfds)) != PICA_OK)
 		{
+			kill_ptr = conn;
+		}
+		else if (conn->peer_cert == NULL
+		         && (time(0) - conn->accepted_tmst) > PICA_DIRECTC2C_ACCEPT_TIMEOUT)
+		{
+			/* peer_cert is set only once the handshake completes, so a NULL
+			 * one past the timeout is a connection that never finished TLS.
+			 */
 			kill_ptr = conn;
 		}
 

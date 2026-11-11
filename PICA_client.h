@@ -142,6 +142,13 @@ typedef u_short in_port_t;
 
 #define PICA_C2C_ACTIVATE_TIMEOUT 30
 
+/* How long an incoming direct connection may take to finish its TLS handshake
+ * before it is reaped, and how many half-open incoming connections may sit in
+ * a listener at once - both bound a peer's ability to tie up the listener.
+ */
+#define PICA_DIRECTC2C_ACCEPT_TIMEOUT 30
+#define PICA_DIRECTC2C_MAX_ACCEPTED 32
+
 
 #define PICA_C2C_INCOMING 0
 #define PICA_C2C_OUTGOING 1
@@ -269,6 +276,12 @@ struct PICA_directc2c
 	struct sockaddr_in addr;
 
 	enum PICA_directc2c_connection_state state;
+
+	/* When this incoming connection was accepted, used to reap it if its TLS
+	 * handshake never completes. Only meaningful for accepted (incoming)
+	 * connections held in a listener's accepted_connections list.
+	 */
+	time_t accepted_tmst;
 
 	struct PICA_directc2c *next;
 };
