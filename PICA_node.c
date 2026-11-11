@@ -1003,73 +1003,72 @@ unsigned int procmsg_NODELIST(unsigned char* buf, unsigned int size, void* ptr)
 
 	while(listleft)
 	{
-#warning "strict error checking!!! -- listleft overflow, unknown list items, check listleft >= possible item size"
+		unsigned char item_type = buf[size - listleft];
+
+		/* The IPv6 and DNS list item types are defined by the protocol but
+		 * are not produced or parsed yet (see procmsg_NODELISTREQ, which only
+		 * emits IPv4 items). Their on-wire length is therefore not handled
+		 * here, so the parse cannot advance past one and has to stop.
+		 */
+		if (item_type == PICA_PROTO_NEWNODE_IPV6 || item_type == PICA_PROTO_NEWNODE_DNS)
+		{
+			PICA_warn("NODELIST contains a %s address item, which is not implemented yet, aborting parse",
+			          item_type == PICA_PROTO_NEWNODE_IPV6 ? "IPv6" : "DNS");
+			return 0;
+		}
+
+		/* Any other type byte is not a list item type at all: its length is
+		 * unknown, so parsing cannot safely continue. Without bailing here
+		 * the loop would spin forever on a byte it never decrements past.
+		 */
+		if (item_type != PICA_PROTO_NEWNODE_IPV4)
+		{
+			PICA_warn("NODELIST contains unknown address type 0x%02X, aborting parse", item_type);
+			return 0;
+		}
+
+		/* Bounds check before reading the 4-byte address and 2-byte port,
+		 * so a short trailing item cannot read past the packet or underflow
+		 * listleft on the subtraction below.
+		 */
+		if (listleft < PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
+		{
+			PICA_warn("Unexpected end of nodelist packet");
+			return 0;
+		}
+
+		na_ipv4.magick = PICA_PROTO_NEWNODE_IPV4;
+		na_ipv4.addr = *(in_addr_t*)(buf + size - listleft + 1);
+		na_ipv4.port = *(in_port_t*)(buf + size - listleft + 5);
+
 		if (listleft == listsize) //first entry, sender node's address
 		{
-			switch(buf[size - listleft])
-			{
-			case PICA_PROTO_NEWNODE_IPV4:
-				na_ipv4.magick = PICA_PROTO_NEWNODE_IPV4;
-				na_ipv4.addr = *(in_addr_t*)(buf + size - listleft + 1);
-				na_ipv4.port = *(in_port_t*)(buf + size - listleft + 5);
-				nodelink_attach_nodeaddr(n, na_ipv4.magick, &na_ipv4, sizeof(struct PICA_nodeaddr_ipv4));
-
-				listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
-				break;
-			}
-			continue;
+			nodelink_attach_nodeaddr(n, na_ipv4.magick, &na_ipv4, sizeof(struct PICA_nodeaddr_ipv4));
 		}
 		else
 		{
 			struct PICA_nodeaddr na;
-			//char addr[256];
-			struct newconn nc;
-			struct nodelink *nlp;
-			int skip_save = 0;
 
 			memset(na.addr, 0, 256);
-			memset(&nc, 0, sizeof(struct newconn));
 
-			switch(buf[size - listleft])
+			sprintf(na.addr, "%.16s", inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
+			na.port = ntohs(na_ipv4.port);
+
+			PICA_debug3("NODELIST item %.16s:%hu", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
+
+			if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(na_ipv4.addr))
 			{
-			case PICA_PROTO_NEWNODE_IPV4:
-				na_ipv4.magick = PICA_PROTO_NEWNODE_IPV4;
-				na_ipv4.addr = *(in_addr_t*)(buf + size - listleft + 1);
-				na_ipv4.port = *(in_port_t*)(buf + size - listleft + 5);
-
-				sprintf(na.addr, "%.16s", inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-				na.port = ntohs(na_ipv4.port);
-
-				//nodewait_start_connection(&na);
-// 			if (try_connect_to_node(na.addr,ntohs(na_ipv4.port),&nc))
-// 				if (try_get_reply(&nc))
-// 					{
-// 					nlp=nodelink_list_addnew(&nc);
-// 					send_newnode(nlp,my_addr);
-// 					nodelink_attach_nodeaddr(nlp,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
-// 					PICA_debug1("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-// 					}
-
-				PICA_debug3("NODELIST item %.16s:%hu", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
-
-				if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(na_ipv4.addr))
-				{
-					skip_save = 1;
-					PICA_debug1("Received NODELIST item %.16s:%hu is in private range, skipping",
-					            inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port)
-					           );
-				}
-				if (listleft < PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
-				{
-					PICA_warn("Unexpected end of nodelist packet");
-					return 0;
-				}
-				listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
-				break;
+				PICA_debug1("Received NODELIST item %.16s:%hu is in private range, skipping",
+				            inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port)
+				           );
 			}
-			if (!skip_save)
+			else
+			{
 				PICA_nodeaddr_save(nodecfg.nodes_db_file, &na);//CONF filename
+			}
 		}
+
+		listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 	}
 
 	return 1;
@@ -3503,7 +3502,7 @@ Options:\n\
 
 void print_version()
 {
-	puts("Pica Pica Node v"PACKAGE_VERSION" \nCopyright  (c) 2012 - 2018 Anton Sviridenko\n");
+	puts("Pica Pica Node v"PACKAGE_VERSION" \nCopyright  (c) 2012 - 2026 Anton Sviridenko\n");
 	puts("protocol version "PICA_PROTO_VER_STRING"\n");
 	puts("License GPLv3: GNU GPL version 3 <http://gnu.org/licenses/gpl.html>\n\
 This is free software: you are free to change and redistribute it.\n\
