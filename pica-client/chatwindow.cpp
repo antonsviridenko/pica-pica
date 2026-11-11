@@ -87,6 +87,9 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 		QHBoxLayout *hl = new QHBoxLayout();
 
 		lbAddCtQuestion = new QLabel(tr("Do you want to add \"%1\" to your contact list?").arg(peer_name_));
+		// peer_name_ comes from the peer's certificate; keep it literal so it
+		// cannot be interpreted as rich text.
+		lbAddCtQuestion->setTextFormat(Qt::PlainText);
 		btAddCtYes = new QPushButton(tr("Yes"));
 		btAddCtNo = new QPushButton(tr("No"));
 		btAddCtBlacklist = new QPushButton(tr("Add to blacklist"));
@@ -189,8 +192,8 @@ int ChatWindow::draw_message(QString msg, QString nickname, QString datetime, QS
 	    QString("<b><font color=%1>%2(%3) %4 : </font></b>").
 	    arg(color).
 	    arg(delivered_mark).
-	    arg(datetime).
-	    arg(nickname)
+	    arg(datetime.toHtmlEscaped()).
+	    arg(nickname.toHtmlEscaped())
 	);
 	chatw->setCurrentCharFormat(fmt);
 	chatw->insertPlainText(msg + '\n');
@@ -251,8 +254,10 @@ void ChatWindow::msg_delivered()
 		QByteArray my_id = Accounts::GetCurrentAccount().id;
 		QMap<QByteArray, QList<QString> > undl = hist.GetUndeliveredMessages();
 
-		if (!undl[my_id].isEmpty())
-			put_message(undl[my_id].first(), my_id, true);
+		// GetUndeliveredMessages() is keyed by the peer's contact_id, not by
+		// our own id, so this must look up peer_id_ to find anything.
+		if (!undl[peer_id_].isEmpty())
+			put_message(undl[peer_id_].first(), my_id, true);
 	}
 
 	if (!undelivered_msgs.isEmpty())
