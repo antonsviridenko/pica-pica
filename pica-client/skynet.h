@@ -26,6 +26,7 @@
 #include <QMap>
 #include <QVector>
 #include <QPair>
+#include <QSet>
 
 
 class SkyNet : public QObject
@@ -136,10 +137,17 @@ private:
 	struct PICA_c2c *find_active_chan(QByteArray peer_id);
 	QList<QByteArray> filter_existing_chans(QList<QByteArray> peer_ids);
 	bool open_account();
-	void active_filetransfers_up();
-	void active_filetransfers_down();
+	void active_filetransfers_up(QByteArray peer, bool sending);
+	void active_filetransfers_down(QByteArray peer, bool sending);
 	void active_filetransfers_reset();
 	quint32 active_filetransfers;
+	// Peers whose incoming/outgoing transfer currently contributes to
+	// active_filetransfers. Membership makes up()/down() idempotent, so a
+	// down() for a transfer that was never counted (a cancel of an offer still
+	// awaiting acceptance, or a cancel after a pause) cannot underflow the
+	// counter and leave the zero-interval timer running forever.
+	QSet<QByteArray> counted_ft_in;
+	QSet<QByteArray> counted_ft_out;
 
 	/* Only one call can be in progress at a time, so this is a flag and not
 	 * a counter like active_filetransfers.
