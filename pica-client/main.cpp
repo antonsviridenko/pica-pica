@@ -476,6 +476,20 @@ static bool update_database()
 		schema_ver = 4;
 	}
 
+	if (schema_ver == 4)
+	{
+		// unread messages; everything already stored counts as read
+		query.exec("alter table history add column is_read int not null default 1;");
+
+		if (!query.lastError().isValid())
+			query.exec("insert into schema_version values (5, strftime('%s','now'));");
+
+		if (query.lastError().isValid())
+			goto showerror;
+
+		schema_ver = 5;
+	}
+
 	if (query.lastError().isValid())
 showerror:
 	{

@@ -644,6 +644,9 @@ void AudioDevice::captureFFmpeg(const QString &driver)
 				if (ec)
 					ec->processNearEnd((qint16 *)enc_frame->data[0], frame_size);
 
+				if (m_muted.loadRelaxed())
+					av_samples_set_silence(enc_frame->data, 0, frame_size, 1, enc_ctx->sample_fmt);
+
 				enc_frame->pts = pts;
 				pts += frame_size;
 
@@ -812,6 +815,9 @@ void AudioDevice::captureNative(const QString &api)
 
 			if (ec)
 				ec->processNearEnd(block.data(), frame_size);
+
+			if (m_muted.loadRelaxed())
+				memset(block.data(), 0, frame_size * sizeof(qint16));
 
 			AVFrame *enc_frame = av_frame_alloc();
 			enc_frame->format = enc_ctx->sample_fmt;

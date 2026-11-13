@@ -31,11 +31,52 @@
 #include <QContextMenuEvent>
 #include <QInputDialog>
 #include <QTimer>
+#include <QPainter>
+#include <QPixmap>
 
 // name first; the ID stays in the tooltip, short ID only when the peer has not told us a name yet
 static QString contact_label(const Contacts::ContactRecord &r)
 {
 	return r.name.isEmpty() ? QString(r.id.toBase64().left(12)) + "..." : r.name;
+}
+
+static QIcon presence_icon(bool connected)
+{
+	QPixmap pm(12, 12);
+	pm.fill(Qt::transparent);
+
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing);
+	p.setPen(Qt::NoPen);
+	p.setBrush(connected ? QColor("#2ecc71") : QColor("#b0b0b0"));
+	p.drawEllipse(1, 1, 10, 10);
+
+	return QIcon(pm);
+}
+
+// unread count, last message and (for contacts) whether a connection to the peer is up
+void ContactListWidget::decorate(QListWidgetItem *it, const QString &name, const QByteArray &conv, bool is_group,
+                                 History &h, const QMap<QByteArray, int> &unread)
+{
+	int n = unread.value(conv);
+	QList<History::HistoryRecord> last = h.GetLast(conv, is_group, 1);
+	QString text = n ? QString("%1 (%2)").arg(name).arg(n) : name;
+	QFont f = it->font();
+
+	if (!last.isEmpty())
+		text += "\n    " + last.first().message.simplified().left(60);
+
+	f.setBold(n > 0);
+	it->setFont(f);
+	it->setText(text);
+
+	if (!is_group)
+	{
+		bool connected = msguirouter->is_connected(conv);
+
+		it->setIcon(presence_icon(connected));
+		it->setToolTip(QString("%1\n%2").arg(connected ? tr("Connected") : tr("Not connected")).arg(QString(conv.toBase64())));
+	}
 }
 
 ContactListWidget::ContactListWidget(QWidget *parent) :
@@ -79,6 +120,8 @@ ContactListWidget::ContactListWidget(QWidget *parent) :
 	connect(newgroupAct, SIGNAL(triggered()), this, SLOT(new_group()));
 
 	connect(this, SIGNAL(itemDoubleClicked(QListWidgetItem*)), this, SLOT(start_chat()));
+	// queued: a reload replaces every item, which must not happen inside one of their own events
+	connect(msguirouter, SIGNAL(conversations_changed()), this, SLOT(Reload()), Qt::QueuedConnection);
 
 	setContactsStorage(new Contacts(config_dbname, Accounts::GetCurrentAccount().id));
 }
@@ -136,12 +179,15 @@ void ContactListWidget::setContactsStorage(Contacts *ct, bool show_blacklisted)
 	storage = ct;
 	contact_records = ct->GetContacts();
 
+	History h(config_dbname, Accounts::GetCurrentAccount().id);
+	QMap<QByteArray, int> unread = h.UnreadCounts();
+
 	for (int i = 0; i < contact_records.size(); i++)
 	{
 		addItem(contact_label(contact_records[i]));
 		wgitem_to_recs[this->item(i)] = &contact_records[i];
 		this->item(i)->setStatusTip(contact_records[i].id.toBase64());
-		this->item(i)->setToolTip(contact_records[i].id.toBase64().constData());
+		decorate(item(i), contact_label(contact_records[i]), contact_records[i].id, false, h, unread);
 	}
 
 	if (show_blacklisted)
@@ -172,8 +218,9 @@ void ContactListWidget::setContactsStorage(Contacts *ct, bool show_blacklisted)
 
 	for (int i = 0; i < groups.size(); i++)
 	{
-		addItem(QString("[%1] %2").arg(tr("group")).arg(groups[i].name));
+		addItem(QString());
 		wgitem_to_groups[item(count() - 1)] = groups[i].id;
+		decorate(item(count() - 1), QString("[%1] %2").arg(tr("group")).arg(groups[i].name), groups[i].id, true, h, unread);
 	}
 }
 
@@ -329,7 +376,10 @@ void ContactListWidget::show_id()
 
 void ContactListWidget::Reload()
 {
-	setContactsStorage(storage);
+	int row = currentRow();
+
+	setContactsStorage(storage, showblacklistAct->isChecked());
+	setCurrentRow(row);
 }
 
 void ContactListWidget::show_blacklist(bool checked)

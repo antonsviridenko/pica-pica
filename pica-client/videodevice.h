@@ -274,6 +274,11 @@ signals:
 	// onto the 0x77 sequence number's last fragment marker bit.
 	void packetReady(QByteArray data, bool isLastFragment);
 
+	// A small Format_RGB32 picture of what the camera is sending, a few times
+	// a second, for the self-view. Not emitted when a compressed camera stream
+	// other than MJPEG is forwarded, since nothing decodes it on this side.
+	void previewReady(QImage frame);
+
 	// One decoded picture from the remote side, ready to be displayed, as a
 	// Format_RGB32 image - the format a widget draws without converting it
 	// first.
@@ -366,6 +371,10 @@ private:
 	// Steady state: the newest frame wins, because for live video showing the
 	// current picture matters more than showing every picture.
 	static const int kMaxQueueDepth = 2;
+
+	// Self-view: one frame in this many, at most this wide.
+	static const int kPreviewEvery = 5;
+	static const int kPreviewWidth = 240;
 
 	// Until the decode loop has taken its first frame it is not behind - it is
 	// still opening the codec, which happens only after the peer's 0x75 has

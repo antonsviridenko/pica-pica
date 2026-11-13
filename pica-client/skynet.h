@@ -27,6 +27,7 @@
 #include <QVector>
 #include <QPair>
 #include <QSet>
+#include <QMutex>
 #include <QDataStream>
 
 
@@ -43,6 +44,12 @@ public:
 	void SendMessage(QByteArray conv, QByteArray msg_id, QString msg, bool is_group);
 	// Creates the group or, for groups I own, changes its name and members
 	void SaveGroup(QByteArray group_id, QString name, QList<QByteArray> members);
+	// A member asks the owner to take it out; the owner dissolves the group.
+	void LeaveGroup(QByteArray group_id);
+	// True while a connection is up to a peer whose client is of the EXTMSG
+	// generation. Older clients cannot follow some mid-call changes, see
+	// AudioVideoCallController::video_capture_started(). Safe from any thread.
+	bool peerHasExt(QByteArray peer_id);
 	void SendFile(QByteArray to, QString filepath);
 	void AcceptFile(QByteArray from, QString filepath);
 	void DenyFile(QByteArray from);
@@ -62,11 +69,12 @@ public:
 	void SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 signals:
-	void MessageReceived(QByteArray conv, QByteArray author, QString msg);
-	void UnableToDeliver(QByteArray to, QString msg);
+	void MessageReceived(QByteArray conv, QByteArray author, QString msg, QByteArray msg_id);
+	void UnableToDeliver(QByteArray conv, QByteArray msg_id);
 	void Delivered(QByteArray conv, QByteArray msg_id);
 	// count messages of conv were received from a peer's copy of the history
 	void HistorySynced(QByteArray conv, int count);
+	void GroupChanged(QByteArray group_id, QList<QByteArray> added, QList<QByteArray> removed);
 	void BecameSelfAware();
 	void LostSelfAwareness();
 	void PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified);
@@ -154,6 +162,7 @@ private:
 	void handle_ext_groupinfo(QByteArray from, QDataStream &ds);
 	void handle_ext_syncreq(QByteArray from, QDataStream &ds);
 	void handle_ext_syncdata(QByteArray from, QDataStream &ds);
+	void handle_ext_groupleave(QByteArray from, QDataStream &ds);
 	void start_sync(QByteArray peer);
 	void send_syncreq(QByteArray peer, QByteArray group_id);
 	void store_received(QByteArray from, const QByteArray &msg_bytes);
@@ -173,6 +182,9 @@ private:
 	QSet<QByteArray> counted_ft_in;
 	QSet<QByteArray> counted_ft_out;
 
+	QMutex ext_peers_mutex;
+	QSet<QByteArray> ext_peers; // see peerHasExt()
+
 	/* Only one call can be in progress at a time, so this is a flag and not
 	 * a counter like active_filetransfers.
 	 */
@@ -184,7 +196,6 @@ private:
 	// check if there is a call waiting to be initiated with peer_id
 	bool is_call_waiting_for(const QByteArray &peer_id);
 
-	void emit_UnableToDeliver(QByteArray to, QString msg);
 	void emit_PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified);
 	void emit_IncomingFileRequestReceived(QByteArray peer_id, quint64 file_size, QString filename);
 	void emit_OutgoingFileRequestAccepted(QByteArray peer_id);
@@ -319,6 +330,7 @@ private slots:
 
 	void do_SendMessage(QByteArray conv, QByteArray msg_id, QString msg, bool is_group);
 	void do_SaveGroup(QByteArray group_id, QString name, QList<QByteArray> members);
+	void do_LeaveGroup(QByteArray group_id);
 	void do_SendFile(QByteArray to, QString filepath);
 	void do_AcceptFile(QByteArray from, QString filepath);
 	void do_DenyFile(QByteArray from);

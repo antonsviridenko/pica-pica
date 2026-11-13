@@ -25,6 +25,8 @@
 #include "videodevice.h"
 #include "toneplayer/toneplayer.h"
 
+class QTimer;
+
 class AudioVideoCallController : public QObject
 {
 	Q_OBJECT
@@ -53,6 +55,29 @@ private:
 	VideoDevice *remotevideo;
 	bool is_active;
 	QByteArray m_peer_id;
+	// Whether our camera is being sent. Fragments still queued from the capture
+	// thread when it is switched off must not follow the "video stopped" message.
+	bool m_cameraOn;
+
+	void connect_callwindow();
+
+	// What the peer was last told our video is, as "codec WxH", so that a
+	// camera restarted with the same format does not announce it again.
+	QString m_announcedVideo;
+
+	// What the peer said it is sending, to reopen playback on another device.
+	QString m_peerAudioCodec;
+	int m_peerAudioRate;
+
+	// Incoming audio packets seen and missed since the last report_quality().
+	quint16 m_lastAudioSeq;
+	bool m_haveAudioSeq;
+	int m_audioReceived;
+	int m_audioLost;
+	QTimer *m_qualityTimer;
+
+	void startMicrophone();
+	void startPlayback();
 
 	// Earpiece tones (ringback, busy, special information/unreachable),
 	// played through the "audio.playback_device" setting.
@@ -116,6 +141,11 @@ private slots:
 	void accept_call();
 	void end_call();
 	void callwindow_closed(CallWindow *sender_window);
+	void mute_toggled(bool muted);
+	void camera_toggled(bool on);
+	void fill_devices_menu();
+	void device_selected(int kind, QString device);
+	void report_quality();
 
 	void send_audio_packet(QByteArray data);
 	void incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate);

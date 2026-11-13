@@ -43,6 +43,8 @@ public:
 	QAction *newgroupAct;
 protected:
 	void contextMenuEvent(QContextMenuEvent *event);
+	void decorate(QListWidgetItem *it, const QString &name, const QByteArray &conv, bool is_group,
+	              class History &h, const QMap<QByteArray, int> &unread);
 
 private:
 	void setContactsStorage(Contacts *ct, bool show_blacklisted = false);

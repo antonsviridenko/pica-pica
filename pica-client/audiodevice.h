@@ -65,6 +65,14 @@ public:
 	// decided.
 	void setEchoCanceller(EchoCancellerPtr ec);
 
+	// Capture direction: send silence instead of the microphone. The stream
+	// keeps flowing, so the peer's jitter buffer and the echo canceller carry
+	// on undisturbed. Safe to call from any thread.
+	void setMuted(bool muted)
+	{
+		m_muted.storeRelaxed(muted ? 1 : 0);
+	}
+
 	// Push a codec packet received from the network into the playback
 	// jitter buffer. Safe to call from any thread. Drops the oldest queued
 	// packet if the buffer is full, favoring low latency over completeness.
@@ -182,6 +190,7 @@ private:
 	int m_bitrate;
 
 	QAtomicInt m_abort;
+	QAtomicInt m_muted;
 
 	// Shared with the other direction of the same call, and held by shared
 	// pointer because AudioVideoCallController tears a call down without

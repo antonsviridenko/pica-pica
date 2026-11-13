@@ -25,6 +25,8 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QLabel>
+#include <QSet>
+#include <QDate>
 #include "history.h"
 
 class TextSend : public QTextEdit
@@ -56,6 +58,8 @@ public:
 		return peer_name_;
 	};
 
+	QString name_of(QByteArray id); // display name of me, the peer or a group member
+
 	bool isGroup()
 	{
 		return is_group_;
@@ -65,10 +69,12 @@ signals:
 	void msg_input(QString msg, QByteArray msg_id, ChatWindow *sender_window);
 	void chatwindow_close(ChatWindow *sender_window);
 	void contacts_update();
+	void conversation_read();
 
 public slots:
-	void msg_from_peer(QByteArray author, QString msg);
+	void msg_from_peer(QByteArray author, QString msg, QByteArray msg_id);
 	void msg_delivered(QByteArray msg_id);
+	void msg_failed(QByteArray msg_id);
 	void msg_informational(QString text);//юзер в оффлайне, набирает сообщение, и т.д. серым шрифтом, курсив
 	void set_peer_name();
 	void update_status(QString status);
@@ -96,11 +102,19 @@ private:
 	QPushButton *btAddCtBlacklist;
 	QLabel *lbAddCtQuestion;
 	QLabel *lbConnStatus;
+	QPushButton *btNewMsgs; // shown when a message arrives while the view is scrolled up
+	QSet<QByteArray> shown_; // IDs of the messages in the view, so none is drawn twice
+	QDate last_day_; // day of the last message drawn, for the day separators
+	bool connected_;
+	bool offline_note_shown_;
+
+	void set_mark(QByteArray msg_id, QChar mark);
+	void mark_read();
+	void changeEvent(QEvent *e);
 
 	bool isEmptyMessage(const QString &msg) const;
 	void put_message(QString msg, QByteArray id, bool is_me, QByteArray msg_id = QByteArray());
-	QString name_of(QByteArray id);
-	int draw_message(QString msg, QString nickname, QString datetime, QString color, bool is_delivered);
+	int draw_message(QString msg, QString nickname, QDateTime when, QString color, QChar mark);
 	void print_history(QList<History::HistoryRecord> H);
 
 	void closeEvent(QCloseEvent *e);
@@ -122,6 +136,8 @@ private slots:
 };
 
 // Lets the user pick a group name and members among the contacts. Returns false if cancelled.
-bool edit_group_dialog(QWidget *parent, QString *name, QList<QByteArray> *members, bool editable);
+// owner marks that member in the list; leave, when given, adds a leave/delete button and reports its use
+bool edit_group_dialog(QWidget *parent, QString *name, QList<QByteArray> *members, bool editable,
+                       QByteArray owner = QByteArray(), bool *leave = nullptr);
 
 #endif // CHATWINDOW_H

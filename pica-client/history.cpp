@@ -23,6 +23,7 @@
 #include <QFile>
 #include <QSet>
 #include <QDebug>
+#include <algorithm>
 
 // NULL instead of an empty blob, so that "group_id is null" selects one-to-one messages
 static QVariant blob_or_null(const QByteArray &b)
@@ -30,7 +31,7 @@ static QVariant blob_or_null(const QByteArray &b)
 	return b.isEmpty() ? QVariant(QVariant::ByteArray) : QVariant(b);
 }
 
-static const char *record_columns = "contact_id, is_me, is_delivered, timestamp, message, msg_id, group_id, prev_hash, sig";
+static const char *record_columns = "contact_id, is_me, is_delivered, timestamp, message, msg_id, group_id, prev_hash, sig, is_read";
 
 History::History(QString storage, QByteArray my_id, QString connectionName)
 	: storage_(storage), connection_name_(connectionName), me_(my_id)
@@ -56,8 +57,8 @@ bool History::Add(const HistoryRecord &r)
 	QSqlQuery query(dbconn);
 
 	query.prepare(
-	    "insert or ignore into history (contact_id, account_id, is_me, is_delivered, message, id, timestamp, msg_id, group_id, prev_hash, sig) \
-                values (:contact_id, :account_id, :is_me, :is_delivered, :message, null, :timestamp, :msg_id, :group_id, :prev_hash, :sig);"
+	    "insert or ignore into history (contact_id, account_id, is_me, is_delivered, message, id, timestamp, msg_id, group_id, prev_hash, sig, is_read) \
+                values (:contact_id, :account_id, :is_me, :is_delivered, :message, null, :timestamp, :msg_id, :group_id, :prev_hash, :sig, :is_read);"
 	);
 
 	query.bindValue(":contact_id", r.peer_id);
@@ -70,6 +71,7 @@ bool History::Add(const HistoryRecord &r)
 	query.bindValue(":group_id", blob_or_null(r.group_id));
 	query.bindValue(":prev_hash", blob_or_null(r.prev_hash));
 	query.bindValue(":sig", blob_or_null(r.sig));
+	query.bindValue(":is_read", r.is_read ? 1 : 0);
 
 	query.exec();
 
@@ -109,6 +111,7 @@ QList<History::HistoryRecord> History::select(QString where, const QMap<QString,
 		r.group_id =     query.value(6).toByteArray();
 		r.prev_hash =    query.value(7).toByteArray();
 		r.sig =          query.value(8).toByteArray();
+		r.is_read =      query.value(9).toBool();
 
 		L << r;
 	}
@@ -152,6 +155,48 @@ QList<History::HistoryRecord> History::GetMessages(QByteArray conv, bool is_grou
 	b[":end"] = end_timestamp;
 
 	return select(conv_where(is_group) + " and timestamp >= :start and timestamp <= :end order by timestamp, id", b);
+}
+
+QList<History::HistoryRecord> History::GetLast(QByteArray conv, bool is_group, int n)
+{
+	QMap<QString, QVariant> b;
+	b[":conv"] = conv;
+	b[":n"] = n;
+
+	QList<HistoryRecord> L = select(conv_where(is_group) + " order by timestamp desc, id desc limit :n", b);
+
+	std::reverse(L.begin(), L.end());
+	return L;
+}
+
+QMap<QByteArray, int> History::UnreadCounts()
+{
+	QMap<QByteArray, int> M;
+	QSqlQuery query(dbconn);
+
+	query.setForwardOnly(true);
+	query.prepare("select coalesce(group_id, contact_id), count(*) from history where account_id=:me and is_read=0 group by 1");
+	query.bindValue(":me", me_);
+	query.exec();
+
+	lasterr = query.lastError();
+
+	while (query.next())
+		M[query.value(0).toByteArray()] = query.value(1).toInt();
+
+	return M;
+}
+
+void History::MarkRead(QByteArray conv, bool is_group)
+{
+	QSqlQuery query(dbconn);
+
+	query.prepare("update history set is_read=1 where account_id=:me and is_read=0 and " + conv_where(is_group));
+	query.bindValue(":me", me_);
+	query.bindValue(":conv", conv);
+	query.exec();
+
+	lasterr = query.lastError();
 }
 
 QByteArray History::LastHash(QByteArray conv, bool is_group)
@@ -456,6 +501,17 @@ void Groups::Store(const GroupRecord &g)
 	}
 
 	dbconn.commit();
+}
+
+void Groups::RemoveMember(QByteArray id, QByteArray member)
+{
+	QSqlQuery query(dbconn);
+
+	query.prepare("delete from group_members where account_id=:me and group_id=:id and member_id=:member");
+	query.bindValue(":me", me_);
+	query.bindValue(":id", id);
+	query.bindValue(":member", member);
+	query.exec();
 }
 
 QByteArray Groups::SignedData(const GroupRecord &g)

@@ -28,13 +28,15 @@ public:
 	explicit FileTransferController(QObject *parent = 0);
 
 signals:
+	void transfer_note(QByteArray peer_id, QString text); // one line for the chat with this peer
 
 private:
 
 	QMap<QByteArray, FileTransferDialog*> ftdialogs_in;
 	QMap<QByteArray, FileTransferDialog*> ftdialogs_out;
 
-	QMap<QByteArray, QString> fnames;
+	QMap<QByteArray, QString> fnames; // incoming
+	QMap<QByteArray, QString> fnames_out;
 
 
 public slots:

@@ -1341,6 +1341,7 @@ void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st,
 
 	AVPacket *pkt = av_packet_alloc();
 	bool loggedReadError = false;
+	unsigned previewCount = 0;
 
 	while (!m_abort.loadRelaxed())
 	{
@@ -1358,6 +1359,17 @@ void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st,
 		}
 
 		emitFragments(pkt->data, pkt->size);
+
+		// Self-view. An MJPEG packet is a JPEG picture Qt can read; a camera
+		// that leaves the Huffman tables out gives a null image and no preview.
+		if (codec == QLatin1String("mjpeg") && previewCount++ % kPreviewEvery == 0)
+		{
+			QImage img = QImage::fromData(pkt->data, pkt->size, "JPG");
+
+			if (!img.isNull())
+				emit previewReady(img.scaledToWidth(qMin((int)kPreviewWidth, img.width())).convertToFormat(QImage::Format_RGB32));
+		}
+
 		av_packet_unref(pkt);
 	}
 
@@ -1873,6 +1885,8 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 	}
 
 	SwsContext *sws = nullptr;
+	SwsContext *preview_sws = nullptr;
+	unsigned previewCount = 0;
 	AVPacket *in_pkt = av_packet_alloc();
 	AVFrame *cam_frame = av_frame_alloc();
 	AVPacket *out_pkt = av_packet_alloc();
@@ -1947,6 +1961,31 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 
 			sws_scale(sws, cam_frame->data, cam_frame->linesize, 0, cam_frame->height,
 			          enc_frame->data, enc_frame->linesize);
+
+			// Self-view, from the camera's own frame rather than the encoder's
+			// so it costs one small scale and no extra copy.
+			if (previewCount++ % kPreviewEvery == 0 && cam_frame->width > 0)
+			{
+				bool fullRange = false;
+				int w = qMin((int)kPreviewWidth, cam_frame->width) & ~1;
+				int h = (cam_frame->height * w / cam_frame->width) & ~1;
+
+				preview_sws = sws_getCachedContext(preview_sws, cam_frame->width, cam_frame->height,
+				                                   swscaleSourceFormat((AVPixelFormat)cam_frame->format, &fullRange),
+				                                   w, h, AV_PIX_FMT_0RGB32, SWS_FAST_BILINEAR,
+				                                   nullptr, nullptr, nullptr);
+
+				if (preview_sws && h > 0)
+				{
+					QImage img(w, h, QImage::Format_RGB32);
+					uint8_t *dst[4] = {img.bits(), nullptr, nullptr, nullptr};
+					int dstStride[4] = {img.bytesPerLine(), 0, 0, 0};
+
+					sws_scale(preview_sws, cam_frame->data, cam_frame->linesize, 0, cam_frame->height, dst, dstStride);
+					emit previewReady(img);
+				}
+			}
+
 			av_frame_unref(cam_frame);
 
 			enc_frame->pts = pts++;
@@ -2020,6 +2059,7 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 	av_packet_free(&out_pkt);
 	av_frame_free(&cam_frame);
 	av_frame_free(&enc_frame);
+	if (preview_sws) sws_freeContext(preview_sws);
 	if (sws) sws_freeContext(sws);
 	if (hw_frames_ref) av_buffer_unref(&hw_frames_ref);
 	avcodec_free_context(&enc_ctx);

@@ -42,7 +42,8 @@ enum ExtType
 	EXT_ACK = 2,      // msg_id or group_id
 	EXT_GROUPINFO = 3,// id, owner, version, name, members, sig
 	EXT_SYNCREQ = 4,  // group_id (empty: one-to-one), since, IDs the requester already has
-	EXT_SYNCDATA = 5  // group_id, last chunk flag, records: msg_id, author, timestamp, text, prev_hash, sig
+	EXT_SYNCDATA = 5, // group_id, last chunk flag, records: msg_id, author, timestamp, text, prev_hash, sig
+	EXT_GROUPLEAVE = 6 // group_id; sent to the owner, who answers with EXT_ACK and new group info
 };
 
 static const quint32 ext_max_list = 4096;
@@ -889,7 +890,7 @@ void SkyNet::do_SendMessage(QByteArray conv, QByteArray msg_id, QString msg, boo
 
 		if (!Groups(config_dbname, me(), network_sql_connection_name).Get(conv, &g) || !g.members.contains(me()))
 		{
-			emit UnableToDeliver(conv, msg);
+			emit UnableToDeliver(conv, msg_id);
 			return;
 		}
 
@@ -911,7 +912,7 @@ void SkyNet::do_SendMessage(QByteArray conv, QByteArray msg_id, QString msg, boo
 
 	if (!h.Add(r))
 	{
-		emit UnableToDeliver(conv, msg);
+		emit UnableToDeliver(conv, msg_id);
 		return;
 	}
 
@@ -1160,7 +1161,15 @@ void SkyNet::flush_queues(QByteArray to)
 				if (sent_on_chan[to].contains(id))
 					continue;
 
-				if (outbox[i].kind == History::OutboxGroupInfo)
+				if (outbox[i].kind == History::OutboxGroupLeave)
+				{
+					if (!chan->peer_ext)
+						continue;
+
+					ds << (quint8)EXT_GROUPLEAVE << id;
+					ret = PICA_send_ext(chan, payload.constData(), payload.size());
+				}
+				else if (outbox[i].kind == History::OutboxGroupInfo)
 				{
 					Groups::GroupRecord g;
 
@@ -1206,6 +1215,11 @@ void SkyNet::flush_queues(QByteArray to)
 
 					h.OutboxRemove(to, id, false);
 					emit StatusMsg(tr("A message is too long to be sent and was dropped"), true);
+
+					History::HistoryRecord dropped;
+
+					if (h.Get(id, &dropped))
+						emit UnableToDeliver(dropped.group_id.isEmpty() ? to : dropped.group_id, id);
 					continue;
 				}
 
@@ -1271,10 +1285,6 @@ QList<QByteArray> SkyNet::filter_existing_chans(QList<QByteArray> peer_ids)
 	return ret;
 }
 
-void SkyNet::emit_UnableToDeliver(QByteArray to, QString msg)
-{
-	emit UnableToDeliver(to, msg);
-}
 
 void SkyNet::emit_PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified)
 {
@@ -1447,7 +1457,13 @@ void SkyNet::c2c_established_cb(const unsigned char *peer_id, const char *cipher
 		skynet->flush_queues(peer);
 
 		if (chan && chan->peer_ext)
+		{
+			{
+				QMutexLocker lock(&skynet->ext_peers_mutex);
+				skynet->ext_peers.insert(peer);
+			}
 			skynet->start_sync(peer);
+		}
 	}
 
 	if (skynet->is_call_waiting_for(peer))
@@ -1498,6 +1514,10 @@ void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
 	skynet->emit_c2cClosed(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 	skynet->sent_on_chan.remove(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 	skynet->ext_wait.remove(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	{
+		QMutexLocker lock(&skynet->ext_peers_mutex);
+		skynet->ext_peers.remove(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	}
 	/* transfers carried by this connection are over */
 	skynet->active_filetransfers_down(QByteArray((const char*)peer_id, PICA_ID_SIZE), true);
 	skynet->active_filetransfers_down(QByteArray((const char*)peer_id, PICA_ID_SIZE), false);
@@ -1720,6 +1740,10 @@ void SkyNet::c2c_ext_cb(const unsigned char *peer_id)
 	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
 
 	skynet->ext_wait.remove(peer);
+	{
+		QMutexLocker lock(&skynet->ext_peers_mutex);
+		skynet->ext_peers.insert(peer);
+	}
 	skynet->flush_queues(peer);
 	skynet->start_sync(peer);
 }
@@ -1782,13 +1806,14 @@ void SkyNet::store_received(QByteArray from, const QByteArray &msg_bytes)
 	r.peer_id = from;
 	r.is_me = false;
 	r.is_delivered = true;
+	r.is_read = false;
 	r.timestamp = (quint32)time(NULL);
 	r.message = QString::fromUtf8(msg_bytes);
 	r.msg_id = QUuid::createUuid().toRfc4122();
 	r.prev_hash = h.LastHash(from, false);
 
 	if (h.Add(r))
-		emit MessageReceived(from, from, r.message);
+		emit MessageReceived(from, from, r.message, r.msg_id);
 }
 
 void SkyNet::legacy_delivered(QByteArray to)
@@ -1836,6 +1861,9 @@ void SkyNet::handle_ext(QByteArray from, const QByteArray &payload)
 	case EXT_SYNCDATA:
 		handle_ext_syncdata(from, ds);
 		break;
+	case EXT_GROUPLEAVE:
+		handle_ext_groupleave(from, ds);
+		break;
 	default:
 		qDebug() << "unknown EXTMSG type" << type << "from" << from.toBase64();
 	}
@@ -1875,6 +1903,7 @@ void SkyNet::handle_ext_msg(QByteArray from, QDataStream &ds)
 	r.peer_id = from;
 	r.is_me = false;
 	r.is_delivered = true;
+	r.is_read = false;
 	r.message = QString::fromUtf8(text);
 
 	// the connection already proves who sent it; a signature is required for it to be synced on later
@@ -1885,7 +1914,7 @@ void SkyNet::handle_ext_msg(QByteArray from, QDataStream &ds)
 	}
 
 	if (h.Add(r))
-		emit MessageReceived(r.group_id.isEmpty() ? from : r.group_id, from, r.message);
+		emit MessageReceived(r.group_id.isEmpty() ? from : r.group_id, from, r.message, r.msg_id);
 }
 
 void SkyNet::handle_ext_ack(QByteArray from, QDataStream &ds)
@@ -1950,6 +1979,10 @@ void SkyNet::handle_ext_groupinfo(QByteArray from, QDataStream &ds)
 
 	gs.Store(g);
 	emit ContactsUpdated();
+
+	if (known)
+		emit GroupChanged(g.id, (g.members.toSet() - stored.members.toSet()).toList(),
+		                  (stored.members.toSet() - g.members.toSet()).toList());
 
 	if (!known && g.members.contains(me()) && g.members.contains(from))
 		send_syncreq(from, g.id);
@@ -2119,6 +2152,7 @@ void SkyNet::handle_ext_syncdata(QByteArray from, QDataStream &ds)
 		r.peer_id = group_id.isEmpty() ? from : author;
 		r.group_id = group_id;
 		r.is_delivered = true;
+		r.is_read = r.is_me;
 		r.message = QString::fromUtf8(text);
 
 		// the peer could make up anything it serves, so others' messages must carry the author's signature
@@ -2169,6 +2203,8 @@ void SkyNet::do_SaveGroup(QByteArray group_id, QString name, QList<QByteArray> m
 		g.version = 1;
 	}
 
+	const QSet<QByteArray> before = notify.toSet();
+
 	g.name = name;
 	g.members = (members.toSet() << me()).toList();
 	g.sig = sign(Groups::SignedData(g));
@@ -2182,6 +2218,9 @@ void SkyNet::do_SaveGroup(QByteArray group_id, QString name, QList<QByteArray> m
 	gs.Store(g);
 	emit ContactsUpdated();
 
+	if (!before.isEmpty())
+		emit GroupChanged(g.id, (g.members.toSet() - before).toList(), (before - g.members.toSet()).toList());
+
 	// removed members are told too, so they know they are out
 	notify = (notify.toSet() + g.members.toSet()).toList();
 	notify.removeAll(me());
@@ -2192,4 +2231,73 @@ void SkyNet::do_SaveGroup(QByteArray group_id, QString name, QList<QByteArray> m
 		sent_on_chan[notify[i]].remove(g.id);
 		deliver(notify[i]);
 	}
+}
+
+void SkyNet::LeaveGroup(QByteArray group_id)
+{
+	QMetaObject::invokeMethod(this, "do_LeaveGroup", Qt::AutoConnection, Q_ARG(QByteArray, group_id));
+}
+
+void SkyNet::do_LeaveGroup(QByteArray group_id)
+{
+	Groups gs(config_dbname, me(), network_sql_connection_name);
+	Groups::GroupRecord g;
+
+	if (!gs.Get(group_id, &g) || !g.members.contains(me()))
+		return;
+
+	if (g.owner == me())
+	{
+		// Only the owner can sign group info, so it cannot hand the group over:
+		// it publishes a version with nobody else in it, which tells every member they are out.
+		do_SaveGroup(group_id, g.name, QList<QByteArray>());
+	}
+	else
+	{
+		History h(config_dbname, me(), network_sql_connection_name);
+
+		h.OutboxAdd(g.owner, group_id, History::OutboxGroupLeave);
+		sent_on_chan[g.owner].remove(group_id);
+		deliver(g.owner);
+	}
+
+	// gone for me right away; messages still sent to the group are dropped from here on
+	gs.RemoveMember(group_id, me());
+	emit ContactsUpdated();
+}
+
+void SkyNet::handle_ext_groupleave(QByteArray from, QDataStream &ds)
+{
+	Groups::GroupRecord g;
+	QByteArray id;
+
+	ds >> id;
+
+	if (ds.status() != QDataStream::Ok || id.size() != msg_id_size)
+		return;
+
+	// acknowledged whatever happens below, otherwise the sender keeps asking
+	{
+		QByteArray ack;
+		QDataStream as(&ack, QIODevice::WriteOnly);
+
+		as.setVersion(QDataStream::Qt_5_0);
+		as << (quint8)EXT_ACK << id;
+		send_ext(from, ack);
+	}
+
+	// a member can only take itself out, and only the owner can act on it
+	if (!Groups(config_dbname, me(), network_sql_connection_name).Get(id, &g)
+	        || g.owner != me() || from == me() || !g.members.contains(from))
+		return;
+
+	g.members.removeAll(from);
+	do_SaveGroup(id, g.name, g.members);
+}
+
+bool SkyNet::peerHasExt(QByteArray peer_id)
+{
+	QMutexLocker lock(&ext_peers_mutex);
+
+	return ext_peers.contains(peer_id);
 }

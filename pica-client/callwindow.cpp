@@ -19,6 +19,12 @@
 #include "globals.h"
 #include "accounts.h"
 #include "contacts.h"
+#include "settings.h"
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QKeySequence>
+#include <QMenu>
+#include <QStringList>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QCloseEvent>
@@ -50,7 +56,8 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 
 	setWindowTitle(incoming ? tr("Incoming call from %1").arg(peer_name) : tr("Call with %1").arg(peer_name));
 
-	QLabel *lbPeer = new QLabel(peer_name, this);
+	lbPeer = new QLabel(peer_name, this);
+	lbPeer->setTextFormat(Qt::PlainText); // the name comes from the peer's certificate
 	lbPeer->setAlignment(Qt::AlignCenter);
 	lbPeer->setToolTip(peer_id.toBase64());
 	{
@@ -109,14 +116,74 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	// an alignment - passing Qt::AlignLeft here, as this did, compiles, since
 	// Qt::Alignment converts to int, and quietly means a stretch of 1. A
 	// spacer does what the alignment was meant to.
+	pbMute = new QPushButton(tr("Mute"), this);
+	pbMute->setCheckable(true);
+	pbMute->setShortcut(QKeySequence(Qt::Key_M));
+	pbMute->setToolTip(tr("Stop sending the microphone (M)"));
+	pbMute->hide(); // nothing to mute before the call is up
+
+	pbCamera = new QPushButton(tr("Camera"), this);
+	pbCamera->setCheckable(true);
+	pbCamera->setChecked(Settings(config_dbname).loadValue("video.start_with_camera", 1).toBool());
+	pbCamera->setShortcut(QKeySequence(Qt::Key_V));
+	pbCamera->setToolTip(tr("Send video from the camera (V)"));
+
+	pbFullscreen = new QPushButton(tr("Fullscreen"), this);
+	pbFullscreen->setShortcut(QKeySequence(Qt::Key_F));
+	pbFullscreen->setToolTip(tr("Fullscreen (F, Esc to leave)"));
+
+	pbDevices = new QPushButton(tr("Devices"), this);
+	pbDevices->setMenu(new QMenu(pbDevices)); // filled by the call controller each time it opens
+	pbDevices->setToolTip(tr("Switch microphone, speaker or camera"));
+
+	videoStallTimer = new QTimer(this);
+	videoStallTimer->setSingleShot(true);
+	videoStallTimer->setInterval(2000);
+	connect(videoStallTimer, SIGNAL(timeout()), this, SLOT(remoteVideoStopped()));
+
+	pbHang->setStyleSheet("QPushButton { background-color: #c0392b; color: white; font-weight: bold; padding: 4px 14px; }");
+
+	lbSelf = new QLabel(this);
+	lbSelf->setFixedHeight(72);
+	lbSelf->setToolTip(tr("What your camera is sending"));
+	lbSelf->hide();
+
+	controls = new QWidget(this);
+	lh->setContentsMargins(0, 0, 0, 0);
+	lh->addWidget(lbSelf);
 	lh->addWidget(pbAccept);
 	lh->addWidget(pbCall);
+	lh->addWidget(pbMute);
+	lh->addWidget(pbCamera);
+	lh->addWidget(pbFullscreen);
+	lh->addWidget(pbDevices);
 	lh->addStretch(1);
 	lh->addWidget(pbHang);
-	lv->addLayout(lh, 0);
+	controls->setLayout(lh);
+	lv->addWidget(controls, 0);
 	setLayout(lv);
 
+	hideControlsTimer = new QTimer(this);
+	hideControlsTimer->setSingleShot(true);
+	hideControlsTimer->setInterval(3000);
+	connect(hideControlsTimer, &QTimer::timeout, this, [this] { if (isFullScreen()) controls->hide(); });
+
+	// mouse movement brings the controls back in fullscreen; the video widgets cover most of the window
+	setMouseTracking(true);
+	lbVideo->setMouseTracking(true);
 	lbVideo->installEventFilter(this);
+#ifdef HAVE_VAAPI
+	videoGpu->widget()->setMouseTracking(true);
+	videoGpu->widget()->installEventFilter(this);
+#endif
+
+	connect(pbMute, SIGNAL(toggled(bool)), this, SIGNAL(mute_toggled(bool)));
+	connect(pbMute, &QPushButton::toggled, this, [this](bool muted) { pbMute->setText(muted ? tr("Unmute") : tr("Mute")); });
+	connect(pbCamera, SIGNAL(clicked(bool)), this, SLOT(camera_clicked(bool)));
+	connect(pbFullscreen, SIGNAL(clicked()), this, SLOT(toggle_fullscreen()));
+
+	lbTimer->setText(is_incoming ? tr("Incoming call") : QString());
+	lbTimer->setVisible(is_incoming);
 
 	connect(pbCall, SIGNAL(clicked()), this, SLOT(call()));
 	connect(pbHang, SIGNAL(clicked()), this, SLOT(hang()));
@@ -137,6 +204,7 @@ void CallWindow::call_started()
 {
 	pbCall->hide();
 	pbAccept->hide();
+	pbMute->show();
 
 	callElapsedSeconds = 0;
 	lbTimer->setText("00:00");
@@ -148,17 +216,142 @@ void CallWindow::call_ended()
 {
 	callTimer->stop();
 	pbHang->setDisabled(true);
+	pbMute->hide();
+	pbCamera->setDisabled(true);
+	pbDevices->setDisabled(true);
+	videoStallTimer->stop();
+	lbSelf->hide();
 	lbTransport->hide();
+	setStatus(tr("Call ended"));
+
+	// nothing left to do in this window
+	QTimer::singleShot(3000, this, &QWidget::close);
+}
+
+void CallWindow::setStatus(QString text)
+{
+	lbTimer->setText(text);
+	lbTimer->setVisible(!text.isEmpty());
+}
+
+bool CallWindow::cameraOn() const
+{
+	return pbCamera->isChecked();
+}
+
+void CallWindow::camera_clicked(bool on)
+{
+	// remembered as the default for the next call
+	Settings(config_dbname).storeValue("video.start_with_camera", on ? "1" : "0");
+
+	if (!on)
+		lbSelf->hide();
+
+	emit camera_toggled(on);
+}
+
+void CallWindow::showLocalFrame(QImage frame)
+{
+	if (frame.isNull() || !pbCamera->isChecked())
+		return;
+
+	lbSelf->setPixmap(QPixmap::fromImage(frame.scaledToHeight(lbSelf->height(), Qt::SmoothTransformation)));
+	lbSelf->show();
+}
+
+void CallWindow::remoteVideoStopped()
+{
+	// No frames for a while - the peer switched its camera off, which no
+	// message announces. Do not leave its last frame frozen on screen; the
+	// next frame brings the video area back.
+	videoStallTimer->stop();
+	lastRemoteFrame = QImage();
+	lbVideo->clear();
+	lbVideo->hide();
+#ifdef HAVE_VAAPI
+	videoGpu->widget()->hide();
+#endif
+}
+
+void CallWindow::toggle_fullscreen()
+{
+	bool full = !isFullScreen();
+
+	// only the video and the controls in fullscreen
+	lbPeer->setVisible(!full);
+	lbTransport->setVisible(!full && !lbTransport->text().isEmpty());
+
+	if (full)
+	{
+		showFullScreen();
+		hideControlsTimer->start();
+	}
+	else
+	{
+		showNormal();
+		hideControlsTimer->stop();
+		controls->show();
+	}
+}
+
+void CallWindow::wakeControls()
+{
+	if (!isFullScreen())
+		return;
+
+	controls->show();
+	hideControlsTimer->start();
+}
+
+void CallWindow::keyPressEvent(QKeyEvent *e)
+{
+	if (e->key() == Qt::Key_Escape && isFullScreen())
+		toggle_fullscreen();
+	else
+		QWidget::keyPressEvent(e);
+}
+
+void CallWindow::mouseMoveEvent(QMouseEvent *e)
+{
+	wakeControls();
+	QWidget::mouseMoveEvent(e);
 }
 
 void CallWindow::setMediaTransport(bool direct_udp, QString ciphersuitename)
 {
 	if (direct_udp)
-		lbTransport->setText(tr("🔐 media: direct UDP, %1").arg(ciphersuitename));
+		transportText = tr("🔐 media: direct UDP, %1").arg(ciphersuitename);
 	else
-		lbTransport->setText(tr("media: through the chat connection"));
+		transportText = tr("media: through the chat connection");
 
-	lbTransport->show();
+	updateTransportLine();
+}
+
+void CallWindow::setQuality(int lossPercent)
+{
+	qualityText = lossPercent < 2 ? tr("connection: good")
+	              : lossPercent < 8 ? tr("connection: fair")
+	              : tr("connection: poor");
+	lbTransport->setToolTip(tr("%1% of the incoming audio was lost in the last 2 seconds").arg(lossPercent));
+	updateTransportLine();
+}
+
+void CallWindow::updateTransportLine()
+{
+	QStringList parts;
+
+	if (!transportText.isEmpty())
+		parts << transportText;
+	if (!qualityText.isEmpty())
+		parts << qualityText;
+
+	lbTransport->setText(parts.join(", "));
+	lbTransport->setVisible(!parts.isEmpty() && !isFullScreen());
+}
+
+QMenu *CallWindow::devicesMenu() const
+{
+	return pbDevices->menu();
 }
 
 void CallWindow::showRemoteFrame(QImage frame)
@@ -166,6 +359,7 @@ void CallWindow::showRemoteFrame(QImage frame)
 	if (frame.isNull())
 		return;
 
+	videoStallTimer->start();
 	lastRemoteFrame = frame;
 
 	if (lbVideo->isHidden())
@@ -245,6 +439,8 @@ void CallWindow::showRemoteHwFrame(AVFramePtr frame)
 {
 	if (!frame)
 		return;
+
+	videoStallTimer->start();
 
 	// The widget has given up on drawing - ask again for frames the label can
 	// show, and keep the video area with it.
@@ -337,6 +533,11 @@ bool CallWindow::eventFilter(QObject *watched, QEvent *event)
 		reportVideoArea();
 		updateRemoteFrame();
 	}
+
+	if (event->type() == QEvent::MouseMove)
+		wakeControls();
+	else if (event->type() == QEvent::MouseButtonDblClick)
+		toggle_fullscreen();
 
 	return QWidget::eventFilter(watched, event);
 }

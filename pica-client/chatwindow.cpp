@@ -19,6 +19,8 @@
 #include "contacts.h"
 #include "accounts.h"
 #include "skynet.h"
+#include "msguirouter.h"
+#include "filetransfercontroller.h"
 #include <QVBoxLayout>
 #include <QDateTime>
 #include <QAction>
@@ -33,6 +35,11 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QUuid>
+#include <QTextBrowser>
+#include <QScrollBar>
+#include <QRegularExpression>
+#include <QLocale>
+#include <QEvent>
 
 
 ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
@@ -60,6 +67,13 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 				break;
 			}
 		}
+
+		// someone I share a group with is expected to write to me
+		QList<Groups::GroupRecord> groups = Groups(config_dbname, Accounts::GetCurrentAccount().id).GetGroups();
+
+		for (int i = 0; i < groups.size(); i++)
+			if (groups[i].members.contains(peer_id_))
+				addcontactquestion = false;
 	}
 	{
 		Accounts ac(config_dbname);
@@ -72,7 +86,15 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 	layout = new QVBoxLayout;
 
 	lbConnStatus = new QLabel(is_group_ ? tr("Group chat, %1 members").arg(g.members.size()) : status);
-	chatw = new QTextEdit(this);
+	{
+		QTextBrowser *b = new QTextBrowser(this);
+		b->setOpenExternalLinks(true); // only http(s) links are ever made, see message_html()
+		chatw = b;
+	}
+	btNewMsgs = new QPushButton(tr("New messages below"), this);
+	btNewMsgs->hide();
+	connected_ = MsgUIRouter::status_connected(status);
+	offline_note_shown_ = false;
 	sendtextw = new TextSend(this);
 
 	connect(sendtextw, SIGNAL(send_pressed()), this, SLOT(send_message()));
@@ -91,9 +113,29 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 
 	chatw->setReadOnly(true);
 
+	connect(btNewMsgs, &QPushButton::clicked, this, [this] { chatw->moveCursor(QTextCursor::End); });
+	connect(chatw->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int v)
+	{
+		if (v >= chatw->verticalScrollBar()->maximum() - 4)
+			btNewMsgs->hide();
+	});
+
 	layout->addWidget(lbConnStatus, 0);
 	layout->addWidget(chatw, 3);
-	layout->addWidget(sendtextw, 1, Qt::AlignBottom);
+	layout->addWidget(btNewMsgs, 0);
+	if (is_group_)
+		layout->addWidget(sendtextw, 1, Qt::AlignBottom);
+	else
+	{
+		// files go to one peer over its connection; there is no group fan-out for them
+		QHBoxLayout *hl = new QHBoxLayout();
+		QPushButton *btSendFile = new QPushButton(tr("Send file..."), this);
+
+		connect(btSendFile, &QPushButton::clicked, this, [this] { ftctrl->send_file(peer_id_); });
+		hl->addWidget(sendtextw, 1);
+		hl->addWidget(btSendFile, 0, Qt::AlignBottom);
+		layout->addLayout(hl, 1);
+	}
 
 	if (addcontactquestion)
 	{
@@ -157,6 +199,7 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 	connect(histVerify, SIGNAL(triggered()), this, SLOT(verify_history()));
 	connect(groupMembers, SIGNAL(triggered()), this, SLOT(edit_members()));
 
+	print_history(hist.GetLast(peer_id_, is_group_, 50));
 }
 
 void ChatWindow::update_status(QString status)
@@ -165,6 +208,10 @@ void ChatWindow::update_status(QString status)
 		return;
 
 	lbConnStatus->setText(status);
+	connected_ = MsgUIRouter::status_connected(status);
+
+	if (connected_)
+		offline_note_shown_ = false;
 }
 
 QString ChatWindow::name_of(QByteArray id)
@@ -177,49 +224,91 @@ QString ChatWindow::name_of(QByteArray id)
 
 	QString name = Contacts(config_dbname, Accounts::GetCurrentAccount().id).GetContactName(id);
 
-	return name.isEmpty() ? QString(id.toBase64()) : name;
+	return name.isEmpty() ? QString(id.toBase64().left(12)) + "..." : name;
+}
+
+// delivery marks; each is one character, so one can replace another in place
+static const QChar mark_none(0x00A0);
+static const QChar mark_pending(0x2026);
+static const QChar mark_delivered(0x2713);
+static const QChar mark_failed(0x2717);
+
+static const char *color_me = "#2a6fdb";
+static const char *color_peer = "#c0392b";
+
+// message text as HTML: everything escaped, http(s) URLs turned into links
+static QString message_html(const QString &msg)
+{
+	static const QRegularExpression url("https?://[^\\s<>\"]+");
+	QRegularExpressionMatchIterator it = url.globalMatch(msg);
+	QString html;
+	int pos = 0;
+
+	while (it.hasNext())
+	{
+		QRegularExpressionMatch m = it.next();
+		QString u = m.captured().toHtmlEscaped();
+
+		html += msg.mid(pos, m.capturedStart() - pos).toHtmlEscaped();
+		html += "<a href=\"" + u + "\">" + u + "</a>";
+		pos = m.capturedEnd();
+	}
+
+	html += msg.mid(pos).toHtmlEscaped();
+	html.replace('\n', "<br>");
+
+	return "<span style=\"white-space: pre-wrap;\">" + html + "</span>";
 }
 
 void ChatWindow::put_message(QString msg, QByteArray id, bool is_me, QByteArray msg_id)
 {
 	int pos;
 
-	pos = draw_message(msg, name_of(id), QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"),
-	                   is_me ? "#2a6fdb" : "#c0392b", false);
+	pos = draw_message(msg, name_of(id), QDateTime::currentDateTime(),
+	                   is_me ? color_me : color_peer, is_me ? mark_pending : mark_none);
+
+	shown_.insert(msg_id);
 
 	if (is_me)
 		undelivered_msgs[msg_id] = pos;
 }
 
-int ChatWindow::draw_message(QString msg, QString nickname, QString datetime, QString color, bool is_delivered)
+// Appends at the end of the document whatever the user has selected or clicked,
+// and returns the position of the delivery mark.
+int ChatWindow::draw_message(QString msg, QString nickname, QDateTime when, QString color, QChar mark)
 {
-	QTextCharFormat fmt;
-	QString delivered_mark;
+	QScrollBar *sb = chatw->verticalScrollBar();
+	bool at_bottom = sb->value() >= sb->maximum() - 4;
+	QTextCursor c(chatw->document());
 	int ret;
 
-	if (is_delivered)
-		delivered_mark = "&#x2713;";
-	else
-		delivered_mark = "&nbsp;";
+	c.movePosition(QTextCursor::End);
 
-	QTextCursor c(chatw->document());
-	c.movePosition(QTextCursor::End, QTextCursor::MoveAnchor);
+	if (when.date() != last_day_)
+	{
+		last_day_ = when.date();
+		c.insertHtml(QString("<i><font color=gray>&mdash; %1 &mdash;</font></i>")
+		             .arg(QLocale().toString(last_day_, QLocale::LongFormat).toHtmlEscaped()));
+		c.insertText("\n", QTextCharFormat());
+	}
 
 	ret = c.position();
 
-	chatw->moveCursor(QTextCursor::End, QTextCursor::MoveAnchor);
-	fmt = chatw->currentCharFormat();
-	chatw->insertHtml(
+	c.insertHtml(
 	    QString("<b><font color=%1>%2(%3) %4 : </font></b>").
 	    arg(color).
-	    arg(delivered_mark).
-	    arg(datetime.toHtmlEscaped()).
+	    arg(QString(mark)).
+	    arg(when.toString("hh:mm:ss")).
 	    arg(nickname.toHtmlEscaped())
 	);
-	chatw->setCurrentCharFormat(fmt);
-	chatw->insertPlainText(msg + '\n');
+	c.insertHtml(message_html(msg));
+	c.insertText("\n", QTextCharFormat());
 
-	chatw->moveCursor(QTextCursor::End, QTextCursor::MoveAnchor);
+	// follow the conversation only while the user is at its end
+	if (at_bottom)
+		chatw->setTextCursor(c);
+	else
+		btNewMsgs->show();
 
 	return ret;
 }
@@ -228,56 +317,88 @@ void ChatWindow::print_history(QList<History::HistoryRecord> H)
 {
 	chatw->clear();
 	undelivered_msgs.clear(); // positions refer to the cleared text
+	shown_.clear();
+	last_day_ = QDate();
+	btNewMsgs->hide();
 
 	while(!H.isEmpty())
 	{
 		History::HistoryRecord r = H.takeFirst();
 		QDateTime dt;
+		int pos;
 
 		dt.setTime_t(r.timestamp);
-		draw_message(r.message, name_of(hist.Author(r)), dt.toString("yyyy-MM-dd hh:mm:ss"),
-		             r.is_me ? "#2a6fdb" : "#c0392b", r.is_delivered);
+		pos = draw_message(r.message, name_of(hist.Author(r)), dt, r.is_me ? color_me : color_peer,
+		                   !r.is_me ? mark_none : r.is_delivered ? mark_delivered : mark_pending);
+
+		shown_.insert(r.msg_id);
+
+		if (r.is_me && !r.is_delivered)
+			undelivered_msgs[r.msg_id] = pos;
 	}
 }
 
-void ChatWindow::msg_from_peer(QByteArray author, QString msg)
+void ChatWindow::msg_from_peer(QByteArray author, QString msg, QByteArray msg_id)
 {
 	if (isMinimized())
 		showNormal();
 
-	put_message(msg, author, false);
+	// a window opened by this very message has already drawn it from the history
+	if (!shown_.contains(msg_id))
+		put_message(msg, author, false, msg_id);
+
+	if (isActiveWindow())
+		mark_read();
 }
 
-void ChatWindow::msg_delivered(QByteArray msg_id)
+void ChatWindow::set_mark(QByteArray msg_id, QChar mark)
 {
-	// messages sent before this window was opened are not shown, and are already marked in history
+	// messages that are not in the view are already marked in history
 	if (!undelivered_msgs.contains(msg_id))
 		return;
 
 	QTextCursor c(chatw->document());
 	c.setPosition(undelivered_msgs.take(msg_id));
 	c.deleteChar();
-	c.insertText(QString(QChar(0x2713)));
+	c.insertText(QString(mark));
+}
+
+void ChatWindow::msg_delivered(QByteArray msg_id)
+{
+	set_mark(msg_id, mark_delivered);
+}
+
+void ChatWindow::msg_failed(QByteArray msg_id)
+{
+	set_mark(msg_id, mark_failed);
+}
+
+void ChatWindow::mark_read()
+{
+	hist.MarkRead(peer_id_, is_group_);
+	emit conversation_read();
+}
+
+void ChatWindow::changeEvent(QEvent *e)
+{
+	if (e->type() == QEvent::ActivationChange && isActiveWindow())
+		mark_read();
+
+	QWidget::changeEvent(e);
 }
 
 void ChatWindow::msg_informational(QString text)
 {
-	QString color;
-	QTextCharFormat fmt;
+	QScrollBar *sb = chatw->verticalScrollBar();
+	bool at_bottom = sb->value() >= sb->maximum() - 4;
+	QTextCursor c(chatw->document());
 
-	color = "gray";
+	c.movePosition(QTextCursor::End);
+	c.insertHtml(QString("<i><font color=gray>(%1)</font></i>").arg(text.toHtmlEscaped()));
+	c.insertText("\n", QTextCharFormat());
 
-	fmt = chatw->currentCharFormat();
-
-	chatw->insertHtml(
-	    QString("<i><font color=%1>(%2)</font></i>").
-	    arg(color).
-	    arg(text)
-	);
-	chatw->insertPlainText("\n");
-
-	chatw->setCurrentCharFormat(fmt);
-	chatw->moveCursor(QTextCursor::End, QTextCursor::KeepAnchor);
+	if (at_bottom)
+		chatw->setTextCursor(c);
 }
 
 bool ChatWindow::isEmptyMessage(const QString &msg) const
@@ -301,6 +422,14 @@ void ChatWindow::send_message()
 		QByteArray msg_id = QUuid::createUuid().toRfc4122();
 
 		put_message(message, Accounts::GetCurrentAccount().id, true, msg_id);
+		chatw->moveCursor(QTextCursor::End); // my own message is always brought into view
+
+		if (!is_group_ && !connected_ && !offline_note_shown_)
+		{
+			msg_informational(tr("Not connected - the message will be sent when the contact is reachable"));
+			offline_note_shown_ = true;
+		}
+
 		emit msg_input(message, msg_id, this);
 
 		sendtextw->clear();
@@ -381,11 +510,19 @@ void ChatWindow::edit_members()
 	if (!Groups(config_dbname, me).Get(peer_id_, &g))
 		return;
 
-	if (edit_group_dialog(this, &g.name, &g.members, g.owner == me) && g.owner == me)
+	bool leave = false;
+
+	if (edit_group_dialog(this, &g.name, &g.members, g.owner == me, g.owner, &leave) && g.owner == me)
 		skynet->SaveGroup(g.id, g.name, g.members);
+
+	if (leave)
+	{
+		skynet->LeaveGroup(g.id);
+		close();
+	}
 }
 
-bool edit_group_dialog(QWidget *parent, QString *name, QList<QByteArray> *members, bool editable)
+bool edit_group_dialog(QWidget *parent, QString *name, QList<QByteArray> *members, bool editable, QByteArray owner, bool *leave)
 {
 	QByteArray me = Accounts::GetCurrentAccount().id;
 	Contacts ct(config_dbname, me);
@@ -407,7 +544,8 @@ bool edit_group_dialog(QWidget *parent, QString *name, QList<QByteArray> *member
 	for (int i = 0; i < ids.size(); i++)
 	{
 		QString cname = ct.GetContactName(ids[i]);
-		QListWidgetItem *it = new QListWidgetItem(QString("(%1...) %2").arg(ids[i].toBase64().left(8).constData()).arg(cname), lw);
+		QListWidgetItem *it = new QListWidgetItem(QString("(%1...) %2%3").arg(ids[i].toBase64().left(8).constData()).arg(cname)
+		                                          .arg(ids[i] == owner ? QObject::tr(" - owner") : QString()), lw);
 
 		it->setFlags(editable ? Qt::ItemIsUserCheckable | Qt::ItemIsEnabled : Qt::ItemIsEnabled);
 		it->setCheckState(members->contains(ids[i]) ? Qt::Checked : Qt::Unchecked);
@@ -417,6 +555,22 @@ bool edit_group_dialog(QWidget *parent, QString *name, QList<QByteArray> *member
 	form->addRow(QObject::tr("Group name:"), le);
 	form->addRow(QObject::tr("Members:"), lw);
 	form->addRow(bb);
+
+	// an existing group can be left; its owner can only dissolve it
+	if (leave)
+	{
+		QPushButton *pb = bb->addButton(owner == me ? QObject::tr("Delete group") : QObject::tr("Leave group"), QDialogButtonBox::DestructiveRole);
+
+		QObject::connect(pb, &QPushButton::clicked, &d, [&d, leave]
+		{
+			if (QMessageBox::question(&d, QObject::tr("Group"), QObject::tr("Are you sure?")) == QMessageBox::Yes)
+			{
+				*leave = true;
+				d.reject();
+			}
+		});
+	}
+
 	QObject::connect(bb, SIGNAL(accepted()), &d, SLOT(accept()));
 	QObject::connect(bb, SIGNAL(rejected()), &d, SLOT(reject()));
 	d.setWindowTitle(QObject::tr("Group"));

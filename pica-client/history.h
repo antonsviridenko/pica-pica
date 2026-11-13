@@ -39,12 +39,14 @@ public:
 		QByteArray group_id; // empty for one-to-one messages
 		QByteArray prev_hash; // Hash() of the latest message the author had in this conversation
 		QByteArray sig; // author's signature of SignedData(), empty for messages from older clients
+		bool is_read = true; // false for received messages no chat window has shown yet
 	};
 
 	enum OutboxKind
 	{
 		OutboxMessage = 0, // msg_id refers to a history record
-		OutboxGroupInfo = 1 // msg_id is a group ID, the current group info is sent
+		OutboxGroupInfo = 1, // msg_id is a group ID, the current group info is sent
+		OutboxGroupLeave = 2 // msg_id is a group ID, its owner is asked to take me out
 	};
 
 	struct OutboxItem
@@ -69,7 +71,11 @@ public:
 	bool Get(QByteArray msg_id, HistoryRecord *r);
 	QList<HistoryRecord> GetMessages(QByteArray conv, bool is_group, quint32 start_timestamp, quint32 end_timestamp);
 	QList<HistoryRecord> GetMessages(QByteArray conv, bool is_group, QString keyword);
+	QList<HistoryRecord> GetLast(QByteArray conv, bool is_group, int n); // the n latest, oldest first
 	QByteArray LastHash(QByteArray conv, bool is_group);
+
+	QMap<QByteArray, int> UnreadCounts(); // conv -> number of unread messages
+	void MarkRead(QByteArray conv, bool is_group);
 
 	QByteArray Author(const HistoryRecord &r) const;
 	QByteArray SignedData(const HistoryRecord &r) const;
@@ -120,6 +126,7 @@ public:
 	bool Get(QByteArray id, GroupRecord *g);
 	QList<GroupRecord> GetGroups(); // groups I am a member of
 	void Store(const GroupRecord &g);
+	void RemoveMember(QByteArray id, QByteArray member); // local only; hides the group when it is me
 
 	static QByteArray SignedData(const GroupRecord &g);
 

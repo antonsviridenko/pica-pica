@@ -325,6 +325,8 @@ format) fields; lists are a quint32 count followed by the items:
    IDs of messages the requester already has
  5 history sync data: group ID, last chunk flag, record count, records
    (message ID, author ID, timestamp, UTF-8 text, previous hash, signature)
+ 6 leave group: group ID. Sent by a member to the group's owner, who answers
+   with a delivery report and publishes group info without that member
 Signatures are SHA-224 RSA signatures made with the account's key, see
 History::SignedData() and Groups::SignedData() in pica-client/history.cpp.
 ====================================================

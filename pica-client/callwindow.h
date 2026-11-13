@@ -41,6 +41,8 @@ signals:
 	void accept_call_pressed();
 	void hang_call_pressed();
 	void callwindow_closed(CallWindow *sender_window);
+	void mute_toggled(bool muted);
+	void camera_toggled(bool on);
 
 	// The area the remote video has to be drawn in, whenever it changes. The
 	// decoder produces frames at this size directly rather than the window
@@ -59,6 +61,17 @@ private:
 	QPushButton *pbAccept;
 	QPushButton *pbCall;
 	QPushButton *pbHang;
+	QPushButton *pbMute;
+	QPushButton *pbCamera;
+	QPushButton *pbFullscreen;
+	QLabel *lbPeer;
+	QLabel *lbSelf; // self-view, in the control row so that it works with either video renderer
+	QWidget *controls;
+	QTimer *hideControlsTimer; // fullscreen only
+	QTimer *videoStallTimer; // hides the video when the peer stops sending it
+	QPushButton *pbDevices;
+	QString transportText, qualityText;
+	void updateTransportLine();
 	QLabel *lbTimer;
 	// How the call's media is being carried, and under which ciphersuite.
 	// Hidden until that is known.
@@ -100,6 +113,14 @@ private:
 	void openVideoArea(QSize frame);
 
 	void closeEvent(QCloseEvent *e);
+	void keyPressEvent(QKeyEvent *e) override;
+	void mouseMoveEvent(QMouseEvent *e) override;
+	void wakeControls();
+
+public:
+	bool cameraOn() const;
+	class QMenu *devicesMenu() const;
+protected:
 
 	// Watches lbVideo for its own resizes, which is where the video area's
 	// size is really decided. Doing this from the window's resizeEvent()
@@ -112,6 +133,10 @@ private:
 public slots:
 	void call_started();
 	void call_ended();
+	void setStatus(QString text); // shown where the call timer goes, before and after the call
+	void showLocalFrame(QImage frame);
+	void remoteVideoStopped();
+	void setQuality(int lossPercent);
 	// direct_udp tells whether the media is being carried over a direct
 	// mediac2c connection or over the c2c connection the call was set up on.
 	void setMediaTransport(bool direct_udp, QString ciphersuitename);
@@ -124,6 +149,8 @@ private slots:
 	void accept();
 	void hang();
 	void update_call_timer();
+	void toggle_fullscreen();
+	void camera_clicked(bool on);
 #ifdef HAVE_VAAPI
 	void gpu_rendering_failed(QString message);
 #endif
