@@ -42,17 +42,6 @@ Whatever the tarball is called and however it is compressed, it is bind
 mounted into each container under one fixed name; `tar` works the compression
 out from the content.
 
-## Just the client, on this machine
-
-```sh
-deb_packaging/build-client-deb.sh [--install-deps]
-```
-
-Builds `pica-client` for the host's own distribution and architecture, without
-containers or signing, from a `make dist` of the working tree (uncommitted
-changes included). The working tree's own build is left alone. The `.deb` ends
-up in `deb_packaging/out-local/`.
-
 ## Build matrix
 
 | Distribution | Codename | amd64 | i386 | webrtc-audio-processing |

@@ -168,4 +168,3 @@ compile_commands.json
 
 # runtime data
 /nodelist.db
-/deb_packaging/out-local/
