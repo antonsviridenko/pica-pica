@@ -141,7 +141,7 @@ QList<History::HistoryRecord> History::GetMessages(QByteArray conv, bool is_grou
 	b[":conv"] = conv;
 	b[":keyword"] = QString("%%1%").arg(keyword);
 
-	return select(conv_where(is_group) + " and message like :keyword order by id", b);
+	return select(conv_where(is_group) + " and message like :keyword order by timestamp, id", b);
 }
 
 QList<History::HistoryRecord> History::GetMessages(QByteArray conv, bool is_group, quint32 start_timestamp, quint32 end_timestamp)
@@ -151,7 +151,7 @@ QList<History::HistoryRecord> History::GetMessages(QByteArray conv, bool is_grou
 	b[":start"] = start_timestamp;
 	b[":end"] = end_timestamp;
 
-	return select(conv_where(is_group) + " and timestamp >= :start and timestamp <= :end order by id", b);
+	return select(conv_where(is_group) + " and timestamp >= :start and timestamp <= :end order by timestamp, id", b);
 }
 
 QByteArray History::LastHash(QByteArray conv, bool is_group)
@@ -296,7 +296,7 @@ QList<QByteArray> History::OutboxPeers()
 	return L;
 }
 
-bool History::OutboxRemove(QByteArray peer_id, QByteArray msg_id)
+bool History::OutboxRemove(QByteArray peer_id, QByteArray msg_id, bool delivered)
 {
 	QSqlQuery query(dbconn);
 
@@ -308,7 +308,7 @@ bool History::OutboxRemove(QByteArray peer_id, QByteArray msg_id)
 
 	lasterr = query.lastError();
 
-	if (lasterr.isValid() || query.numRowsAffected() == 0)
+	if (lasterr.isValid() || query.numRowsAffected() == 0 || !delivered)
 		return false;
 
 	query.prepare("update history set is_delivered=1 where account_id=:me and msg_id=:msg_id and is_delivered=0 \

@@ -812,6 +812,8 @@ void SkyNet::do_PauseFile(QByteArray peer_id, bool pause_sending)
 		{
 			qDebug() << "PICA_pause_file() returned " << ret << "\n";
 		}
+		else
+			active_filetransfers_down(peer_id, pause_sending);
 	}
 
 }
@@ -836,6 +838,8 @@ void SkyNet::do_ResumeFile(QByteArray peer_id, bool resume_sending)
 		{
 			//show error somewhere somehow
 		}
+		else
+			active_filetransfers_up(peer_id, resume_sending);
 	}
 
 }
@@ -860,6 +864,8 @@ void SkyNet::do_CancelFile(QByteArray peer_id, bool cancel_sending)
 		{
 			//show error somewhere somehow
 		}
+		else
+			active_filetransfers_down(peer_id, cancel_sending);
 	}
 
 }
@@ -1195,10 +1201,12 @@ void SkyNet::flush_queues(QByteArray to)
 				{
 					qDebug() << "failed to send outbox item to" << to.toBase64() << "ret =" << ret;
 
-					if (ret == PICA_ERRMSGSIZE)
-						h.OutboxRemove(to, id);
-					else
+					if (ret != PICA_ERRMSGSIZE)
 						break;
+
+					h.OutboxRemove(to, id, false);
+					emit StatusMsg(tr("A message is too long to be sent and was dropped"), true);
+					continue;
 				}
 
 				sent_on_chan[to].insert(id);
@@ -1490,6 +1498,9 @@ void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
 	skynet->emit_c2cClosed(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 	skynet->sent_on_chan.remove(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 	skynet->ext_wait.remove(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	/* transfers carried by this connection are over */
+	skynet->active_filetransfers_down(QByteArray((const char*)peer_id, PICA_ID_SIZE), true);
+	skynet->active_filetransfers_down(QByteArray((const char*)peer_id, PICA_ID_SIZE), false);
 	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString(tr("Disconnected")));
 	/* a call carried by this connection cannot continue */
 	skynet->call_active_set(false, QByteArray((const char*)peer_id, PICA_ID_SIZE));
@@ -2013,7 +2024,9 @@ void SkyNet::handle_ext_syncreq(QByteArray from, QDataStream &ds)
 
 	for (int i = 0; i < L.size(); i++)
 	{
-		if (have.contains(L[i].msg_id))
+		// unsigned records (older clients, pre-upgrade history) have a different random ID on
+		// each side, so serving them would duplicate what the requester already has
+		if (have.contains(L[i].msg_id) || L[i].sig.isEmpty())
 			continue;
 
 		QByteArray rec;

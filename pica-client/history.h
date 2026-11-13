@@ -82,7 +82,8 @@ public:
 	QList<OutboxItem> Outbox(QByteArray peer_id);
 	QList<QByteArray> OutboxPeers();
 	// Returns true when peer_id was the last recipient the message was waiting for
-	bool OutboxRemove(QByteArray peer_id, QByteArray msg_id);
+	// delivered = false drops the item without marking the message delivered
+	bool OutboxRemove(QByteArray peer_id, QByteArray msg_id, bool delivered = true);
 
 	quint32 LastSync(QByteArray peer_id, QByteArray conv);
 	void SetLastSync(QByteArray peer_id, QByteArray conv, quint32 t);

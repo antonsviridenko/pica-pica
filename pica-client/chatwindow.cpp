@@ -253,10 +253,6 @@ void ChatWindow::msg_delivered(QByteArray msg_id)
 	// messages sent before this window was opened are not shown, and are already marked in history
 	if (!undelivered_msgs.contains(msg_id))
 		return;
-		// GetUndeliveredMessages() is keyed by the peer's contact_id, not by
-		// our own id, so this must look up peer_id_ to find anything.
-		if (!undl[peer_id_].isEmpty())
-			put_message(undl[peer_id_].first(), my_id, true);
 
 	QTextCursor c(chatw->document());
 	c.setPosition(undelivered_msgs.take(msg_id));
