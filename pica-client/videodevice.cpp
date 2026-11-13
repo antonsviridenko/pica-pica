@@ -731,7 +731,9 @@ VideoDevice::VideoDevice(QObject *parent)
 	: QObject(parent), m_width(kDefaultCaptureWidth), m_height(kDefaultCaptureHeight),
 	  m_frameRate(kDefaultCaptureFrameRate), m_bitrate(kDefaultVideoBitrateKbps * 1000),
 	  m_preferCompressed(false),
-	  m_acceleration(0), m_useVaapiRender(false), m_abort(0),
+	  m_acceleration(0), m_useVaapiRender(false), m_reconfigure(0),
+	  m_pendingWidth(0), m_pendingHeight(0), m_pendingAcceleration(0),
+	  m_pendingUseVaapiRender(false),
 	  m_maxFragmentSize(kMaxFragmentSize), m_displaySize(0), m_decoderStarted(0)
 {
 }
@@ -780,8 +782,11 @@ VideoDevice::~VideoDevice()
 
 void VideoDevice::configureCapture(QString deviceName, int width, int height, int frameRate,
                                    bool preferCompressed, QString codec, int bitrate,
-                                   int acceleration)
+                                   int acceleration,
+                                   QByteArray caller_id, QByteArray callee_id)
 {
+	m_caller_id = caller_id;
+	m_callee_id = callee_id;
 	m_deviceName = deviceName;
 	m_width = width;
 	m_height = height;
@@ -793,6 +798,18 @@ void VideoDevice::configureCapture(QString deviceName, int width, int height, in
 }
 
 void VideoDevice::configurePlayback(QString codec, int width, int height,
+                                    int acceleration, bool useVaapiRender,
+                                    QByteArray caller_id, QByteArray callee_id)
+{
+	m_caller_id = caller_id;
+	m_callee_id = callee_id;
+	setPlaybackParams(codec, width, height, acceleration, useVaapiRender);
+	// A renderer that failed during an earlier call says nothing about this
+	// one - it may well be a different window.
+	m_hwRenderDisabled.storeRelaxed(0);
+}
+
+void VideoDevice::setPlaybackParams(const QString &codec, int width, int height,
                                     int acceleration, bool useVaapiRender)
 {
 	m_codec = codec;
@@ -802,12 +819,30 @@ void VideoDevice::configurePlayback(QString codec, int width, int height,
 	// place, so asking for GPU rendering turns on VAAPI decoding regardless.
 	m_acceleration = acceleration | (useVaapiRender ? VideoAccelerationVaapi : 0);
 	m_useVaapiRender = useVaapiRender;
-	// A renderer that failed during an earlier call says nothing about this
-	// one - it may well be a different window.
-	m_hwRenderDisabled.storeRelaxed(0);
 	// A fresh decode session, so the startup queue depth applies again until
 	// this one's loop is consuming - see enqueueFrame().
 	m_decoderStarted.storeRelaxed(0);
+}
+
+void VideoDevice::openSession(QByteArray caller_id, QByteArray callee_id)
+{
+	m_openSession.open(caller_id, callee_id);
+}
+
+void VideoDevice::changePlayback(QString codec, int width, int height,
+                                 int acceleration, bool useVaapiRender)
+{
+	QMutexLocker locker(&m_queueMutex);
+
+	m_pendingCodec = codec;
+	m_pendingWidth = width;
+	m_pendingHeight = height;
+	m_pendingAcceleration = acceleration;
+	m_pendingUseVaapiRender = useVaapiRender;
+	m_reconfigure.storeRelaxed(1);
+	/* encoded with the parameters being replaced */
+	m_frameQueue.clear();
+	m_queueCond.wakeAll();
 }
 
 void VideoDevice::disableHardwareRendering()
@@ -831,10 +866,11 @@ void VideoDevice::enqueueFrame(QByteArray encodedFrame)
 
 void VideoDevice::Close()
 {
-	m_abort.storeRelaxed(1);
+	m_openSession.close();
 
 	{
 		QMutexLocker locker(&m_queueMutex);
+		m_reconfigure.storeRelaxed(0);
 		m_frameQueue.clear();
 	}
 	m_queueCond.wakeAll();
@@ -1150,7 +1186,9 @@ private:
 
 void VideoDevice::Capture()
 {
-	m_abort.storeRelaxed(0);
+	/* closed before it got to start */
+	if (sessionClosed())
+		return;
 
 #ifdef Q_OS_WIN
 	// Before the camera is opened - see ComMultithreadedScope - and for the
@@ -1342,7 +1380,7 @@ void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st,
 	AVPacket *pkt = av_packet_alloc();
 	bool loggedReadError = false;
 
-	while (!m_abort.loadRelaxed())
+	while (!stopRequested())
 	{
 		int ret = av_read_frame(ifmt_ctx, pkt);
 		if (ret < 0)
@@ -1881,7 +1919,7 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 	bool loggedScaleError = false;
 	bool loggedEncodeError = false;
 
-	while (!m_abort.loadRelaxed())
+	while (!stopRequested())
 	{
 		ret = av_read_frame(ifmt_ctx, in_pkt);
 		if (ret < 0)
@@ -2028,8 +2066,31 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 
 void VideoDevice::Play()
 {
-	m_abort.storeRelaxed(0);
+	// More than one pass only when changePlayback() interrupts the one that is
+	// running. Also covers being closed before getting to start.
+	while (!sessionClosed())
+	{
+		{
+			QMutexLocker locker(&m_queueMutex);
 
+			if (m_reconfigure.loadRelaxed())
+			{
+				setPlaybackParams(m_pendingCodec, m_pendingWidth, m_pendingHeight,
+				                  m_pendingAcceleration, m_pendingUseVaapiRender);
+				m_reconfigure.storeRelaxed(0);
+			}
+		}
+
+		decode();
+
+		/* closed, or gave up on an error */
+		if (!m_reconfigure.loadRelaxed())
+			break;
+	}
+}
+
+void VideoDevice::decode()
+{
 #if LIBAVFORMAT_VERSION_MAJOR < 58
 	avcodec_register_all();
 #endif
@@ -2132,10 +2193,10 @@ void VideoDevice::Play()
 		QByteArray frameData;
 		{
 			QMutexLocker locker(&m_queueMutex);
-			while (m_frameQueue.isEmpty() && !m_abort.loadRelaxed())
+			while (m_frameQueue.isEmpty() && !stopRequested())
 				m_queueCond.wait(&m_queueMutex, 100);
 
-			if (m_abort.loadRelaxed())
+			if (stopRequested())
 				break;
 
 			if (m_frameQueue.isEmpty())

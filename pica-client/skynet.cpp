@@ -882,6 +882,8 @@ void SkyNet::do_AcceptCall(QByteArray from)
 		return;
 	}
 
+	/* the connection the call came in on is gone */
+	emit CallFailed(from, QString(tr("Failed to pickup the call: not connected")));
 }
 
 void SkyNet::RejectCall(QByteArray from)
@@ -899,7 +901,8 @@ void SkyNet::do_RejectCall(QByteArray from)
 	{
 		ret = PICA_reject_call(iptr);
 
-		if (ret != PICA_OK)
+		/* the caller gave up first - nothing left to reject */
+		if (ret != PICA_OK && ret != PICA_ERRCALLNOTINPROGRESS)
 			emit CallFailed(from, QString(tr("Failed to reject the call: %1")).arg(ret));
 
 		call_active_set(false, from);
@@ -920,11 +923,17 @@ void SkyNet::do_HangupCall(QByteArray with)
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
+	/* hung up while still connecting to the peer - do not start the call
+	   once the connection is there */
+	if (is_call_waiting_for(with))
+		call_waiting_c2c_connect = false;
+
 	if ((iptr = find_active_chan(with)))
 	{
 		ret = PICA_hangup_call(iptr);
 
-		if (ret != PICA_OK)
+		/* the other side ended the call first - nothing left to hang up */
+		if (ret != PICA_OK && ret != PICA_ERRCALLNOTINPROGRESS)
 			emit CallFailed(with, QString(tr("Failed to hang up the call: %1")).arg(ret));
 
 		call_active_set(false, with);
@@ -1033,7 +1042,10 @@ void SkyNet::do_StartCall(QByteArray to)
 	ret = PICA_new_c2c(active_nodelink, (const unsigned char*)to.constData(), NULL, &chan);
 
 	if (ret != PICA_OK)
+	{
+		call_waiting_c2c_connect = false;
 		emit CallFailed(to, QString(tr("Failed to create the C2C connection for the call: %1")).arg(ret));
+	}
 }
 
 bool SkyNet::is_call_waiting_for(const QByteArray &peer_id)
@@ -1049,16 +1061,17 @@ void SkyNet::continue_start_call()
 	int ret = PICA_ERRCALLNOTINPROGRESS;
 	struct PICA_c2c *iptr;
 
+	/* The wait is over whichever way this goes. Left set, it would start a
+	   call again every time a connection to this peer is established. */
+	call_waiting_c2c_connect = false;
+
 	if ((iptr = find_active_chan(call_waiting_to)))
 	{
 		ret = PICA_start_call(iptr);
 	}
 
 	if (ret != PICA_OK)
-	{
 		emit CallFailed(call_waiting_to, QString(tr("Failed to initiate the call: %1")).arg(ret));
-		call_waiting_c2c_connect = false;
-	}
 }
 
 void SkyNet::flush_queues(QByteArray to)

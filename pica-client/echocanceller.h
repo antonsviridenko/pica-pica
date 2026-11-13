@@ -21,6 +21,7 @@
 #include <QMutex>
 #include <QVector>
 #include <QSharedPointer>
+#include <QMetaType>
 
 struct EchoCancellerPrivate;
 struct SwrContext;
@@ -188,5 +189,8 @@ private:
 };
 
 typedef QSharedPointer<EchoCanceller> EchoCancellerPtr;
+// Handed to the audio threads through their event queues, see
+// AudioDevice::setEchoCanceller().
+Q_DECLARE_METATYPE(EchoCancellerPtr)
 
 #endif // ECHOCANCELLER_H

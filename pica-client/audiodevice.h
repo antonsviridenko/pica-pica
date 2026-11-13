@@ -52,8 +52,30 @@ public:
 	// message carries - "opus", "adpcm_g722" or "pcm_alaw". bitrate is in bits
 	// per second and only reaches an encoder with a rate to control: G.722 and
 	// A-law code a fixed number of bits per sample and simply ignore it.
-	Q_INVOKABLE void configureCapture(QString deviceName, QString codec, int sampleRate, int bitrate);
-	Q_INVOKABLE void configurePlayback(QString deviceName, QString codec, int sampleRate);
+	//
+	// caller_id and callee_id name the call the loop is going to run for, and
+	// have to be the pair openSession() was given - see there.
+	Q_INVOKABLE void configureCapture(QString deviceName, QString codec, int sampleRate, int bitrate,
+	                                  QByteArray caller_id, QByteArray callee_id);
+	Q_INVOKABLE void configurePlayback(QString deviceName, QString codec, int sampleRate,
+	                                   QByteArray caller_id, QByteArray callee_id);
+
+	// Allows Capture()/Play() to run for this call, until Close(). To be
+	// called directly, before the calls that configure and start the device
+	// are queued: a Capture()/Play() configured for a call that is no longer
+	// the open one returns at once, so a Close() that lands before a queued
+	// start has begun is not lost. Safe to call from any thread.
+	void openSession(QByteArray caller_id, QByteArray callee_id);
+
+	// New playback parameters for a Play() that is already running: the peer
+	// may change what it sends in the middle of a call, by sending another
+	// 0x74. The loop closes its decoder and output device and opens them
+	// again for these. Safe to call from any thread, and has to be called
+	// directly - the device's own thread is busy inside Play().
+	//
+	// Whatever is still waiting in the jitter buffer is dropped, since it was
+	// encoded with the previous parameters.
+	void changePlayback(QString deviceName, QString codec, int sampleRate);
 
 	// Give this device the call's echo canceller. The capture direction runs
 	// the microphone signal through it, the playback direction feeds it the
@@ -63,7 +85,11 @@ public:
 	// Null unless EchoCancellation() is EchoCancellationOwn - see
 	// AudioVideoCallController::startAudioPipeline(), which is where that is
 	// decided.
-	void setEchoCanceller(EchoCancellerPtr ec);
+	//
+	// To be invoked through the device's own thread, like configureCapture():
+	// the loop of the previous call may still be on its way out and reading
+	// the canceller it was given.
+	Q_INVOKABLE void setEchoCanceller(EchoCancellerPtr ec);
 
 	// Push a codec packet received from the network into the playback
 	// jitter buffer. Safe to call from any thread. Drops the oldest queued
@@ -181,7 +207,24 @@ private:
 	// Capture direction only; see configureCapture().
 	int m_bitrate;
 
-	QAtomicInt m_abort;
+	// The call that is allowed to run, set by openSession() and Close(), and
+	// the one this thread's loop was configured for.
+	MediaCallSession m_openSession;
+	QByteArray m_caller_id;
+	QByteArray m_callee_id;
+
+	// Set by changePlayback(), with the parameters it was given kept under
+	// m_queueMutex until Play() picks them up.
+	QAtomicInt m_reconfigure;
+	QString m_pendingDeviceName;
+	QString m_pendingCodec;
+	int m_pendingSampleRate;
+
+	// The call this loop belongs to is over.
+	bool sessionClosed() const { return !m_openSession.isOpenFor(m_caller_id, m_callee_id); }
+	// What the loops check: either that, or Play() has to start over with new
+	// parameters.
+	bool stopRequested() const { return m_reconfigure.loadRelaxed() || sessionClosed(); }
 
 	// Shared with the other direction of the same call, and held by shared
 	// pointer because AudioVideoCallController tears a call down without
@@ -244,8 +287,8 @@ private:
 
 	// Shared by both playback paths. waitForPreroll() blocks until the jitter
 	// buffer has a cushion or the call ends; nextPacket() pops the next
-	// packet, returning false once Close() has been called and nothing is
-	// left. A true return with an empty *out is a spurious wakeup - carry on.
+	// packet, returning false once the loop has to stop. A true return with an
+	// empty *out is a spurious wakeup - carry on.
 	void waitForPreroll();
 	bool nextPacket(QByteArray *out);
 

@@ -182,7 +182,24 @@ public:
 	// decoding-only paths are ignored.
 	Q_INVOKABLE void configureCapture(QString deviceName, int width, int height, int frameRate,
 	                                  bool preferCompressed, QString codec, int bitrate,
-	                                  int acceleration);
+	                                  int acceleration,
+	                                  QByteArray caller_id, QByteArray callee_id);
+
+	// Allows Capture()/Play() to run for the call this pair of ids names,
+	// until Close() - the same arrangement as AudioDevice::openSession(). To
+	// be called directly, before the calls that configure and start the
+	// device are queued; configureCapture()/configurePlayback() are then given
+	// the same pair.
+	void openSession(QByteArray caller_id, QByteArray callee_id);
+
+	// New parameters for a Play() that is already running: the peer may change
+	// what it sends in the middle of a call, by sending another 0x75. The loop
+	// closes its decoder and opens one for these. Safe to call from any
+	// thread, and has to be called directly - the device's own thread is busy
+	// inside Play(). Frames still waiting to be decoded are dropped, since
+	// they were encoded with the previous parameters.
+	void changePlayback(QString codec, int width, int height,
+	                    int acceleration, bool useVaapiRender);
 
 	// acceleration is the decoding counterpart of configureCapture()'s: the
 	// VideoAcceleration flags for the GPU decoders that may be tried, in this
@@ -198,7 +215,8 @@ public:
 	// frames back to system memory - nothing in the client can draw a Direct3D
 	// surface yet.
 	Q_INVOKABLE void configurePlayback(QString codec, int width, int height,
-	                                   int acceleration, bool useVaapiRender);
+	                                   int acceleration, bool useVaapiRender,
+	                                   QByteArray caller_id, QByteArray callee_id);
 
 	// Push one complete encoded frame (already reassembled from 0x77
 	// fragments by the caller) into the decode queue. Safe to call from any
@@ -343,7 +361,32 @@ private:
 	int m_acceleration;
 	bool m_useVaapiRender;
 
-	QAtomicInt m_abort;
+	// The call that is allowed to run, set by openSession() and Close(), and
+	// the one this thread's loop was configured for.
+	MediaCallSession m_openSession;
+	QByteArray m_caller_id;
+	QByteArray m_callee_id;
+
+	// Set by changePlayback(), with the parameters it was given kept under
+	// m_queueMutex until Play() picks them up.
+	QAtomicInt m_reconfigure;
+	QString m_pendingCodec;
+	int m_pendingWidth;
+	int m_pendingHeight;
+	int m_pendingAcceleration;
+	bool m_pendingUseVaapiRender;
+
+	// The call this loop belongs to is over.
+	bool sessionClosed() const { return !m_openSession.isOpenFor(m_caller_id, m_callee_id); }
+	// What the loops check: either that, or Play() has to start over with new
+	// parameters.
+	bool stopRequested() const { return m_reconfigure.loadRelaxed() || sessionClosed(); }
+
+	void setPlaybackParams(const QString &codec, int width, int height,
+	                       int acceleration, bool useVaapiRender);
+	// One pass of Play(): opens a decoder for the current parameters and
+	// decodes until stopRequested().
+	void decode();
 	// Set from another thread by disableHardwareRendering() while the decode
 	// loop is running, so it has to be read atomically rather than as a plain
 	// bool like the settings above, which are fixed before the loop starts.

@@ -243,7 +243,8 @@ static AVSampleFormat chooseEncoderSampleFmt(const AVCodec *enc)
 }
 
 AudioDevice::AudioDevice(QObject *parent)
-	: QObject(parent), m_sampleRate(48000), m_bitrate(kOpusBitrate), m_abort(0),
+	: QObject(parent), m_sampleRate(48000), m_bitrate(kOpusBitrate), m_reconfigure(0),
+	  m_pendingSampleRate(48000),
 	  m_clipCount(0), m_levelCount(0), m_levelPeak(0),
 	  m_lastPlayedSeq(0), m_havePlayedSeq(false)
 {
@@ -290,19 +291,44 @@ AudioDevice::~AudioDevice()
 	Close();
 }
 
-void AudioDevice::configureCapture(QString deviceName, QString codec, int sampleRate, int bitrate)
+void AudioDevice::configureCapture(QString deviceName, QString codec, int sampleRate, int bitrate,
+                                   QByteArray caller_id, QByteArray callee_id)
 {
+	m_caller_id = caller_id;
+	m_callee_id = callee_id;
 	m_deviceName = deviceName;
 	m_codec = codec;
 	m_sampleRate = sampleRate;
 	m_bitrate = bitrate > 0 ? bitrate : kOpusBitrate;
 }
 
-void AudioDevice::configurePlayback(QString deviceName, QString codec, int sampleRate)
+void AudioDevice::configurePlayback(QString deviceName, QString codec, int sampleRate,
+                                    QByteArray caller_id, QByteArray callee_id)
 {
+	m_caller_id = caller_id;
+	m_callee_id = callee_id;
 	m_deviceName = deviceName;
 	m_codec = codec;
 	m_sampleRate = sampleRate;
+}
+
+void AudioDevice::openSession(QByteArray caller_id, QByteArray callee_id)
+{
+	m_openSession.open(caller_id, callee_id);
+}
+
+void AudioDevice::changePlayback(QString deviceName, QString codec, int sampleRate)
+{
+	{
+		QMutexLocker locker(&m_queueMutex);
+		m_pendingDeviceName = deviceName;
+		m_pendingCodec = codec;
+		m_pendingSampleRate = sampleRate;
+		m_reconfigure.storeRelaxed(1);
+		/* encoded with the parameters being replaced */
+		m_playQueue.clear();
+	}
+	m_queueCond.wakeAll();
 }
 
 void AudioDevice::setEchoCanceller(EchoCancellerPtr ec)
@@ -357,10 +383,11 @@ void AudioDevice::enqueuePacket(quint16 seq_num, QByteArray data)
 
 void AudioDevice::Close()
 {
-	m_abort.storeRelaxed(1);
+	m_openSession.close();
 
 	{
 		QMutexLocker locker(&m_queueMutex);
+		m_reconfigure.storeRelaxed(0);
 		m_playQueue.clear();
 		/* the next call starts its own numbering */
 		m_havePlayedSeq = false;
@@ -375,7 +402,7 @@ void AudioDevice::waitForPreroll()
 	// the queue and starve the device buffer (heard as crackling/xruns).
 	QMutexLocker locker(&m_queueMutex);
 
-	while (m_playQueue.size() < kPrerollDepth && !m_abort.loadRelaxed())
+	while (m_playQueue.size() < kPrerollDepth && !stopRequested())
 		m_queueCond.wait(&m_queueMutex, 100);
 }
 
@@ -383,11 +410,14 @@ bool AudioDevice::nextPacket(QByteArray *out)
 {
 	QMutexLocker locker(&m_queueMutex);
 
-	while (m_playQueue.isEmpty() && !m_abort.loadRelaxed())
+	while (m_playQueue.isEmpty() && !stopRequested())
 		m_queueCond.wait(&m_queueMutex, 100);
 
+	if (stopRequested())
+		return false;
+
 	if (m_playQueue.isEmpty())
-		return !m_abort.loadRelaxed();
+		return true;
 
 	PlaybackPacket p = m_playQueue.takeFirst();
 
@@ -400,7 +430,10 @@ bool AudioDevice::nextPacket(QByteArray *out)
 
 void AudioDevice::Capture()
 {
-	m_abort.storeRelaxed(0);
+	/* closed before it got to start */
+	if (sessionClosed())
+		return;
+
 	resetCaptureLevel();
 
 	const QString driver = AudioDevice::PlatformDriverName(CAPTURE);
@@ -413,14 +446,33 @@ void AudioDevice::Capture()
 
 void AudioDevice::Play()
 {
-	m_abort.storeRelaxed(0);
-
 	const QString driver = AudioDevice::PlatformDriverName(PLAYBACK);
 
-	if (AudioDevice::IsPlatformDriver(driver))
-		playNative(AudioDevice::PlatformApiName(driver));
-	else
-		playFFmpeg(driver);
+	// More than one pass only when changePlayback() interrupts the one that is
+	// running. Also covers being closed before getting to start.
+	while (!sessionClosed())
+	{
+		{
+			QMutexLocker locker(&m_queueMutex);
+
+			if (m_reconfigure.loadRelaxed())
+			{
+				m_deviceName = m_pendingDeviceName;
+				m_codec = m_pendingCodec;
+				m_sampleRate = m_pendingSampleRate;
+				m_reconfigure.storeRelaxed(0);
+			}
+		}
+
+		if (AudioDevice::IsPlatformDriver(driver))
+			playNative(AudioDevice::PlatformApiName(driver));
+		else
+			playFFmpeg(driver);
+
+		/* closed, or gave up on an error */
+		if (!m_reconfigure.loadRelaxed())
+			break;
+	}
 }
 
 void AudioDevice::captureFFmpeg(const QString &driver)
@@ -571,7 +623,7 @@ void AudioDevice::captureFFmpeg(const QString &driver)
 	bool loggedDecodeError = false;
 	bool loggedEncodeError = false;
 
-	while (!m_abort.loadRelaxed())
+	while (!stopRequested())
 	{
 		ret = av_read_frame(ifmt_ctx, in_pkt);
 		if (ret < 0)
@@ -785,7 +837,7 @@ void AudioDevice::captureNative(const QString &api)
 	int64_t pts = 0;
 	bool loggedEncodeError = false;
 
-	while (!m_abort.loadRelaxed())
+	while (!stopRequested())
 	{
 		int got = backend->read(scratch.data(), scratch.size(), 100);
 		if (got < 0)

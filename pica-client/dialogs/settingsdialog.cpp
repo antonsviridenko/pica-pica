@@ -39,6 +39,14 @@
 #include <QTabWidget>
 #include <QTimer>
 
+// The device tests are not part of any call, but the devices only run for an
+// open call session (see MediaCallSession) - so each test is one, under a name
+// no account id can take, with the dialog on both ends of it.
+static QByteArray testSessionId()
+{
+	return QByteArrayLiteral("settings dialog device test");
+}
+
 // Audio pipeline test: how long the microphone is recorded for. The codec and
 // the rate come from the "Call Settings" tab, so the test runs the same path a
 // call would - see toggleAudioTest().
@@ -733,9 +741,11 @@ void SettingsDialog::toggleAudioTest()
 	const int rate = callAudioSampleRate(codec);
 	const int bitrate = callAudioBitrateAdjustable(codec) ? callAudioBitrate->value() * 1000 : 0;
 
+	testMic->openSession(testSessionId(), testSessionId());
 	QMetaObject::invokeMethod(testMic, "configureCapture", Qt::QueuedConnection,
 	                           Q_ARG(QString, dev), Q_ARG(QString, codec),
-	                           Q_ARG(int, rate), Q_ARG(int, bitrate));
+	                           Q_ARG(int, rate), Q_ARG(int, bitrate),
+	                           Q_ARG(QByteArray, testSessionId()), Q_ARG(QByteArray, testSessionId()));
 	QMetaObject::invokeMethod(testMic, "Capture", Qt::QueuedConnection);
 
 	// Only a watchdog for the device failing to open at all. The recording
@@ -815,9 +825,11 @@ void SettingsDialog::startAudioTestPlayback()
 	// call decodes with whatever the peer announced.
 	const QString codec = callAudioCodec->itemData(callAudioCodec->currentIndex()).toString();
 
+	testSpeaker->openSession(testSessionId(), testSessionId());
 	QMetaObject::invokeMethod(testSpeaker, "configurePlayback", Qt::QueuedConnection,
 	                           Q_ARG(QString, dev), Q_ARG(QString, codec),
-	                           Q_ARG(int, callAudioSampleRate(codec)));
+	                           Q_ARG(int, callAudioSampleRate(codec)),
+	                           Q_ARG(QByteArray, testSessionId()), Q_ARG(QByteArray, testSessionId()));
 	QMetaObject::invokeMethod(testSpeaker, "Play", Qt::QueuedConnection);
 
 	// The recording has to be handed over at the rate it plays at, not all at
@@ -951,6 +963,7 @@ void SettingsDialog::toggleVideoTest()
 	// The settings as they stand in the dialog, not as they were last stored:
 	// the point of the test is to see what the current selections do before
 	// committing to them.
+	testCam->openSession(testSessionId(), testSessionId());
 	QMetaObject::invokeMethod(testCam, "configureCapture", Qt::QueuedConnection,
 	                           Q_ARG(QString, dev),
 	                           Q_ARG(int, selectedVideoWidth()), Q_ARG(int, selectedVideoHeight()),
@@ -958,7 +971,8 @@ void SettingsDialog::toggleVideoTest()
 	                           Q_ARG(bool, cbPreferCompressed->isChecked()),
 	                           Q_ARG(QString, callVideoCodec->itemData(callVideoCodec->currentIndex()).toString()),
 	                           Q_ARG(int, callVideoBitrate->value() * 1000),
-	                           Q_ARG(int, selectedVideoEncodingAcceleration()));
+	                           Q_ARG(int, selectedVideoEncodingAcceleration()),
+	                           Q_ARG(QByteArray, testSessionId()), Q_ARG(QByteArray, testSessionId()));
 	QMetaObject::invokeMethod(testCam, "Capture", Qt::QueuedConnection);
 
 	// The decoder is only started once the camera has settled on a format,
@@ -995,11 +1009,13 @@ void SettingsDialog::videoTestCaptureStarted(QString codec, int width, int heigh
 	vaapiRendering = cbVaapiRendering->isChecked() && !VaapiRenderWidget::renderingKnownBroken();
 #endif
 
+	testDecoder->openSession(testSessionId(), testSessionId());
 	QMetaObject::invokeMethod(testDecoder, "configurePlayback", Qt::QueuedConnection,
 	                           Q_ARG(QString, codec),
 	                           Q_ARG(int, width), Q_ARG(int, height),
 	                           Q_ARG(int, selectedVideoDecodingAcceleration()),
-	                           Q_ARG(bool, vaapiRendering));
+	                           Q_ARG(bool, vaapiRendering),
+	                           Q_ARG(QByteArray, testSessionId()), Q_ARG(QByteArray, testSessionId()));
 	QMetaObject::invokeMethod(testDecoder, "Play", Qt::QueuedConnection);
 }
 
