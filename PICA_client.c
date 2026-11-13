@@ -504,6 +504,13 @@ static int c2c_start(struct PICA_c2c *chnl)
 {
 	int ret, err_ret;
 
+	/* Defensive: c2c_start() opens a new socket and resets the channel to
+	 * CONNECTING without touching chnl->ssl or the write buffer. Running it
+	 * on a channel that is past NEW would strand the existing session and
+	 * reroute buffered data, so refuse unless the channel is still new.
+	 */
+	if (chnl->state != PICA_C2C_STATE_NEW)
+		return PICA_ERRINVARG;
 
 	chnl->sck_data = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
@@ -744,14 +751,19 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsi
 	if (cc->outgoing != PICA_C2C_INCOMING)
 		return 0;
 
+	/* FAILED tells us to connect to the peer instead, but we can only do
+	 * that if the peer actually sent us its address list (which allocates
+	 * cc->direct). Without it there is nothing to connect to.
+	 */
+	if (!cc->direct)
+		return 0;
+
 	ret = directc2c_connect_next(cc->direct, cc);
 
 	if (ret == PICA_ERRNOTFOUND)
-	{
 		cc->directc2c_state = PICA_DIRECTC2C_STATE_FAILEDTOCONNECT;
-	}
-
-	cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
+	else
+		cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
 
 	return 1;
 }
@@ -766,6 +778,13 @@ unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char* buf, unsigned in
 		return 0;
 
 	if (cc->directc2c_state != PICA_DIRECTC2C_STATE_ACTIVE && cc->directc2c_state != PICA_DIRECTC2C_STATE_CONNECTING)
+		return 0;
+
+	/* A SWITCH may legitimately arrive while our own direct link is still
+	 * CONNECTING, but switching reads to it before its SSL object exists
+	 * would hand SSL_read() a NULL. Refuse until the direct session is there.
+	 */
+	if (!cc->direct || !cc->direct->ssl)
 		return 0;
 
 	cc->switched_to_directc2c_read = 1;
@@ -865,7 +884,12 @@ static unsigned int procmsg_NOTFOUND(unsigned char* buf, unsigned int nb, void* 
 	ipt = ci->chan_list_end;
 	while(ipt)
 	{
-		if (memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
+		/* Same guard as procmsg_FOUND(): act only on a channel still waiting
+		 * for the search result, so a spurious NOTFOUND from the node cannot
+		 * tear down an already established channel found by peer_id alone.
+		 */
+		if (ipt->outgoing && ipt->state == PICA_C2C_STATE_NEW
+		        && memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
 		{
 			rq = ipt;
 			break;
@@ -895,7 +919,13 @@ static unsigned int procmsg_FOUND(unsigned char* buf, unsigned int nb, void* p)
 	ipt = ci->chan_list_end;
 	while(ipt)
 	{
-		if (memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
+		/* Only a freshly requested outgoing channel is waiting for FOUND.
+		 * Matching on peer_id alone would also pick up an already ACTIVE
+		 * channel and let c2c_start() tear it back down to an anonymous
+		 * session, flushing any buffered end-to-end message to the node.
+		 */
+		if (ipt->outgoing && ipt->state == PICA_C2C_STATE_NEW
+		        && memcmp(ipt->peer_id, peer_id, PICA_ID_SIZE) == 0)
 		{
 			rq = ipt;
 			break;
@@ -1009,6 +1039,13 @@ static unsigned int procmsg_MSGOK(unsigned char* buf, unsigned int nb, void* p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
 
+	/* A delivery receipt is only meaningful once the channel is active, same
+	 * as procmsg_MSGUTF8 - the c2c stream is also parsed in the pre-active
+	 * WAITINGREP/WAITINGC2CPROTOVER states.
+	 */
+	if (chan->state != PICA_C2C_STATE_ACTIVE)
+		return 0;
+
 	callbacks.msgok_cb(chan -> peer_id);
 	return 1;
 }
@@ -1111,6 +1148,10 @@ static int validate_file_name(const char *buf, unsigned int len)
 {
 	int ret = PICA_OK;
 	char *str = malloc(len + 1);
+
+	if (!str)
+		return PICA_ERRNOMEM;
+
 	memcpy(str, buf, len);
 	str[len] = '\0';
 
@@ -1133,9 +1174,22 @@ static unsigned int procmsg_SENDFILEREQUEST(unsigned char* buf, unsigned int nb,
 	int ret;
 
 	char *filename = buf + 12;
-	unsigned int filenamesize = *(uint16_t*)(buf + 2) - 8;
+	uint16_t payload_len = *(uint16_t*)(buf + 2);
+	unsigned int filenamesize;
 
 	if (chan->recvfilestate != PICA_CHANRECVFILESTATE_IDLE)
+		return 0;
+
+	/* payload = 8-byte file size + file name. Guard the subtraction so a
+	 * short length field cannot underflow filenamesize to ~4 GB, and hold
+	 * the sender to the documented name-length limit.
+	 */
+	if (payload_len < 8)
+		return 0;
+
+	filenamesize = payload_len - 8;
+
+	if (filenamesize == 0 || filenamesize > PICA_PROTO_C2CMSG_MAXFILENAMESIZE)
 		return 0;
 
 	if (validate_file_name(filename, filenamesize) != PICA_OK)
@@ -1279,8 +1333,14 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 	case PICA_PROTO_FILECONTROL_CANCEL:
 	case PICA_PROTO_FILECONTROL_IOERROR:
 		chan->recvfilestate = PICA_CHANRECVFILESTATE_IDLE;
-		fclose(chan->recvfile_stream);
-		chan->recvfile_stream = NULL;
+		/* The stream exists only once the offer was accepted; a CANCEL in
+		 * WAITACCEPT (sender withdrew a pending offer) leaves it NULL.
+		 */
+		if (chan->recvfile_stream)
+		{
+			fclose(chan->recvfile_stream);
+			chan->recvfile_stream = NULL;
+		}
 		break;
 
 	case PICA_PROTO_FILECONTROL_VOID:
@@ -1309,8 +1369,12 @@ static unsigned int procmsg_FILECONTROL(unsigned char* buf, unsigned int nb, voi
 	case PICA_PROTO_FILECONTROL_CANCEL:
 	case PICA_PROTO_FILECONTROL_IOERROR:
 		chan->sendfilestate = PICA_CHANSENDFILESTATE_IDLE;
-		fclose(chan->sendfile_stream);
-		chan->sendfile_stream = NULL;
+		/* Symmetric guard: only close a stream that was actually opened. */
+		if (chan->sendfile_stream)
+		{
+			fclose(chan->sendfile_stream);
+			chan->sendfile_stream = NULL;
+		}
 		break;
 
 	case PICA_PROTO_FILECONTROL_VOID:
@@ -1864,6 +1928,22 @@ static unsigned int procmsg_MULTILOGIN(unsigned char *buf, unsigned int nb, void
 	{
 		fprintf(stderr, "timestamp: received %lu last %lu\n", timestamp, c2n->multilogin_last_timestamp);
 		return 1;
+	}
+
+	/* The per-connection last-timestamp check above resets to 0 on every
+	 * reconnect, so on its own it cannot stop a captured (validly signed)
+	 * MULTILOGIN from being replayed later. Require the timestamp to be within
+	 * PICA_TIMETOLERANCE of now as well, bounding any replay to that window.
+	 */
+	{
+		uint64_t now = (uint64_t) time(NULL);
+
+		if (timestamp > now + PICA_TIMETOLERANCE
+		        || timestamp + PICA_TIMETOLERANCE < now)
+		{
+			fprintf(stderr, "MULTILOGIN timestamp out of tolerance, ignoring\n");
+			return 1;
+		}
 	}
 
 	f = fopen(c2n->acc->cert_file, "r");
@@ -2847,8 +2927,17 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 		while(d)
 		{
+			struct PICA_directc2c *dnext = d->next;
+
 			if (d->state == PICA_DIRECTC2C_CONNSTATE_ACTIVE)
 			{
+				/* d leaves the listener list either way - adopted by a c2c or
+				 * closed. Splice it out first, using the next pointer captured
+				 * above, so nothing is read back out of a freed node.
+				 */
+				*pdprev = dnext;
+				d->next = NULL;
+
 				if ((c2c = find_matching_c2c(c2n, d)) && (PICA_verify_peer_cert_common(&d->peer_cert, d->ssl, c2c->peer_id) == PICA_OK))
 				{
 					if (c2c->direct)
@@ -2861,6 +2950,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 					if (ret != PICA_OK)
 					{
 						PICA_close_directc2c(d);
+						c2c->direct = NULL;
 						c2c->directc2c_state = PICA_DIRECTC2C_STATE_INACTIVE;
 					}
 					else
@@ -2868,21 +2958,19 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 						callbacks.direct_c2c_established_cb(c2c->peer_id, SSL_get_cipher_name(d->ssl));
 						c2c->directc2c_state = PICA_DIRECTC2C_STATE_ACTIVE;
 					}
-
-					//remove from listener's list
-					*pdprev = d->next;
-					d->next = 0;
 				}
 				else
 				{
-					//close and remove from listener's list
-					*pdprev = d->next;
 					PICA_close_directc2c(d);
 				}
+				/* pdprev stays put: d was spliced out above */
 			}
-			pdprev = &d->next;
-			d = d->next;
-			//-- killptr?
+			else
+			{
+				pdprev = &d->next;
+			}
+
+			d = dnext;
 		}
 	}
 	//process outgoing connections
@@ -3002,9 +3090,26 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET s, const s
 {
 	PICA_TRACEFUNC
 	struct PICA_directc2c *nc;
+	unsigned int count = 0;
 	int ret;
 
+	/* Bound the number of half-open incoming connections, so a peer cannot
+	 * exhaust memory/descriptors by opening many and never finishing them.
+	 */
+	for (nc = lst->accepted_connections; nc; nc = nc->next)
+		if (++count >= PICA_DIRECTC2C_MAX_ACCEPTED)
+		{
+			CLOSE(s);
+			return;
+		}
+
 	nc = calloc(1, sizeof(struct PICA_directc2c));
+
+	if (!nc)
+	{
+		CLOSE(s);
+		return;
+	}
 
 	nc->is_outgoing = PICA_DIRECTC2C_INCOMING;
 	nc->sck = s;
@@ -3016,6 +3121,14 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET s, const s
 	nc->addr = *peer_addr;
 	nc->ssl = SSL_new(lst->acc->ctx);
 	nc->state = PICA_DIRECTC2C_CONNSTATE_NEW;
+	nc->accepted_tmst = time(0);
+
+	if (!nc->ssl)
+	{
+		CLOSE(s);
+		free(nc);
+		return;
+	}
 
 	SSL_set_fd(nc->ssl, nc->sck);
 
@@ -3024,18 +3137,17 @@ static void listener_add_connection(struct PICA_listener *lst, SOCKET s, const s
 
 	ret = SSL_accept(nc->ssl);
 
-	if (ret == 0)
+	if (ret <= 0)
 	{
-		free(nc);
-		return;
-	}
-
-	if (ret < 0)
-	{
-		ret = SSL_get_error(nc->ssl, ret);
-
-		if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
+		/* Only a WANT_READ/WANT_WRITE means the handshake is merely unfinished;
+		 * anything else is a real failure. Free the SSL object and close the
+		 * socket on the failure path - dropping only the struct would leak both.
+		 */
+		if (!(ret < 0 && (SSL_get_error(nc->ssl, ret) == SSL_ERROR_WANT_READ
+		                  || SSL_get_error(nc->ssl, ret) == SSL_ERROR_WANT_WRITE)))
 		{
+			SSL_free(nc->ssl);
+			CLOSE(nc->sck);
 			free(nc);
 			return;
 		}
@@ -3118,6 +3230,14 @@ static int process_listener(struct PICA_listener *lst, fd_set *rfds, fd_set *wfd
 
 		if ((ret = process_listener_conn(conn, rfds, wfds)) != PICA_OK)
 		{
+			kill_ptr = conn;
+		}
+		else if (conn->peer_cert == NULL
+		         && (time(0) - conn->accepted_tmst) > PICA_DIRECTC2C_ACCEPT_TIMEOUT)
+		{
+			/* peer_cert is set only once the handshake completes, so a NULL
+			 * one past the timeout is a connection that never finished TLS.
+			 */
 			kill_ptr = conn;
 		}
 
@@ -3369,10 +3489,16 @@ int PICA_write_c2c(struct PICA_c2c *chn)
 {
 	int ret = PICA_ERRINVARG;
 
-	if (chn->state != PICA_C2C_STATE_ACTIVE && chn->state != PICA_C2C_STATE_CONNID && chn->state != PICA_C2C_STATE_WAITINGREP)
+	if (chn->state != PICA_C2C_STATE_ACTIVE && chn->state != PICA_C2C_STATE_CONNID
+	        && chn->state != PICA_C2C_STATE_WAITINGREP && chn->state != PICA_C2C_STATE_WAITINGC2CPROTOVER)
 	{
+		/* WAITINGC2CPROTOVER is a legitimate write state: the callee sends
+		 * VERDIFFER from there on a protocol-version mismatch. Any state that
+		 * really is unexpected closes this one channel - a library must not
+		 * take the whole host process down over a peer-driven condition.
+		 */
 		fputs("PICA_write_c2c() was called for incorrect state!\n", stderr);
-		exit(-1);
+		return PICA_ERRSERV;
 	}
 
 	{
@@ -3440,8 +3566,9 @@ int PICA_read_c2c(struct PICA_c2c *chn)
 
 	if (chn->state != PICA_C2C_STATE_WAITINGREP && chn->state != PICA_C2C_STATE_WAITINGC2CPROTOVER && chn->state != PICA_C2C_STATE_ACTIVE)
 	{
+		/* Close this one channel rather than exit()-ing the host process. */
 		fputs("PICA_read_c2c() was called for incorrect state!\n", stderr);
-		exit(-1);
+		return PICA_ERRSERV;
 	}
 
 	if (chn->switched_to_directc2c_read)

@@ -36,6 +36,29 @@ const CallCodecInfo kCallAudioCodecs[] =
 
 const int kCallAudioCodecCount = sizeof(kCallAudioCodecs) / sizeof(kCallAudioCodecs[0]);
 
+bool callAudioCodecAccepted(const QString &codec)
+{
+	for (int i = 0; i < kCallAudioCodecCount; i++)
+		if (codec == QLatin1String(kCallAudioCodecs[i].name))
+			return true;
+
+	return false;
+}
+
+bool callVideoCodecAccepted(const QString &codec)
+{
+	for (int i = 0; i < kCallVideoCodecCount; i++)
+		if (codec == QLatin1String(kCallVideoCodecs[i].name))
+			return true;
+
+	// A camera's own compressed stream is forwarded untouched, so a sender may
+	// legitimately name a capture format that is not in the encode list.
+	if (codec == QLatin1String("mjpeg"))
+		return true;
+
+	return false;
+}
+
 int callAudioSampleRate(const QString &codec)
 {
 	// G.722 is a 16kHz codec by definition - it subband-codes a 7kHz audio

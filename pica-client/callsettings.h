@@ -131,4 +131,11 @@ bool callAudioBitrateAdjustable(const QString &codec);
 // true for, which returns the configured value instead.
 int callAudioFixedBitrateKbps(const QString &codec);
 
+// Whether a codec name received in a 0x74/0x75 message is one we will hand to
+// the FFmpeg decoder. Restricting this to the codecs the client itself sends
+// keeps a peer from selecting an arbitrary (possibly buggy) decoder out of the
+// whole FFmpeg build.
+bool callAudioCodecAccepted(const QString &codec);
+bool callVideoCodecAccepted(const QString &codec);
+
 #endif // CALLSETTINGS_H

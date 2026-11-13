@@ -615,6 +615,11 @@ QList<VideoCaptureFormat> VideoDevice::CaptureFormats(const QString &device)
 	return result;
 }
 
+// A reassembled frame never legitimately approaches this; a stream that does
+// is a peer flooding fragments that never carry the last-fragment flag, so the
+// partial frame is dropped and reassembly resynchronizes at the next boundary.
+static const int kMaxAssembledFrameBytes = 4 * 1024 * 1024;
+
 VideoFrameAssembler::VideoFrameAssembler()
 	: m_timestamp(0), m_lastSeq(0)
 {
@@ -694,6 +699,19 @@ QByteArray VideoFrameAssembler::addFragment(quint16 seq_num, quint32 timestamp, 
 		m_buffer.clear();
 
 	m_buffer.append(data);
+
+	/* Bound the partial frame: a peer that never sets the last-fragment flag
+	 * would otherwise grow this without limit. Drop it and resync at the next
+	 * frame boundary, exactly as for a lost fragment above.
+	 */
+	if (m_buffer.size() > kMaxAssembledFrameBytes)
+	{
+		m_buffer.clear();
+		m_inProgress = false;
+		m_lastWasFrameEnd = false;
+		return QByteArray();
+	}
+
 	m_timestamp = timestamp;
 	m_inProgress = true;
 	m_lastWasFrameEnd = isLast;
@@ -1573,6 +1591,19 @@ void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
 			enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_VAAPI,
 			                        m_width, m_height, frameRate, m_bitrate, gopSize,
 			                        nullptr, &hw_frames_ref);
+
+			// Newer Intel GPUs (iHD driver, Gen11+) expose only the low-power
+			// VAEntrypointEncSliceLP, which FFmpeg will not pick unless asked.
+			if (!enc_ctx)
+			{
+				AVDictionary *opts = nullptr;
+				av_dict_set(&opts, "low_power", "1", 0);
+				enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_VAAPI,
+				                        m_width, m_height, frameRate, m_bitrate, gopSize,
+				                        &opts, &hw_frames_ref);
+				av_dict_free(&opts);
+			}
+
 			hardware = enc_ctx != nullptr;
 
 			av_buffer_unref(&hw_device_ref);

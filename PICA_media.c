@@ -515,6 +515,7 @@ static void media_accept(struct PICA_media_channel *m)
 
 static void media_read(struct PICA_media_channel *m)
 {
+	struct PICA_c2c *c2c = m->c2c;
 	int ret;
 
 	/* One SSL_read() per datagram, so this loop runs until the socket has
@@ -547,7 +548,15 @@ static void media_read(struct PICA_media_channel *m)
 		 * on a c2c connection, bad data here says nothing about the peer,
 		 * anyone able to reach the port can send it.
 		 */
-		PICA_media_process_messages(m->read_buf, &m->read_pos, m->c2c);
+		PICA_media_process_messages(m->read_buf, &m->read_pos, c2c);
+
+		/* Processing a datagram can close this media channel (e.g. a failed
+		 * ping reply calls media_fail(), which frees m). If it did, m is now
+		 * dangling - stop before touching it again. m is only compared as an
+		 * address here, never dereferenced.
+		 */
+		if (c2c->media != m)
+			return;
 
 		m->read_pos = 0;
 	}

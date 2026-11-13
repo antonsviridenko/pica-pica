@@ -268,6 +268,13 @@ unsigned int procmsg_INITREQ(unsigned char* buf, unsigned int size, void* ptr)
 
 	PICA_debug1("received INITREQ");
 
+	/* Exactly one request message per newconn. A second (e.g. two INITREQs in
+	 * one record) would create a second client on the same socket and orphan
+	 * the first, which later closes a socket it no longer owns.
+	 */
+	if (nc->type != NEWCONN_UNKNOWN)
+		return 0;
+
 	nc->type = NEWCONN_C2N;
 
 	if (buf[2] == PICA_PROTO_VER_HIGH && buf[3] == PICA_PROTO_VER_LOW)
@@ -350,6 +357,10 @@ unsigned int procmsg_CONNID(unsigned char* buf, unsigned int size, void* ptr)
 
 	PICA_debug1("received CONNID");
 
+	/* One request message per newconn - see procmsg_INITREQ(). */
+	if (nc->type != NEWCONN_UNKNOWN)
+		return 0;
+
 	nc->type = NEWCONN_C2C;
 
 	caller_id = buf + 2;
@@ -404,6 +415,10 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 	struct PICA_proto_msg *mp;
 
 	PICA_debug1("received NODECONNREQ");
+
+	/* One request message per newconn - see procmsg_INITREQ(). */
+	if (nc->type != NEWCONN_UNKNOWN)
+		return 0;
 
 	nc->type = NEWCONN_N2N;
 
@@ -956,7 +971,7 @@ unsigned int procmsg_NODELISTREQ(unsigned char* buf, unsigned int size, void* pt
 		switch(nlp->addr_type)
 		{
 		case PICA_PROTO_NEWNODE_IPV4:
-			if ( PICA_PROTO_NODELISTREQ == buf[0] &&
+			if ( PICA_PROTO_NODELISTREQ == buf[0] && n->node_addr &&
 			        ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->addr == ((struct PICA_nodeaddr_ipv4*)n->node_addr)->addr    &&
 			        ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->port == ((struct PICA_nodeaddr_ipv4*)n->node_addr)->port )
 				break;//exclude requester's address
@@ -1003,73 +1018,72 @@ unsigned int procmsg_NODELIST(unsigned char* buf, unsigned int size, void* ptr)
 
 	while(listleft)
 	{
-#warning "strict error checking!!! -- listleft overflow, unknown list items, check listleft >= possible item size"
+		unsigned char item_type = buf[size - listleft];
+
+		/* The IPv6 and DNS list item types are defined by the protocol but
+		 * are not produced or parsed yet (see procmsg_NODELISTREQ, which only
+		 * emits IPv4 items). Their on-wire length is therefore not handled
+		 * here, so the parse cannot advance past one and has to stop.
+		 */
+		if (item_type == PICA_PROTO_NEWNODE_IPV6 || item_type == PICA_PROTO_NEWNODE_DNS)
+		{
+			PICA_warn("NODELIST contains a %s address item, which is not implemented yet, aborting parse",
+			          item_type == PICA_PROTO_NEWNODE_IPV6 ? "IPv6" : "DNS");
+			return 0;
+		}
+
+		/* Any other type byte is not a list item type at all: its length is
+		 * unknown, so parsing cannot safely continue. Without bailing here
+		 * the loop would spin forever on a byte it never decrements past.
+		 */
+		if (item_type != PICA_PROTO_NEWNODE_IPV4)
+		{
+			PICA_warn("NODELIST contains unknown address type 0x%02X, aborting parse", item_type);
+			return 0;
+		}
+
+		/* Bounds check before reading the 4-byte address and 2-byte port,
+		 * so a short trailing item cannot read past the packet or underflow
+		 * listleft on the subtraction below.
+		 */
+		if (listleft < PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
+		{
+			PICA_warn("Unexpected end of nodelist packet");
+			return 0;
+		}
+
+		na_ipv4.magick = PICA_PROTO_NEWNODE_IPV4;
+		na_ipv4.addr = *(in_addr_t*)(buf + size - listleft + 1);
+		na_ipv4.port = *(in_port_t*)(buf + size - listleft + 5);
+
 		if (listleft == listsize) //first entry, sender node's address
 		{
-			switch(buf[size - listleft])
-			{
-			case PICA_PROTO_NEWNODE_IPV4:
-				na_ipv4.magick = PICA_PROTO_NEWNODE_IPV4;
-				na_ipv4.addr = *(in_addr_t*)(buf + size - listleft + 1);
-				na_ipv4.port = *(in_port_t*)(buf + size - listleft + 5);
-				nodelink_attach_nodeaddr(n, na_ipv4.magick, &na_ipv4, sizeof(struct PICA_nodeaddr_ipv4));
-
-				listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
-				break;
-			}
-			continue;
+			nodelink_attach_nodeaddr(n, na_ipv4.magick, &na_ipv4, sizeof(struct PICA_nodeaddr_ipv4));
 		}
 		else
 		{
 			struct PICA_nodeaddr na;
-			//char addr[256];
-			struct newconn nc;
-			struct nodelink *nlp;
-			int skip_save = 0;
 
 			memset(na.addr, 0, 256);
-			memset(&nc, 0, sizeof(struct newconn));
 
-			switch(buf[size - listleft])
+			sprintf(na.addr, "%.16s", inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
+			na.port = ntohs(na_ipv4.port);
+
+			PICA_debug3("NODELIST item %.16s:%hu", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
+
+			if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(na_ipv4.addr))
 			{
-			case PICA_PROTO_NEWNODE_IPV4:
-				na_ipv4.magick = PICA_PROTO_NEWNODE_IPV4;
-				na_ipv4.addr = *(in_addr_t*)(buf + size - listleft + 1);
-				na_ipv4.port = *(in_port_t*)(buf + size - listleft + 5);
-
-				sprintf(na.addr, "%.16s", inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-				na.port = ntohs(na_ipv4.port);
-
-				//nodewait_start_connection(&na);
-// 			if (try_connect_to_node(na.addr,ntohs(na_ipv4.port),&nc))
-// 				if (try_get_reply(&nc))
-// 					{
-// 					nlp=nodelink_list_addnew(&nc);
-// 					send_newnode(nlp,my_addr);
-// 					nodelink_attach_nodeaddr(nlp,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
-// 					PICA_debug1("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-// 					}
-
-				PICA_debug3("NODELIST item %.16s:%hu", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
-
-				if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(na_ipv4.addr))
-				{
-					skip_save = 1;
-					PICA_debug1("Received NODELIST item %.16s:%hu is in private range, skipping",
-					            inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port)
-					           );
-				}
-				if (listleft < PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
-				{
-					PICA_warn("Unexpected end of nodelist packet");
-					return 0;
-				}
-				listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
-				break;
+				PICA_debug1("Received NODELIST item %.16s:%hu is in private range, skipping",
+				            inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port)
+				           );
 			}
-			if (!skip_save)
+			else
+			{
 				PICA_nodeaddr_save(nodecfg.nodes_db_file, &na);//CONF filename
+			}
 		}
+
+		listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 	}
 
 	return 1;
@@ -1161,7 +1175,14 @@ unsigned int procmsg_N2NALLOW(unsigned char* buf, unsigned int size, void* ptr)
 
 	cc = cclink_list_search(caller_id, callee_id);
 
-	if (cc)
+	/* N2NALLOW is the reply this (caller's) node awaits in N2NCLR_WAITREP.
+	 * That state only exists on caller-local links, which always have a
+	 * non-NULL p1 - gating on it both prevents a client_wbuf_push(NULL) on a
+	 * callee-local (p1 == NULL) link an attacker can create with
+	 * N2NCONNREQOUTG, and stops a stray N2NALLOW from disturbing other links.
+	 * callee_node == n ties the reply to the node that answered the search.
+	 */
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP && cc->callee_node == n)
 	{
 		if ((mp = client_wbuf_push(cc->p1, PICA_PROTO_FOUND, PICA_PROTO_FOUND_SIZE)))
 		{
@@ -1186,7 +1207,12 @@ unsigned int procmsg_N2NNOTFOUND(unsigned char* buf, unsigned int size, void* pt
 
 	cc = cclink_list_search(caller_id, callee_id);
 
-	if (cc)
+	/* Same gate as N2NALLOW: act only on the caller-local link awaiting this
+	 * reply, so a callee-local link (p1 == NULL) cannot crash client_wbuf_push
+	 * and a stray N2NNOTFOUND cannot delete an unrelated link. callee_node == n
+	 * ties the reply to the node that answered the search.
+	 */
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP && cc->callee_node == n)
 	{
 		if ((mp = client_wbuf_push(cc->p1, PICA_PROTO_NOTFOUND, PICA_PROTO_NOTFOUND_SIZE)))
 		{
@@ -1219,7 +1245,11 @@ unsigned int procmsg_N2NMSG(unsigned char* buf, unsigned int size, void* ptr)
 
 	cc = cclink_list_search(sender_id, receiver_id);
 
-	if (cc && cc->state == PICA_CCLINK_N2NCLE_ACTIVE)
+	/* Accept relayed data only from the node that owns the remote (caller)
+	 * half of this link, so a third node cannot inject into or overflow a
+	 * relay between two other users' clients.
+	 */
+	if (cc && cc->state == PICA_CCLINK_N2NCLE_ACTIVE && cc->caller_node == n)
 	{
 		if (datalen + cc->bufpos_p1p2 > cc->buflen_p1p2)
 		{
@@ -1234,7 +1264,8 @@ unsigned int procmsg_N2NMSG(unsigned char* buf, unsigned int size, void* ptr)
 ///////////////
 	cc = cclink_list_search(receiver_id, sender_id);
 
-	if (cc && cc->state == PICA_CCLINK_N2NCLR_ACTIVE)
+	/* Likewise, only from the node that owns the remote (callee) half. */
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_ACTIVE && cc->callee_node == n)
 	{
 		if (datalen + cc->bufpos_p2p1 > cc->buflen_p2p1)
 		{
@@ -1289,6 +1320,41 @@ struct cclink* cclink_list_search(const unsigned char *caller_id, const unsigned
 void cclink_list_delete(struct cclink *l)
 {
 	PICA_debug1("cclink_list_delete(%p)", (void*)l);
+
+	/* A CONNID connection may still be mid anon-TLS-shutdown with its socket
+	 * handed to this link (sck_p1/sck_p2) and nc->iconn.cc pointing here. If
+	 * the link is torn down first (WAITACTIVE timeout, or a client
+	 * disconnecting), that newconn would later double-close the socket and
+	 * re-delete this freed link from newconn_close(). Retire it now: drop its
+	 * event and anon SSL and relinquish the fd, which is closed below.
+	 */
+	{
+		int i;
+		for (i = 0; i < MAX_NEWCONNS; i++)
+		{
+			struct newconn *nc = &newconns[i];
+
+			if (nc->type == NEWCONN_C2C && nc->iconn.cc == l)
+			{
+				if (nc->ev)
+				{
+					event_del(nc->ev);
+					event_free(nc->ev);
+					nc->ev = NULL;
+				}
+				if (nc->anonssl)
+				{
+					SSL_free(nc->anonssl);
+					nc->anonssl = NULL;
+				}
+				nc->iconn.cc = NULL;
+				nc->sck = -1;   /* owned and closed by the link below */
+				nc->pos = 0;
+				nc->type = NEWCONN_UNKNOWN;
+			}
+		}
+	}
+
 //удаление из глобального списка
 	if (l->prev)
 		l->prev->next = l->next;
@@ -3503,7 +3569,7 @@ Options:\n\
 
 void print_version()
 {
-	puts("Pica Pica Node v"PACKAGE_VERSION" \nCopyright  (c) 2012 - 2018 Anton Sviridenko\n");
+	puts("Pica Pica Node v"PACKAGE_VERSION" \nCopyright  (c) 2012 - 2026 Anton Sviridenko\n");
 	puts("protocol version "PICA_PROTO_VER_STRING"\n");
 	puts("License GPLv3: GNU GPL version 3 <http://gnu.org/licenses/gpl.html>\n\
 This is free software: you are free to change and redistribute it.\n\

@@ -176,8 +176,16 @@ void SkyNet::moveBackToMainThread()
 	moveToThread(QCoreApplication::instance()->thread());
 }
 
-void SkyNet::active_filetransfers_up()
+void SkyNet::active_filetransfers_up(QByteArray peer, bool sending)
 {
+	QSet<QByteArray> &counted = sending ? counted_ft_out : counted_ft_in;
+
+	// Idempotent: a transfer already counted (e.g. a second RESUME) must not
+	// be counted twice.
+	if (counted.contains(peer))
+		return;
+
+	counted.insert(peer);
 	active_filetransfers++;
 
 	if (active_filetransfers > 0 && file_transfer_timer_id == 0)
@@ -186,11 +194,18 @@ void SkyNet::active_filetransfers_up()
 	}
 }
 
-void SkyNet::active_filetransfers_down()
+void SkyNet::active_filetransfers_down(QByteArray peer, bool sending)
 {
-	active_filetransfers--;
+	QSet<QByteArray> &counted = sending ? counted_ft_out : counted_ft_in;
 
-	Q_ASSERT(active_filetransfers >= 0);
+	// Idempotent: only a transfer that was actually counted can be removed. A
+	// cancel/ioerror for one that was never accepted (WAITACCEPT) or already
+	// paused is a no-op, rather than wrapping the unsigned counter past zero.
+	if (!counted.contains(peer))
+		return;
+
+	counted.remove(peer);
+	active_filetransfers--;
 
 	if (active_filetransfers == 0 && file_transfer_timer_id != 0)
 	{
@@ -238,6 +253,8 @@ void SkyNet::call_active_set(bool active, QByteArray peer)
 
 void SkyNet::active_filetransfers_reset()
 {
+	counted_ft_in.clear();
+	counted_ft_out.clear();
 	active_filetransfers = 0;
 
 	if (file_transfer_timer_id != 0)
@@ -744,7 +761,7 @@ void SkyNet::do_AcceptFile(QByteArray from, QString filepath)
 			//show error somewhere somehow
 		}
 		else
-			active_filetransfers_up();
+			active_filetransfers_up(from, false);
 	}
 
 }
@@ -1508,7 +1525,7 @@ void SkyNet::accepted_file_cb(const unsigned char *peer_id)
 {
 	qDebug() << "FILE: file was accepted by remote side\n";
 
-	skynet->active_filetransfers_up();
+	skynet->active_filetransfers_up(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 	skynet->emit_OutgoingFileRequestAccepted(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 }
 
@@ -1533,22 +1550,22 @@ void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd,
 		switch(sender_cmd)
 		{
 		case PICA_PROTO_FILECONTROL_PAUSE:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), false);
 			skynet->emit_IncomingFilePaused(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_RESUME:
-			skynet->active_filetransfers_up();
+			skynet->active_filetransfers_up(QByteArray((const char *)peer_id, PICA_ID_SIZE), false);
 			skynet->emit_IncomingFileResumed(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_CANCEL:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), false);
 			skynet->emit_IncomingFileCancelled(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_IOERROR:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), false);
 			skynet->emit_IncomingFileIoError(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 		}
@@ -1558,22 +1575,22 @@ void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd,
 		switch(receiver_cmd)
 		{
 		case PICA_PROTO_FILECONTROL_PAUSE:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 			skynet->emit_OutgoingFilePaused(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_RESUME:
-			skynet->active_filetransfers_up();
+			skynet->active_filetransfers_up(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 			skynet->emit_OutgoingFileResumed(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_CANCEL:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 			skynet->emit_OutgoingFileCancelled(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_IOERROR:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 			skynet->emit_OutgoingFileIoError(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 		}
@@ -1584,7 +1601,7 @@ void SkyNet::file_finished(const unsigned char *peer_id, int sending)
 {
 	qDebug() << "file_finished callback\n";
 
-	skynet->active_filetransfers_down();
+	skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), sending);
 
 	if (sending)
 		skynet->emit_OutgoingFileFinished(QByteArray((const char *)peer_id, PICA_ID_SIZE));
