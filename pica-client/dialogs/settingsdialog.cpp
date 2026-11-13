@@ -23,6 +23,13 @@
 #include "../../PICA_netconf.h"
 #include "../../PICA_proto.h"
 
+#include "../machineprobe.h"
+#include "../picaactioncenter.h"
+#include <QMessageBox>
+#include <QSqlDatabase>
+#include <QPointer>
+#include <QThread>
+#include <QApplication>
 #include <QGroupBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -175,6 +182,11 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	directc2cLayout->addWidget(localPort);
 	directc2cLayout->addStretch(1);
 
+	{
+		QLabel *note = new QLabel(tr("Changes on this tab are used from the next connection to a node."), this);
+		note->setWordWrap(true);
+		directc2cLayout->addWidget(note);
+	}
 	directc2ctab->setLayout(directc2cLayout);
 
 //Multiple logins
@@ -586,6 +598,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	callLayout->addLayout(callFormLayout);
 	callLayout->addWidget(lbCallHint);
+	{
+		QLabel *note = new QLabel(tr("During a call, a changed bitrate or device is used at once. "
+		                             "Codecs, picture size, frame rate and hardware acceleration "
+		                             "are used from the next call."), this);
+		note->setWordWrap(true);
+		callLayout->addWidget(note);
+	}
 	callLayout->addStretch(1);
 
 	calltab->setLayout(callLayout);
@@ -602,7 +621,13 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	btOk = new QPushButton(tr("&OK"), this);
 	btCancel = new QPushButton(tr("Cancel"), this);
+	btDetect = new QPushButton(tr("Detect automatically"), this);
+	btDetect->setToolTip(tr("Looks at this computer's sound system, microphone, camera and graphics "
+	                        "hardware and fills in the device and video settings to match. "
+	                        "Nothing is saved until OK."));
+	connect(btDetect, SIGNAL(clicked()), this, SLOT(detectAutomatically()));
 
+	buttonsLayout->addWidget(btDetect);
 	buttonsLayout->addStretch(1);
 	buttonsLayout->addWidget(btOk);
 	buttonsLayout->addWidget(btCancel);
@@ -1686,16 +1711,31 @@ void SettingsDialog::loadSettings()
 #ifdef HAVE_LIBMINIUPNPC
 		if (cbEnableUPnP->isChecked() && PICA_is_reserved_addr_ipv4(guess))
 		{
-			int ret;
-			char public_ip[64];
-			ret = PICA_upnp_autoconfigure_ipv4(st.loadValue("direct_c2c.public_port", 2298).toInt(),
-			                                   st.loadValue("direct_c2c.local_port", 2298).toInt(),
-			                                   public_ip);
+			// Asking the router takes seconds (8 on a network with no UPnP
+			// answer), so it runs on its own thread and the window opens with
+			// the guessed address, corrected when the answer comes.
+			const int pubPort = st.loadValue("direct_c2c.public_port", 2298).toInt();
+			const int locPort = st.loadValue("direct_c2c.local_port", 2298).toInt();
+			QPointer<SettingsDialog> self(this);
 
-			if (ret)
+			QThread *t = QThread::create([self, pubPort, locPort]
 			{
-				addr->lineEdit()->setText(QString("autoconfigured(%1)").arg(public_ip));
-			}
+				char public_ip[64];
+
+				if (!PICA_upnp_autoconfigure_ipv4(pubPort, locPort, public_ip))
+					return;
+
+				const QString ip = QString::fromLatin1(public_ip);
+
+				QMetaObject::invokeMethod(qApp, [self, ip]
+				{
+					// not if the window is gone or the user has typed an address meanwhile
+					if (self && self->addr->lineEdit()->text().startsWith("autoconfigured("))
+						self->addr->lineEdit()->setText(QString("autoconfigured(%1)").arg(ip));
+				}, Qt::QueuedConnection);
+			});
+			connect(t, &QThread::finished, t, &QObject::deleteLater);
+			t->start();
 		}
 #endif
 	}
@@ -1815,9 +1855,83 @@ void SettingsDialog::loadSettings()
 		audioRingDev->setCurrentIndex(audioRingDevItem);
 }
 
+void SettingsDialog::detectAutomatically()
+{
+	bool started = probeMachineAsync(this, [this](const MachineProbe &p)
+	{
+		applyDetected(autoConfigure(p));
+		btDetect->setEnabled(true);
+		btDetect->setText(tr("Detect automatically"));
+	});
+
+	if (!started)
+	{
+		QMessageBox::information(this, windowTitle(), tr("Detection is not available during a call."));
+		return;
+	}
+
+	btDetect->setEnabled(false);
+	btDetect->setText(tr("Detecting..."));
+}
+
+// Puts detected values into the widgets, the way the user would have chosen them.
+void SettingsDialog::applyDetected(const QMap<QString, QString> &v)
+{
+	auto select = [&v](QComboBox *cb, const char *name)
+	{
+		int item = cb && v.contains(name) ? cb->findData(v.value(name)) : -1;
+
+		if (item >= 0)
+			cb->setCurrentIndex(item);
+	};
+
+	// first: it refills the three audio device lists and the echo cancellation choices
+	select(audioDriver, "audio.driver");
+	select(audioCaptureDev, "audio.capture_device");
+	select(audioPlaybackDev, "audio.playback_device");
+	select(audioRingDev, "audio.ring_device");
+
+	if (v.value("audio.echo_cancellation") == QLatin1String("platform") && rbEchoCancelPlatform->isEnabled())
+		rbEchoCancelPlatform->setChecked(true);
+	else if (v.contains("audio.echo_cancellation"))
+		rbEchoCancelOwn->setChecked(true);
+
+	// the camera first, then the size, then the rate: each list is filled from the one before
+	select(videoDev, "video.capture_device");
+
+	if (v.contains("video.capture_width"))
+	{
+		int item = videoRes->findData(QSize(v.value("video.capture_width").toInt(), v.value("video.capture_height").toInt()));
+
+		if (item >= 0)
+			videoRes->setCurrentIndex(item);
+
+		item = videoFps->findData(v.value("video.capture_framerate").toInt());
+
+		if (item >= 0)
+			videoFps->setCurrentIndex(item);
+	}
+
+	if (v.contains("call.video_bitrate_kbps"))
+		callVideoBitrate->setValue(qBound(kMinVideoBitrateKbps, v.value("call.video_bitrate_kbps").toInt(), kMaxVideoBitrateKbps));
+
+#ifdef HAVE_VAAPI
+	if (cbVaapiEncoding->isEnabled() && v.contains("video.vaapi_encoding"))
+		cbVaapiEncoding->setChecked(v.value("video.vaapi_encoding") == QLatin1String("1"));
+	if (cbVaapiDecoding->isEnabled() && v.contains("video.vaapi_decoding"))
+		cbVaapiDecoding->setChecked(v.value("video.vaapi_decoding") == QLatin1String("1"));
+#endif
+}
+
 void SettingsDialog::storeSettings()
 {
 	Settings st(config_dbname);
+
+	// What was stored before, to tell afterwards what this OK actually changed.
+	const QMap<QString, QString> before = st.all();
+
+	// one transaction instead of a disk sync for each of the rows below
+	QSqlDatabase::database().transaction();
 
 	//Direct c2c connections
 	int c2c_state;
@@ -1903,9 +2017,24 @@ void SettingsDialog::storeSettings()
 	else if (rbEchoCancelNone->isChecked())
 		echoMode = EchoCancellationNone;
 
+	// Before the call below, not after it: that opens its own Settings, and
+	// every Settings reopens the shared database connection, which throws an
+	// unfinished transaction away.
+	QSqlDatabase::database().commit();
+
 	storeEchoCancellationSetting(echoMode);
 
 	// Publish it to the audio threads, the same way the driver above is
 	// published - see AudioDevice::SetEchoCancellation().
 	AudioDevice::SetEchoCancellation(echoMode);
+
+	const QMap<QString, QString> after = st.all();
+	QStringList changed;
+
+	for (QMap<QString, QString>::const_iterator i = after.constBegin(); i != after.constEnd(); ++i)
+		if (!before.contains(i.key()) || before.value(i.key()) != i.value())
+			changed << i.key();
+
+	if (action_center)
+		action_center->notifySettingsChanged(changed);
 }

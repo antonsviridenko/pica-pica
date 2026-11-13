@@ -29,6 +29,7 @@
 #include "dhparam.h"
 #include "askpassword.h"
 #include "settings.h"
+#include "picaactioncenter.h"
 #include "../PICA_netconf.h"
 #include <time.h>
 #include <QUuid>
@@ -135,6 +136,9 @@ SkyNet::SkyNet()
 	};
 
 	PICA_client_init(&cbs);
+
+	if (action_center)
+		connect(action_center, SIGNAL(settingsChanged(QStringList)), this, SLOT(settings_changed(QStringList)));
 
 	this->active_nodelink = NULL;
 	this->acc = NULL;
@@ -2300,4 +2304,18 @@ bool SkyNet::peerHasExt(QByteArray peer_id)
 	QMutexLocker lock(&ext_peers_mutex);
 
 	return ext_peers.contains(peer_id);
+}
+
+void SkyNet::settings_changed(QStringList names)
+{
+	bool network = names.contains("multiple_logins.state");
+
+	for (int i = 0; i < names.size(); i++)
+		if (names[i].startsWith("direct_c2c."))
+			network = true;
+
+	// These are read when a connection to a node is set up. Dropping the one
+	// that is up would take every open chat, transfer and call with it.
+	if (network && self_aware)
+		emit StatusMsg(tr("The changed connection settings will be used from the next connection to a node"), false);
 }

@@ -29,6 +29,7 @@ public:
 
 	QVariant loadValue(QString name, QVariant defval);
 	void storeValue(QString name, QString val);
+	QMap<QString, QString> all(); // every stored name and value
 	bool isEmpty();
 
 	QString GetLastError();

@@ -28,6 +28,7 @@
 #include <QThread>
 #include <QImage>
 #include <QList>
+#include <QMap>
 #include <QTimer>
 #include <QElapsedTimer>
 #include "../mediadevice.h"
@@ -283,6 +284,8 @@ private:
 	void reportVideoPreviewArea();
 
 	QPushButton *btOk;
+	QPushButton *btDetect;
+	void applyDetected(const QMap<QString, QString> &v);
 	QPushButton *btCancel;
 
 	void loadSettings();
@@ -298,6 +301,7 @@ private:
 
 private slots:
 	void OK();
+	void detectAutomatically();
 	void Cancel();
 	void toggleIncomingConnections(bool checked);
 	void toggleMultipleLogins(bool checked);

@@ -331,6 +331,7 @@ private slots:
 	void do_SendMessage(QByteArray conv, QByteArray msg_id, QString msg, bool is_group);
 	void do_SaveGroup(QByteArray group_id, QString name, QList<QByteArray> members);
 	void do_LeaveGroup(QByteArray group_id);
+	void settings_changed(QStringList names);
 	void do_SendFile(QByteArray to, QString filepath);
 	void do_AcceptFile(QByteArray from, QString filepath);
 	void do_DenyFile(QByteArray from);

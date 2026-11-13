@@ -23,6 +23,7 @@
 #include "contacts.h"
 #include "accounts.h"
 #include "msguirouter.h"
+#include "picaactioncenter.h"
 #include <QMenu>
 #include <QTimer>
 #include <QByteArray>
@@ -41,6 +42,7 @@ AudioVideoCallController::AudioVideoCallController(QObject *parent)
 	m_qualityTimer->setInterval(2000);
 	connect(m_qualityTimer, SIGNAL(timeout()), this, SLOT(report_quality()));
 
+	connect(action_center, SIGNAL(settingsChanged(QStringList)), this, SLOT(settings_changed(QStringList)));
 	connect(skynet, SIGNAL(IncomingCall(QByteArray)), this, SLOT(call_from(QByteArray)));
 	connect(skynet, SIGNAL(CallFailed(QByteArray,QString)), this, SLOT(call_failed(QByteArray,QString)));
 	connect(skynet, SIGNAL(CallAccepted(QByteArray)), this, SLOT(call_accepted(QByteArray)));
@@ -161,29 +163,9 @@ void AudioVideoCallController::stopTones()
 	ringtoneplayer->stop();
 }
 
-void AudioVideoCallController::startAudioPipeline()
+void AudioVideoCallController::setupEchoCanceller()
 {
-	Settings st(config_dbname);
-	QString capDev = st.loadValue("audio.capture_device", "default").toString();
-	const CallSettings cs = CallSettings::load();
-
-	// What we capture and encode at, announced to the peer in the 0x74
-	// message. It follows from the codec - see callAudioSampleRate().
-	//
-	// The playback direction is NOT this: it follows whatever the peer
-	// announces in its own 0x74 (see incoming_audio_params()), so a call with
-	// a peer that picked a different codec or rate keeps working.
-	const int sampleRate = callAudioSampleRate(cs.audioCodec);
-
-	// G.722 and A-law spend a fixed number of bits per sample and have no rate
-	// to ask for; the setting only means anything to Opus.
-	const int bitrate = callAudioBitrateAdjustable(cs.audioCodec)
-	                    ? cs.audioBitrateKbps * 1000
-	                    : 0;
-
-	m_audioSeq = 0;
-	m_callClock.start();
-	microphone->setMuted(false); // a new call never starts muted
+	const int sampleRate = callAudioSampleRate(m_cs.audioCodec);
 
 	// One canceller for the call, shared by both directions: the playback
 	// side feeds it what it is about to play, the capture side subtracts the
@@ -211,6 +193,26 @@ void AudioVideoCallController::startAudioPipeline()
 	// Play() calls below are what publishes it to those threads.
 	microphone->setEchoCanceller(m_echoCanceller);
 	output->setEchoCanceller(m_echoCanceller);
+}
+
+void AudioVideoCallController::startAudioPipeline()
+{
+	m_cs = CallSettings::load();
+
+	// What we capture and encode at, announced to the peer in the 0x74
+	// message. It follows from the codec - see callAudioSampleRate().
+	//
+	// The playback direction is NOT this: it follows whatever the peer
+	// announces in its own 0x74 (see incoming_audio_params()), so a call with
+	// a peer that picked a different codec or rate keeps working.
+	const int sampleRate = callAudioSampleRate(m_cs.audioCodec);
+	const CallSettings &cs = m_cs;
+
+	m_audioSeq = 0;
+	m_callClock.start();
+	microphone->setMuted(false); // a new call never starts muted
+
+	setupEchoCanceller();
 
 	// Declare our outgoing codec to the peer, then start capturing and
 	// encoding right away - the peer's decoder is only ready once it has
@@ -236,7 +238,7 @@ void AudioVideoCallController::startMicrophone()
 {
 	Settings st(config_dbname);
 	QString capDev = st.loadValue("audio.capture_device", "default").toString();
-	const CallSettings cs = CallSettings::load();
+	const CallSettings &cs = m_cs;
 	const int sampleRate = callAudioSampleRate(cs.audioCodec);
 	const int bitrate = callAudioBitrateAdjustable(cs.audioCodec)
 	                    ? cs.audioBitrateKbps * 1000
@@ -282,7 +284,7 @@ void AudioVideoCallController::startVideoPipeline()
 {
 	Settings st(config_dbname);
 	QString camDev = st.loadValue("video.capture_device", QString()).toString();
-	const CallSettings cs = CallSettings::load();
+	const CallSettings &cs = m_cs;
 
 	// Unlike the audio devices, which fall back to the platform's "default"
 	// device, there is no such name for cameras - so with nothing configured
@@ -515,33 +517,48 @@ void AudioVideoCallController::device_selected(int kind, QString device)
 	static const char *keys[] = {"audio.capture_device", "audio.playback_device", "video.capture_device"};
 
 	Settings(config_dbname).storeValue(keys[kind], device);
+	action_center->notifySettingsChanged(QStringList() << keys[kind]);
+}
 
-	// outside a call this is all there is to do: the next one opens the new device
+// A setting changed - in the settings window, the call window's device menu or
+// by automatic configuration. Outside a call there is nothing to do: every call
+// reads its settings when it starts. During one, what can change without the
+// peer having to be told is applied by restarting the device concerned.
+// Close() makes the device's blocking loop return, after which its thread runs
+// the queued configure and start calls.
+void AudioVideoCallController::settings_changed(QStringList names)
+{
 	if (!is_active)
 		return;
 
-	// Close() makes the device's blocking loop return, after which its thread
-	// runs the queued configure and start calls for the new device.
-	switch (kind)
+	const bool audioSystem = names.contains("audio.driver") || names.contains("audio.echo_cancellation");
+	const CallSettings now = CallSettings::load();
+
+	// Bitrates only. A new codec or picture format would have to be announced,
+	// which clients from before this one cannot take during a call.
+	m_cs.audioBitrateKbps = now.audioBitrateKbps;
+	m_cs.videoBitrateKbps = now.videoBitrateKbps;
+
+	// both directions share one canceller, so it changes for both or neither
+	if (audioSystem)
+		setupEchoCanceller();
+
+	if (audioSystem || names.contains("audio.capture_device") || names.contains("call.audio_bitrate_kbps"))
 	{
-	case 0:
 		microphone->Close();
 		startMicrophone();
-		break;
-	case 1:
-		if (!m_peerAudioCodec.isEmpty())
-		{
-			output->Close();
-			startPlayback();
-		}
-		break;
-	case 2:
-		if (m_cameraOn)
-		{
-			cam->Close();
-			startVideoPipeline();
-		}
-		break;
+	}
+
+	if ((audioSystem || names.contains("audio.playback_device")) && !m_peerAudioCodec.isEmpty())
+	{
+		output->Close();
+		startPlayback();
+	}
+
+	if ((names.contains("video.capture_device") || names.contains("call.video_bitrate_kbps")) && m_cameraOn)
+	{
+		cam->Close();
+		startVideoPipeline();
 	}
 }
 

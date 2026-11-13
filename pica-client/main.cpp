@@ -18,6 +18,7 @@
 #include <QCoreApplication>
 #include <QApplication>
 #include <QThread>
+#include "machineprobe.h"
 #include "mainwindow.h"
 #include "accountswindow.h"
 #include "globals.h"
@@ -638,12 +639,13 @@ int main(int argc, char *argv[])
 
 	Settings st(config_dbname);
 
-	if (st.isEmpty()) //show settings dialog on first start
-	{
-		SettingsDialog sd;
+	// First start: no settings window. The devices are looked at in the
+	// background once everything below exists, see the end of this function.
+	// The marker row is what keeps the next start from being a first one.
+	const bool firstStart = st.isEmpty();
 
-		sd.exec();
-	}
+	if (firstStart)
+		st.storeValue("settings.autoconfigured", "0");
 
 	PicaActionCenter ac;
 	action_center = &ac;
@@ -692,6 +694,31 @@ int main(int argc, char *argv[])
 	aw.show();
 
 	a.setQuitOnLastWindowClosed(false);
+
+	if (firstStart)
+	{
+		probeMachineAsync(&a, [](const MachineProbe &p)
+		{
+			Settings st(config_dbname);
+			const QMap<QString, QString> values = autoConfigure(p);
+
+			QSqlDatabase::database().transaction();
+
+			for (QMap<QString, QString>::const_iterator i = values.constBegin(); i != values.constEnd(); ++i)
+				st.storeValue(i.key(), i.value());
+
+			st.storeValue("settings.autoconfigured", "1");
+			QSqlDatabase::database().commit();
+
+			// the two the audio threads cannot read for themselves, as at startup
+			AudioDevice::SetLinuxDriverName(st.loadValue("audio.driver", "alsa").toString());
+			AudioDevice::SetEchoCancellation(loadEchoCancellationSetting());
+
+			action_center->notifySettingsChanged(values.keys());
+			systray->ShowMessage(QObject::tr("Pica Pica Messenger"),
+			                     QObject::tr("Sound and video devices were configured automatically. See Settings to change them."));
+		});
+	}
 
 	int ret = a.exec();
 

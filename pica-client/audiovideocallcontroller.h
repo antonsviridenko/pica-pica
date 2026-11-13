@@ -17,6 +17,8 @@
 #ifndef AUDIOVIDEOCALLCONTROLLER_H
 #define AUDIOVIDEOCALLCONTROLLER_H
 
+#include "callsettings.h"
+#include <QStringList>
 #include <QObject>
 #include <QThread>
 #include <QElapsedTimer>
@@ -76,6 +78,13 @@ private:
 	int m_audioLost;
 	QTimer *m_qualityTimer;
 
+	// The call settings as they were when this call started. A device restarted
+	// during the call must come back with the codec and picture format the
+	// peer was told about, whatever the settings table says by then; only the
+	// bitrates follow it, see settings_changed().
+	CallSettings m_cs;
+
+	void setupEchoCanceller();
 	void startMicrophone();
 	void startPlayback();
 
@@ -146,6 +155,7 @@ private slots:
 	void fill_devices_menu();
 	void device_selected(int kind, QString device);
 	void report_quality();
+	void settings_changed(QStringList names);
 
 	void send_audio_packet(QByteArray data);
 	void incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate);

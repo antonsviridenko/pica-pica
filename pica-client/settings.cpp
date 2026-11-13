@@ -83,3 +83,19 @@ void Settings::storeValue(QString name, QString val)
 
 	lasterr = query.lastError();
 }
+
+QMap<QString, QString> Settings::all()
+{
+	QMap<QString, QString> M;
+	QSqlQuery query(dbconn);
+
+	query.setForwardOnly(true);
+	query.exec("select name, value from settings");
+
+	lasterr = query.lastError();
+
+	while (query.next())
+		M[query.value(0).toString()] = query.value(1).toString();
+
+	return M;
+}

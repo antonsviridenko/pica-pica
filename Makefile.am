@@ -183,6 +183,8 @@ pica-client/settings.cpp \
 pica-client/settings.h \
 pica-client/callsettings.cpp \
 pica-client/callsettings.h \
+pica-client/machineprobe.cpp \
+pica-client/machineprobe.h \
 pica-client/mediadevice.cpp \
 pica-client/mediadevice.h \
 pica-client/audiodevice.cpp \

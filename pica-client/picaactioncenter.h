@@ -17,6 +17,7 @@
 #ifndef PICAACTIONCENTER_H
 #define PICAACTIONCENTER_H
 
+#include <QStringList>
 #include <QObject>
 #include <QAction>
 
@@ -50,6 +51,19 @@ public:
 	{
 		return nodesAct;
 	};
+
+	// Call after storing settings, with the names whose value changed. Parts
+	// of the client that are using a setting right now listen to
+	// settingsChanged() and pick the new value up; everything else reads the
+	// settings table each time it starts something.
+	void notifySettingsChanged(QStringList names)
+	{
+		if (!names.isEmpty())
+			emit settingsChanged(names);
+	}
+
+signals:
+	void settingsChanged(QStringList names);
 
 private:
 	QAction *aboutAct;
