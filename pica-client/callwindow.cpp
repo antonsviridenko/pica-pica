@@ -16,6 +16,9 @@
 */
 
 #include "callwindow.h"
+#include "globals.h"
+#include "accounts.h"
+#include "contacts.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QCloseEvent>
@@ -41,6 +44,22 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	pbAccept = new QPushButton(tr("Accept"), this);
 	pbCall = new QPushButton(tr("Call"), this);
 	pbHang = new QPushButton(tr("Hang Up"), this);
+	QString peer_name = Contacts(config_dbname, Accounts::GetCurrentAccount().id).GetContactName(peer_id);
+	if (peer_name.isEmpty())
+		peer_name = peer_id.toBase64().left(12) + "...";
+
+	setWindowTitle(incoming ? tr("Incoming call from %1").arg(peer_name) : tr("Call with %1").arg(peer_name));
+
+	QLabel *lbPeer = new QLabel(peer_name, this);
+	lbPeer->setAlignment(Qt::AlignCenter);
+	lbPeer->setToolTip(peer_id.toBase64());
+	{
+		QFont f = lbPeer->font();
+		f.setBold(true);
+		f.setPointSizeF(f.pointSizeF() * 1.4);
+		lbPeer->setFont(f);
+	}
+
 	lbTimer = new QLabel(this);
 	lbTimer->setAlignment(Qt::AlignCenter);
 	lbTimer->hide();
@@ -78,6 +97,7 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	//
 	// Only one of the two video widgets is ever visible and a hidden widget is
 	// given no space, so both can be stretched.
+	lv->addWidget(lbPeer, 0);
 	lv->addWidget(lbTimer, 0);
 	lv->addWidget(lbTransport, 0);
 	lv->addWidget(lbVideo, 1);

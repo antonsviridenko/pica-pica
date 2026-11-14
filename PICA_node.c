@@ -2906,6 +2906,7 @@ void process_newconn_read(evutil_socket_t s, short event, void *arg)
 			if (ret == 1)
 			{
 				SSL_free(nc->anonssl);
+				nc->anonssl = NULL; // cclink_list_delete() frees it again otherwise
 
 				if (nc->iconn.cl && nc->type == NEWCONN_C2N)
 				{
@@ -2919,6 +2920,11 @@ void process_newconn_read(evutil_socket_t s, short event, void *arg)
 				if (nc->iconn.cc && nc->type == NEWCONN_C2C)
 				{
 					cclink_sendcleconnected(nc->iconn.cc);
+
+					// a failed send deletes the link, which also retires this newconn
+					if (!nc->iconn.cc)
+						break;
+
 					cclink_activate(nc->iconn.cc);
 
 					newconn_free(nc);

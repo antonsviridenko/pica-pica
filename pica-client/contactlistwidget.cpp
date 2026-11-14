@@ -22,11 +22,21 @@
 #include "msguirouter.h"
 #include "filetransfercontroller.h"
 #include "audiovideocallcontroller.h"
+#include "chatwindow.h"
+#include "skynet.h"
+#include "history.h"
+#include <QUuid>
 #include <QMenu>
 #include <QMessageBox>
 #include <QContextMenuEvent>
 #include <QInputDialog>
 #include <QTimer>
+
+// name first; the ID stays in the tooltip, short ID only when the peer has not told us a name yet
+static QString contact_label(const Contacts::ContactRecord &r)
+{
+	return r.name.isEmpty() ? QString(r.id.toBase64().left(12)) + "..." : r.name;
+}
 
 ContactListWidget::ContactListWidget(QWidget *parent) :
 	QListWidget(parent)
@@ -65,6 +75,9 @@ ContactListWidget::ContactListWidget(QWidget *parent) :
 	removefromblacklistAct = new QAction(tr("&Remove From Blacklist"), this);
 	connect(removefromblacklistAct, SIGNAL(triggered()), this, SLOT(remove_from_blacklist()));
 
+	newgroupAct = new QAction(tr("New &Group..."), this);
+	connect(newgroupAct, SIGNAL(triggered()), this, SLOT(new_group()));
+
 	connect(this, SIGNAL(itemDoubleClicked(QListWidgetItem*)), this, SLOT(start_chat()));
 
 	setContactsStorage(new Contacts(config_dbname, Accounts::GetCurrentAccount().id));
@@ -80,10 +93,19 @@ void ContactListWidget::contextMenuEvent(QContextMenuEvent *event)
 {
 	QMenu menu(this);
 
+	if (wgitem_to_groups.contains(this->itemAt(event->pos())))
+	{
+		menu.addAction(startchatAct);
+		menu.addAction(newgroupAct);
+		menu.exec(event->globalPos());
+		return;
+	}
+
 	if (this->itemAt(event->pos()) && wgitem_to_recs.contains(this->itemAt(event->pos())))
 		menu.addAction(delcontactAct);
 
 	menu.addAction(addcontactAct);
+	menu.addAction(newgroupAct);
 
 	if (this->itemAt(event->pos()) && wgitem_to_recs.contains(this->itemAt(event->pos())))
 	{
@@ -109,13 +131,14 @@ void ContactListWidget::setContactsStorage(Contacts *ct, bool show_blacklisted)
 {
 	clear();
 	wgitem_to_recs.clear();
+	wgitem_to_groups.clear();
 	// this->addItems(ct->GetContacts());
 	storage = ct;
 	contact_records = ct->GetContacts();
 
 	for (int i = 0; i < contact_records.size(); i++)
 	{
-		addItem(QString("(%1...) %2").arg(contact_records[i].id.toBase64().left(8).constData()).arg(contact_records[i].name));
+		addItem(contact_label(contact_records[i]));
 		wgitem_to_recs[this->item(i)] = &contact_records[i];
 		this->item(i)->setStatusTip(contact_records[i].id.toBase64());
 		this->item(i)->setToolTip(contact_records[i].id.toBase64().constData());
@@ -135,11 +158,22 @@ void ContactListWidget::setContactsStorage(Contacts *ct, bool show_blacklisted)
 
 		for (int i = 0; i < bl.size(); i++)
 		{
-			addItem(QString("(%1...) %2").arg(bl[i].id.toBase64().left(8).constData()).arg(bl[i].name));
+			addItem(contact_label(bl[i]));
 			wgitem_to_recs[this->item(i + offset)] = &contact_records[i + offset - 1];
 			this->item(i + offset)->setStatusTip(bl[i].id.toBase64());
 			this->item(i + offset)->setToolTip(bl[i].id.toBase64().constData());
 		}
+	}
+
+	QList<Groups::GroupRecord> groups = Groups(config_dbname, Accounts::GetCurrentAccount().id).GetGroups();
+
+	if (!groups.isEmpty())
+		addItem(QString("--Groups--"));
+
+	for (int i = 0; i < groups.size(); i++)
+	{
+		addItem(QString("[%1] %2").arg(tr("group")).arg(groups[i].name));
+		wgitem_to_groups[item(count() - 1)] = groups[i].id;
 	}
 }
 
@@ -188,7 +222,8 @@ void ContactListWidget::add_contact()
 			return;
 		}
 
-		addItem(QString("(%1) ").arg(user_id.toBase64().constData()));
+		addItem(contact_label(r));
+		item(count() - 1)->setToolTip(user_id.toBase64().constData());
 		contact_records.append(r);
 		wgitem_to_recs[this->item(this->count() - 1)] = &contact_records.last();
 
@@ -229,7 +264,29 @@ void ContactListWidget::del_contact()
 
 void ContactListWidget::start_chat()
 {
-	msguirouter->start_chat(wgitem_to_recs[currentItem()]->id);
+	if (wgitem_to_groups.contains(currentItem()))
+		msguirouter->start_chat(wgitem_to_groups[currentItem()]);
+	else if (wgitem_to_recs.contains(currentItem()))
+		msguirouter->start_chat(wgitem_to_recs[currentItem()]->id);
+}
+
+void ContactListWidget::new_group()
+{
+	QString name;
+	QList<QByteArray> members;
+
+	if (!edit_group_dialog(this, &name, &members, true))
+		return;
+
+	if (name.isEmpty() || members.isEmpty())
+	{
+		QMessageBox mbx;
+		mbx.setText(tr("A group needs a name and at least one member"));
+		mbx.exec();
+		return;
+	}
+
+	skynet->SaveGroup(QUuid::createUuid().toRfc4122(), name, members);
 }
 
 void ContactListWidget::start_call()

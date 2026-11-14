@@ -295,6 +295,39 @@ Delivery report for the previous message.
 
 4 octets
 ====================================================
+Extension support announcement.
+
+A called client that supports extension messages answers the c2c protocol
+version request with [0x01 0x01]['O']['X'] instead of [0x01 0x01]['O']['K'].
+Older initiators do not look at the last octet. An initiator that supports
+extension messages and receives 'X' sends
+
+[0x32 0x32][2 pseudo-random octets]
+
+4 octets
+
+right away. Extension messages are sent only to peers known to support them:
+the initiator knows after 'X', the called client after 0x32. Older clients
+close the connection on unknown message types.
+====================================================
+Extension message - payload interpreted by the client application.
+
+[0x31 0x31][length 2 octets][payload, up to 65532 octets]
+
+pica-client payloads start with a type octet followed by QDataStream (Qt 5.0
+format) fields; lists are a quint32 count followed by the items:
+ 1 message: message ID (16 octets), group ID (empty for one-to-one), timestamp,
+   UTF-8 text, hash of the author's previous message in the conversation,
+   author's signature
+ 2 delivery report: message ID or group ID
+ 3 group info: group ID, owner ID, version, name, member IDs, owner's signature
+ 4 history sync request: group ID (empty for one-to-one), since timestamp,
+   IDs of messages the requester already has
+ 5 history sync data: group ID, last chunk flag, record count, records
+   (message ID, author ID, timestamp, UTF-8 text, previous hash, signature)
+Signatures are SHA-224 RSA signatures made with the account's key, see
+History::SignedData() and Groups::SignedData() in pica-client/history.cpp.
+====================================================
 File sending request.
 
 [0x50 0x50][length 2 octets, 9..263][file size, 8 octets][file name in UTF-8, 1 - 255 octets]

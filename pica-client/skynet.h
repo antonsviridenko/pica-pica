@@ -27,6 +27,7 @@
 #include <QVector>
 #include <QPair>
 #include <QSet>
+#include <QDataStream>
 
 
 class SkyNet : public QObject
@@ -38,7 +39,10 @@ public:
 	void Join(const Accounts::AccountRecord &accrec);
 	void Exit();
 
-	void SendMessage(QByteArray to, QString msg);
+	// conv is a peer ID, or a group ID when is_group; msg_id is chosen by the caller
+	void SendMessage(QByteArray conv, QByteArray msg_id, QString msg, bool is_group);
+	// Creates the group or, for groups I own, changes its name and members
+	void SaveGroup(QByteArray group_id, QString name, QList<QByteArray> members);
 	void SendFile(QByteArray to, QString filepath);
 	void AcceptFile(QByteArray from, QString filepath);
 	void DenyFile(QByteArray from);
@@ -58,9 +62,11 @@ public:
 	void SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 signals:
-	void MessageReceived(QByteArray from, QString msg);
+	void MessageReceived(QByteArray conv, QByteArray author, QString msg);
 	void UnableToDeliver(QByteArray to, QString msg);
-	void Delivered(QByteArray to);
+	void Delivered(QByteArray conv, QByteArray msg_id);
+	// count messages of conv were received from a peer's copy of the history
+	void HistorySynced(QByteArray conv, int count);
 	void BecameSelfAware();
 	void LostSelfAwareness();
 	void PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified);
@@ -119,7 +125,10 @@ private:
 	struct PICA_listener *listener;
 	Accounts::AccountRecord skynet_account;
 
-	QMap<QByteArray, QList<QString> > msgqueues;
+	// outbox items already written to the current c2c connection with a peer
+	QMap<QByteArray, QSet<QByteArray> > sent_on_chan;
+	// incoming c2c connections that may still announce EXTMSG support
+	QMap<QByteArray, time_t> ext_wait;
 	QMap<QByteArray, QList<QString> > sndfilequeues;
 	QMap<QByteArray, quint32> c2c_reconnect_timeouts;
 	int nodelink_reconnect_timer_id;
@@ -134,6 +143,21 @@ private:
 	void update_c2c_reconnect_timeout(QByteArray peer_id);
 	void reset_c2c_reconnect_timeout(QByteArray peer_id);
 	void flush_queues(QByteArray to);
+	void deliver(QByteArray to);
+	void flush_ext_waiting();
+	QByteArray me() const;
+	QByteArray sign(const QByteArray &data);
+	bool send_ext(QByteArray to, const QByteArray &payload);
+	void handle_ext(QByteArray from, const QByteArray &payload);
+	void handle_ext_msg(QByteArray from, QDataStream &ds);
+	void handle_ext_ack(QByteArray from, QDataStream &ds);
+	void handle_ext_groupinfo(QByteArray from, QDataStream &ds);
+	void handle_ext_syncreq(QByteArray from, QDataStream &ds);
+	void handle_ext_syncdata(QByteArray from, QDataStream &ds);
+	void start_sync(QByteArray peer);
+	void send_syncreq(QByteArray peer, QByteArray group_id);
+	void store_received(QByteArray from, const QByteArray &msg_bytes);
+	void legacy_delivered(QByteArray to);
 	struct PICA_c2c *find_active_chan(QByteArray peer_id);
 	QList<QByteArray> filter_existing_chans(QList<QByteArray> peer_ids);
 	bool open_account();
@@ -160,9 +184,7 @@ private:
 	// check if there is a call waiting to be initiated with peer_id
 	bool is_call_waiting_for(const QByteArray &peer_id);
 
-	void emit_MessageReceived(QByteArray from, QString msg);
 	void emit_UnableToDeliver(QByteArray to, QString msg);
-	void emit_Delivered(QByteArray to);
 	void emit_PeerCertificateReceived(QByteArray peer_id, QString cert_pem, bool *verified);
 	void emit_IncomingFileRequestReceived(QByteArray peer_id, quint64 file_size, QString filename);
 	void emit_OutgoingFileRequestAccepted(QByteArray peer_id);
@@ -258,6 +280,8 @@ private:
 	static void call_video_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
 
 	static void call_media_transport_cb(const unsigned char *peer_id, int transport, const char *ciphersuitename, unsigned int max_payload);
+	static void c2c_ext_cb(const unsigned char *peer_id);
+	static void ext_msg_cb(const unsigned char *peer_id, const char *buf, unsigned int nb);
 
 private slots:
 	void nodelink_activated(PICA_c2n *c2n);
@@ -293,7 +317,8 @@ private slots:
 	void do_Join(const Accounts::AccountRecord &accrec);
 	void do_Exit();
 
-	void do_SendMessage(QByteArray to, QString msg);
+	void do_SendMessage(QByteArray conv, QByteArray msg_id, QString msg, bool is_group);
+	void do_SaveGroup(QByteArray group_id, QString name, QList<QByteArray> members);
 	void do_SendFile(QByteArray to, QString filepath);
 	void do_AcceptFile(QByteArray from, QString filepath);
 	void do_DenyFile(QByteArray from);

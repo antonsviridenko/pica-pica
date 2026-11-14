@@ -85,6 +85,11 @@ void PicaSysTray::StopBlinking()
 	systray_->setIcon(blink_);
 }
 
+void PicaSysTray::ShowMessage(QString title, QString text)
+{
+	systray_->showMessage(title, text);
+}
+
 void PicaSysTray::timerEvent(QTimerEvent *event)
 {
 	static int blinker;

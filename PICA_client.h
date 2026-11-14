@@ -336,6 +336,8 @@ struct PICA_c2c
 	int call_video_params_are_set;
 	/** media connection of the call in progress, see PICA_media.h */
 	struct PICA_media_channel *media;
+	/** nonzero when the peer understands PICA_PROTO_EXTMSG */
+	int peer_ext;
 };
 
 struct PICA_listener
@@ -464,6 +466,15 @@ struct PICA_client_callbacks
 	 */
 	void (*call_media_transport_cb)(const unsigned char *peer_id, int transport,
 	                                const char *ciphersuitename, unsigned int max_payload);
+
+	/**
+	 * Peer of an incoming c2c connection announced EXTMSG support. For
+	 * outgoing connections peer_ext is already known in c2c_established_cb.
+	 */
+	void (*c2c_ext_cb)(const unsigned char *peer_id);
+
+	/** PICA_PROTO_EXTMSG payload received */
+	void (*ext_msg_cb)(const unsigned char *peer_id, const char *buf, unsigned int nb);
 };
 
 
@@ -513,6 +524,19 @@ int PICA_open_acc(const char *cert_file,
 int PICA_event_loop(struct PICA_c2n **connections, int timeout);
 
 int PICA_send_msg(struct PICA_c2c *chn, char *buf, unsigned int len);
+/** Send PICA_PROTO_EXTMSG. Fails with PICA_ERRINVARG if the peer does not support it. */
+int PICA_send_ext(struct PICA_c2c *chn, const char *buf, unsigned int len);
+/**
+ * Sign data with the account's private key (SHA-224, same as MULTILOGIN).
+ * \param [out] sig signature, free() it
+ * \return PICA_OK or error code
+ */
+int PICA_acc_sign(const struct PICA_acc *acc, const void *data, size_t len, unsigned char **sig, size_t *siglen);
+/**
+ * Check that cert_pem belongs to id and that sig is its signature of data.
+ * \return 1 if valid, 0 otherwise
+ */
+int PICA_verify_by_cert(const char *cert_pem, const unsigned char *id, const void *data, size_t len, const unsigned char *sig, size_t siglen);
 
 //filename - ASCII or UTF-8 encoded string
 int PICA_send_file(struct PICA_c2c *chn, const char *filepath);

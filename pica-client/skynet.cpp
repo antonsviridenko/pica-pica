@@ -31,6 +31,62 @@
 #include "settings.h"
 #include "../PICA_netconf.h"
 #include <time.h>
+#include <QUuid>
+
+// Payloads of PICA_PROTO_EXTMSG: a type octet followed by QDataStream (Qt_5_0) fields.
+// Lists are written as a quint32 count plus items by hand, because QDataStream's
+// own container reader reserves memory for whatever count the peer sends.
+enum ExtType
+{
+	EXT_MSG = 1,      // msg_id, group_id (empty: one-to-one), timestamp, text (UTF-8), prev_hash, sig
+	EXT_ACK = 2,      // msg_id or group_id
+	EXT_GROUPINFO = 3,// id, owner, version, name, members, sig
+	EXT_SYNCREQ = 4,  // group_id (empty: one-to-one), since, IDs the requester already has
+	EXT_SYNCDATA = 5  // group_id, last chunk flag, records: msg_id, author, timestamp, text, prev_hash, sig
+};
+
+static const quint32 ext_max_list = 4096;
+static const int ext_chunk_size = 60000;
+static const int msg_id_size = 16;
+static const quint32 sync_margin = 86400; // allows for clocks that are off by up to a day
+
+static void write_list(QDataStream &ds, const QList<QByteArray> &L)
+{
+	ds << (quint32)L.size();
+
+	for (int i = 0; i < L.size(); i++)
+		ds << L[i];
+}
+
+static bool read_list(QDataStream &ds, QList<QByteArray> *L, int item_size)
+{
+	quint32 n = 0;
+
+	ds >> n;
+
+	if (n > ext_max_list)
+		return false;
+
+	for (quint32 i = 0; i < n && ds.status() == QDataStream::Ok; i++)
+	{
+		QByteArray b;
+		ds >> b;
+
+		if (b.size() != item_size)
+			return false;
+
+		*L << b;
+	}
+
+	return ds.status() == QDataStream::Ok;
+}
+
+static void write_groupinfo(QDataStream &ds, const Groups::GroupRecord &g)
+{
+	ds << (quint8)EXT_GROUPINFO << g.id << g.owner << g.version << g.name;
+	write_list(ds, g.members);
+	ds << g.sig;
+}
 
 SkyNet::SkyNet()
 	: nodes(nullptr), QObject(0), active_filetransfers(0)
@@ -39,6 +95,7 @@ SkyNet::SkyNet()
 	call_waiting_c2c_connect = false;
 
 	qRegisterMetaType<Accounts::AccountRecord>("Accounts::AccountRecord");
+	qRegisterMetaType<QList<QByteArray> >("QList<QByteArray>");
 
 	PICA_client_callbacks cbs =
 	{
@@ -71,8 +128,9 @@ SkyNet::SkyNet()
 		call_video_params_cb,
 		call_audio_packet_cb,
 		call_video_packet_cb,
-		call_media_transport_cb
-
+		call_media_transport_cb,
+		c2c_ext_cb,
+		ext_msg_cb
 	};
 
 	PICA_client_init(&cbs);
@@ -230,14 +288,6 @@ void SkyNet::nodelink_activated(PICA_c2n *c2n)
 		nodes->MakeClean();
 
 		emit BecameSelfAware();
-
-		//load undelivered messages from history
-		if (msgqueues.isEmpty())
-		{
-			History h(config_dbname, Accounts::GetCurrentAccount().id, network_sql_connection_name);
-
-			msgqueues = h.GetUndeliveredMessages();
-		}
 
 		//load file transfers to be completed
 		// sndfilequeues = ...
@@ -401,16 +451,16 @@ void SkyNet::reset_c2c_reconnect_timeout(QByteArray peer_id)
 
 void SkyNet::reconnect_c2c()
 {
-	if (msgqueues.empty() && sndfilequeues.empty())
-		return;
-
 	if (self_aware)
 	{
-		QMap<QByteArray, QList<QString> > queues = msgqueues;
-		queues.unite(sndfilequeues);
+		History h(config_dbname, me(), network_sql_connection_name);
 		time_t t = time(NULL);
 
-		QList<QByteArray> c2c_peer_ids = queues.uniqueKeys();
+		// shortcut: outbox items only an EXTMSG peer can take keep reconnecting to an older client (with backoff)
+		QList<QByteArray> c2c_peer_ids = (h.OutboxPeers().toSet() + sndfilequeues.keys().toSet()).toList();
+
+		if (c2c_peer_ids.isEmpty())
+			return;
 
 		c2c_peer_ids = filter_existing_chans(c2c_peer_ids);
 
@@ -474,7 +524,10 @@ void SkyNet::timerEvent(QTimerEvent *e)
 	}
 
 	if (self_aware && e->timerId() == c2c_reconnect_timer_id)
+	{
+		flush_ext_waiting();
 		reconnect_c2c();
+	}
 
 	if (!self_aware && e->timerId() == nodelink_reconnect_timer_id)
 	{
@@ -626,7 +679,8 @@ void SkyNet::do_Exit()
 	active_filetransfers_reset();
 	call_active_set(false, QByteArray());
 
-	msgqueues.clear();
+	sent_on_chan.clear();
+	ext_wait.clear();
 
 	for (int i = 0; i < connecting_nodes.size(); i++)
 		PICA_close_c2n(connecting_nodes[i].first);
@@ -758,6 +812,8 @@ void SkyNet::do_PauseFile(QByteArray peer_id, bool pause_sending)
 		{
 			qDebug() << "PICA_pause_file() returned " << ret << "\n";
 		}
+		else
+			active_filetransfers_down(peer_id, pause_sending);
 	}
 
 }
@@ -782,6 +838,8 @@ void SkyNet::do_ResumeFile(QByteArray peer_id, bool resume_sending)
 		{
 			//show error somewhere somehow
 		}
+		else
+			active_filetransfers_up(peer_id, resume_sending);
 	}
 
 }
@@ -806,57 +864,74 @@ void SkyNet::do_CancelFile(QByteArray peer_id, bool cancel_sending)
 		{
 			//show error somewhere somehow
 		}
+		else
+			active_filetransfers_down(peer_id, cancel_sending);
 	}
 
 }
 
-void SkyNet::SendMessage(QByteArray to, QString msg)
+void SkyNet::SendMessage(QByteArray conv, QByteArray msg_id, QString msg, bool is_group)
 {
 	QMetaObject::invokeMethod(this, "do_SendMessage", Qt::AutoConnection,
-	                           Q_ARG(QByteArray, to), Q_ARG(QString, msg));
+	                           Q_ARG(QByteArray, conv), Q_ARG(QByteArray, msg_id),
+	                           Q_ARG(QString, msg), Q_ARG(bool, is_group));
 }
 
-void SkyNet::do_SendMessage(QByteArray to, QString msg)
+void SkyNet::do_SendMessage(QByteArray conv, QByteArray msg_id, QString msg, bool is_group)
 {
-	int ret = PICA_OK;
-	struct PICA_c2c *iptr;
+	History h(config_dbname, me(), network_sql_connection_name);
+	History::HistoryRecord r;
+	QList<QByteArray> recipients;
 
-
-
-	if ( (iptr = find_active_chan(to)) )
+	if (is_group)
 	{
-		//write_mutex.lock();//<<
-		ret = PICA_send_msg(iptr, msg.toUtf8().data(), msg.toUtf8().size());
-		//write_mutex.unlock();//>>
+		Groups::GroupRecord g;
 
-		if (ret != PICA_OK)
-			emit UnableToDeliver(to, msg);
+		if (!Groups(config_dbname, me(), network_sql_connection_name).Get(conv, &g) || !g.members.contains(me()))
+		{
+			emit UnableToDeliver(conv, msg);
+			return;
+		}
 
+		recipients = g.members;
+		recipients.removeAll(me());
+	}
+	else
+		recipients << conv;
 
+	r.peer_id = is_group ? me() : conv;
+	r.is_me = true;
+	r.is_delivered = recipients.isEmpty();
+	r.timestamp = (quint32)time(NULL);
+	r.message = msg;
+	r.msg_id = msg_id;
+	r.group_id = is_group ? conv : QByteArray();
+	r.prev_hash = h.LastHash(conv, is_group);
+	r.sig = sign(h.SignedData(r));
+
+	if (!h.Add(r))
+	{
+		emit UnableToDeliver(conv, msg);
 		return;
 	}
 
-	if (msgqueues.contains(to))
+	for (int i = 0; i < recipients.size(); i++)
 	{
-		msgqueues[to].append(msg);
+		h.OutboxAdd(recipients[i], msg_id, History::OutboxMessage);
+		deliver(recipients[i]);
 	}
-	else
+}
+
+void SkyNet::deliver(QByteArray to)
+{
+	if (find_active_chan(to))
+		flush_queues(to);
+	else if (self_aware && active_nodelink && !filter_existing_chans(QList<QByteArray>() << to).isEmpty())
 	{
 		struct PICA_c2c *chan = NULL;
 
-		ret = PICA_new_c2c(active_nodelink, (const unsigned char*)to.constData(), NULL, &chan);
-
-		QList<QString> l;
-		l.append(msg);
-		msgqueues[to] = l;
+		PICA_new_c2c(active_nodelink, (const unsigned char*)to.constData(), NULL, &chan);
 	}
-
-
-
-
-	if (ret != PICA_OK)
-		emit UnableToDeliver(to, msg);
-
 }
 
 void SkyNet::AcceptCall(QByteArray from)
@@ -1079,29 +1154,76 @@ void SkyNet::flush_queues(QByteArray to)
 	struct PICA_c2c *chan;
 	int ret;
 
-	if (self_aware && (msgqueues.contains(to) || sndfilequeues.contains(to)))
+	if (self_aware && !ext_wait.contains(to))
 	{
-		qDebug() << "flushing " << to << " message queue\n";
-
 		if ((chan = find_active_chan(to)))
 		{
 			/////// messages
-			while( !msgqueues[to].empty() )
+			History h(config_dbname, me(), network_sql_connection_name);
+			QList<History::OutboxItem> outbox = h.Outbox(to);
+
+			for (int i = 0; i < outbox.size(); i++)
 			{
-				ret = PICA_send_msg(chan, msgqueues[to].first().toUtf8().data(), msgqueues[to].first().toUtf8().size());
+				const QByteArray &id = outbox[i].msg_id;
+				QByteArray payload;
+				QDataStream ds(&payload, QIODevice::WriteOnly);
+
+				ds.setVersion(QDataStream::Qt_5_0);
+
+				if (sent_on_chan[to].contains(id))
+					continue;
+
+				if (outbox[i].kind == History::OutboxGroupInfo)
+				{
+					Groups::GroupRecord g;
+
+					if (!chan->peer_ext)
+						continue;
+
+					if (!Groups(config_dbname, me(), network_sql_connection_name).Get(id, &g))
+					{
+						h.OutboxRemove(to, id);
+						continue;
+					}
+
+					write_groupinfo(ds, g);
+					ret = PICA_send_ext(chan, payload.constData(), payload.size());
+				}
+				else
+				{
+					History::HistoryRecord r;
+
+					if (!h.Get(id, &r))
+					{
+						h.OutboxRemove(to, id);
+						continue;
+					}
+
+					if (chan->peer_ext)
+					{
+						ds << (quint8)EXT_MSG << r.msg_id << r.group_id << r.timestamp << r.message.toUtf8() << r.prev_hash << r.sig;
+						ret = PICA_send_ext(chan, payload.constData(), payload.size());
+					}
+					else if (r.group_id.isEmpty())
+						ret = PICA_send_msg(chan, r.message.toUtf8().data(), r.message.toUtf8().size());
+					else
+						continue; // group messages wait until the peer runs a client that supports them
+				}
 
 				if (ret != PICA_OK)
 				{
-					emit UnableToDeliver(to, msgqueues[to].first());
-					break;
+					qDebug() << "failed to send outbox item to" << to.toBase64() << "ret =" << ret;
+
+					if (ret != PICA_ERRMSGSIZE)
+						break;
+
+					h.OutboxRemove(to, id, false);
+					emit StatusMsg(tr("A message is too long to be sent and was dropped"), true);
+					continue;
 				}
 
-				msgqueues[to].removeFirst();
-
+				sent_on_chan[to].insert(id);
 			}
-
-			if (msgqueues[to].empty())
-				msgqueues.remove(to);
 
 
 			///////// files
@@ -1160,16 +1282,6 @@ QList<QByteArray> SkyNet::filter_existing_chans(QList<QByteArray> peer_ids)
 	}
 
 	return ret;
-}
-
-void SkyNet::emit_Delivered(QByteArray to)
-{
-	emit Delivered(to);
-}
-
-void SkyNet::emit_MessageReceived(QByteArray from, QString msg)
-{
-	emit MessageReceived(from, msg);
 }
 
 void SkyNet::emit_UnableToDeliver(QByteArray to, QString msg)
@@ -1321,14 +1433,12 @@ void SkyNet::emit_CallMediaTransportChanged(QByteArray peer_id, bool direct_udp,
 
 void SkyNet::newmsg_cb(const unsigned char *peer_id, const char *msgbuf, unsigned int nb, int type)
 {
-	QString msg = QString::fromUtf8(msgbuf, nb);
-
-	skynet->emit_MessageReceived(QByteArray((const char*)peer_id, PICA_ID_SIZE), msg);
+	skynet->store_received(QByteArray((const char*)peer_id, PICA_ID_SIZE), QByteArray(msgbuf, nb));
 }
 
 void SkyNet::msgok_cb(const unsigned char *peer_id)
 {
-	skynet->emit_Delivered(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	skynet->legacy_delivered(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
 void SkyNet::c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
@@ -1336,7 +1446,22 @@ void SkyNet::c2c_established_cb(const unsigned char *peer_id, const char *cipher
 	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
 	skynet->reset_c2c_reconnect_timeout(peer);
 	skynet->emit_ConnectionStatusUpdated(peer, QString("🔐: %1 c2c").arg(ciphersuitename));
-	skynet->flush_queues(peer);
+	skynet->sent_on_chan.remove(peer);
+
+	struct PICA_c2c *chan = skynet->find_active_chan(peer);
+
+	if (chan && !chan->outgoing && !chan->peer_ext)
+	{
+		// an EXTHELLO may follow, see c2c_ext_cb()
+		skynet->ext_wait[peer] = time(NULL);
+	}
+	else
+	{
+		skynet->flush_queues(peer);
+
+		if (chan && chan->peer_ext)
+			skynet->start_sync(peer);
+	}
 
 	if (skynet->is_call_waiting_for(peer))
 	{
@@ -1384,6 +1509,11 @@ void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
 	         << ", error_code =" << reason << ")\n";
 
 	skynet->emit_c2cClosed(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	skynet->sent_on_chan.remove(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	skynet->ext_wait.remove(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	/* transfers carried by this connection are over */
+	skynet->active_filetransfers_down(QByteArray((const char*)peer_id, PICA_ID_SIZE), true);
+	skynet->active_filetransfers_down(QByteArray((const char*)peer_id, PICA_ID_SIZE), false);
 	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString(tr("Disconnected")));
 	/* a call carried by this connection cannot continue */
 	skynet->call_active_set(false, QByteArray((const char*)peer_id, PICA_ID_SIZE));
@@ -1594,4 +1724,485 @@ void SkyNet::call_media_transport_cb(const unsigned char *peer_id, int transport
 	skynet->emit_CallMediaTransportChanged(peer, direct_udp,
 	                                       ciphersuitename ? QString::fromLatin1(ciphersuitename) : QString(),
 	                                       max_payload);
+}
+
+//EXTMSG
+
+void SkyNet::c2c_ext_cb(const unsigned char *peer_id)
+{
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+
+	skynet->ext_wait.remove(peer);
+	skynet->flush_queues(peer);
+	skynet->start_sync(peer);
+}
+
+void SkyNet::ext_msg_cb(const unsigned char *peer_id, const char *buf, unsigned int nb)
+{
+	skynet->handle_ext(QByteArray((const char*)peer_id, PICA_ID_SIZE), QByteArray(buf, nb));
+}
+
+void SkyNet::flush_ext_waiting()
+{
+	time_t t = time(NULL);
+	QList<QByteArray> peers = ext_wait.keys();
+
+	for (int i = 0; i < peers.size(); i++)
+	{
+		// no EXTHELLO within a couple of seconds: the caller runs an older client
+		if (t - ext_wait[peers[i]] >= 2)
+		{
+			ext_wait.remove(peers[i]);
+			flush_queues(peers[i]);
+		}
+	}
+}
+
+QByteArray SkyNet::me() const
+{
+	return skynet_account.id;
+}
+
+QByteArray SkyNet::sign(const QByteArray &data)
+{
+	unsigned char *sig = NULL;
+	size_t siglen = 0;
+
+	if (!acc || PICA_acc_sign(acc, data.constData(), data.size(), &sig, &siglen) != PICA_OK)
+	{
+		qWarning() << "unable to sign, the message is sent unsigned";
+		return QByteArray();
+	}
+
+	QByteArray ret((const char*)sig, siglen);
+	free(sig);
+	return ret;
+}
+
+bool SkyNet::send_ext(QByteArray to, const QByteArray &payload)
+{
+	struct PICA_c2c *chan = find_active_chan(to);
+
+	return chan && PICA_send_ext(chan, payload.constData(), payload.size()) == PICA_OK;
+}
+
+void SkyNet::store_received(QByteArray from, const QByteArray &msg_bytes)
+{
+	History h(config_dbname, me(), network_sql_connection_name);
+	History::HistoryRecord r;
+
+	// message from an older client: it has no ID and no signature
+	r.peer_id = from;
+	r.is_me = false;
+	r.is_delivered = true;
+	r.timestamp = (quint32)time(NULL);
+	r.message = QString::fromUtf8(msg_bytes);
+	r.msg_id = QUuid::createUuid().toRfc4122();
+	r.prev_hash = h.LastHash(from, false);
+
+	if (h.Add(r))
+		emit MessageReceived(from, from, r.message);
+}
+
+void SkyNet::legacy_delivered(QByteArray to)
+{
+	History h(config_dbname, me(), network_sql_connection_name);
+	QList<History::OutboxItem> outbox = h.Outbox(to);
+
+	// older clients confirm messages in the order they were sent, without IDs
+	for (int i = 0; i < outbox.size(); i++)
+	{
+		if (outbox[i].kind != History::OutboxMessage || !sent_on_chan[to].contains(outbox[i].msg_id))
+			continue;
+
+		sent_on_chan[to].remove(outbox[i].msg_id);
+
+		if (h.OutboxRemove(to, outbox[i].msg_id))
+			emit Delivered(to, outbox[i].msg_id);
+
+		break;
+	}
+}
+
+void SkyNet::handle_ext(QByteArray from, const QByteArray &payload)
+{
+	QDataStream ds(payload);
+	quint8 type = 0;
+
+	ds.setVersion(QDataStream::Qt_5_0);
+	ds >> type;
+
+	switch (type)
+	{
+	case EXT_MSG:
+		handle_ext_msg(from, ds);
+		break;
+	case EXT_ACK:
+		handle_ext_ack(from, ds);
+		break;
+	case EXT_GROUPINFO:
+		handle_ext_groupinfo(from, ds);
+		break;
+	case EXT_SYNCREQ:
+		handle_ext_syncreq(from, ds);
+		break;
+	case EXT_SYNCDATA:
+		handle_ext_syncdata(from, ds);
+		break;
+	default:
+		qDebug() << "unknown EXTMSG type" << type << "from" << from.toBase64();
+	}
+}
+
+static bool is_member(const QByteArray &group_id, const QByteArray &me, const QByteArray &who, Groups::GroupRecord *g)
+{
+	return Groups(config_dbname, me, network_sql_connection_name).Get(group_id, g)
+	       && g->members.contains(me) && g->members.contains(who);
+}
+
+void SkyNet::handle_ext_msg(QByteArray from, QDataStream &ds)
+{
+	History h(config_dbname, me(), network_sql_connection_name);
+	History::HistoryRecord r;
+	Groups::GroupRecord g;
+	QByteArray text;
+
+	ds >> r.msg_id >> r.group_id >> r.timestamp >> text >> r.prev_hash >> r.sig;
+
+	if (ds.status() != QDataStream::Ok || r.msg_id.size() != msg_id_size)
+		return;
+
+	// acknowledged even when dropped below, otherwise the sender would keep resending it
+	{
+		QByteArray ack;
+		QDataStream as(&ack, QIODevice::WriteOnly);
+
+		as.setVersion(QDataStream::Qt_5_0);
+		as << (quint8)EXT_ACK << r.msg_id;
+		send_ext(from, ack);
+	}
+
+	if (!r.group_id.isEmpty() && !is_member(r.group_id, me(), from, &g))
+		return;
+
+	r.peer_id = from;
+	r.is_me = false;
+	r.is_delivered = true;
+	r.message = QString::fromUtf8(text);
+
+	// the connection already proves who sent it; a signature is required for it to be synced on later
+	if (!r.sig.isEmpty() && !h.VerifySignature(r))
+	{
+		qWarning() << "dropping message with an invalid signature from" << from.toBase64();
+		return;
+	}
+
+	if (h.Add(r))
+		emit MessageReceived(r.group_id.isEmpty() ? from : r.group_id, from, r.message);
+}
+
+void SkyNet::handle_ext_ack(QByteArray from, QDataStream &ds)
+{
+	History h(config_dbname, me(), network_sql_connection_name);
+	History::HistoryRecord r;
+	QByteArray id;
+
+	ds >> id;
+
+	if (ds.status() != QDataStream::Ok)
+		return;
+
+	sent_on_chan[from].remove(id);
+
+	if (h.OutboxRemove(from, id) && h.Get(id, &r))
+		emit Delivered(r.group_id.isEmpty() ? r.peer_id : r.group_id, id);
+}
+
+void SkyNet::handle_ext_groupinfo(QByteArray from, QDataStream &ds)
+{
+	History h(config_dbname, me(), network_sql_connection_name);
+	Groups gs(config_dbname, me(), network_sql_connection_name);
+	Groups::GroupRecord g, stored;
+	bool known;
+
+	ds >> g.id >> g.owner >> g.version >> g.name;
+
+	if (!read_list(ds, &g.members, PICA_ID_SIZE))
+		return;
+
+	ds >> g.sig;
+
+	if (ds.status() != QDataStream::Ok || g.id.size() != msg_id_size
+	        || g.owner.size() != PICA_ID_SIZE || !g.members.contains(g.owner))
+		return;
+
+	{
+		QByteArray ack;
+		QDataStream as(&ack, QIODevice::WriteOnly);
+
+		as.setVersion(QDataStream::Qt_5_0);
+		as << (quint8)EXT_ACK << g.id;
+		send_ext(from, ack);
+	}
+
+	known = gs.Get(g.id, &stored);
+
+	if (known && (stored.owner != g.owner || stored.version >= g.version))
+		return;
+
+	// group info can be relayed by any member during sync, so only the owner's signature counts
+	QByteArray cert = h.CertOf(g.owner).toLatin1();
+	QByteArray data = Groups::SignedData(g);
+
+	if (cert.isEmpty() || !PICA_verify_by_cert(cert.constData(), (const unsigned char*)g.owner.constData(),
+	        data.constData(), data.size(), (const unsigned char*)g.sig.constData(), g.sig.size()))
+	{
+		qWarning() << "dropping group info that is not signed by its owner, received from" << from.toBase64();
+		return;
+	}
+
+	gs.Store(g);
+	emit ContactsUpdated();
+
+	if (!known && g.members.contains(me()) && g.members.contains(from))
+		send_syncreq(from, g.id);
+}
+
+void SkyNet::start_sync(QByteArray peer)
+{
+	QList<Groups::GroupRecord> groups = Groups(config_dbname, me(), network_sql_connection_name).GetGroups();
+
+	send_syncreq(peer, QByteArray());
+
+	for (int i = 0; i < groups.size(); i++)
+		if (groups[i].members.contains(peer))
+			send_syncreq(peer, groups[i].id);
+}
+
+void SkyNet::send_syncreq(QByteArray peer, QByteArray group_id)
+{
+	History h(config_dbname, me(), network_sql_connection_name);
+	QByteArray conv = group_id.isEmpty() ? peer : group_id;
+	quint32 since = h.LastSync(peer, conv);
+	QList<History::HistoryRecord> L;
+	QList<QByteArray> have;
+	QByteArray payload;
+	QDataStream ds(&payload, QIODevice::WriteOnly);
+
+	since = since > sync_margin ? since - sync_margin : 0;
+	L = h.GetMessages(conv, !group_id.isEmpty(), since, 0xFFFFFFFF);
+
+	// shortcut: only the newest IDs fit in one request; a gap older than them is not filled,
+	// split the request into several if long offline periods turn out to need that
+	const int max_have = 2900;
+
+	if (L.size() > max_have)
+	{
+		L = L.mid(L.size() - max_have);
+		since = L.first().timestamp;
+	}
+
+	for (int i = 0; i < L.size(); i++)
+		have << L[i].msg_id;
+
+	ds.setVersion(QDataStream::Qt_5_0);
+	ds << (quint8)EXT_SYNCREQ << group_id << since;
+	write_list(ds, have);
+
+	send_ext(peer, payload);
+}
+
+void SkyNet::handle_ext_syncreq(QByteArray from, QDataStream &ds)
+{
+	History h(config_dbname, me(), network_sql_connection_name);
+	Groups::GroupRecord g;
+	QByteArray group_id;
+	quint32 since = 0;
+	QList<QByteArray> have_list;
+	QSet<QByteArray> have;
+	QList<History::HistoryRecord> L;
+
+	ds >> group_id >> since;
+
+	if (ds.status() != QDataStream::Ok || !read_list(ds, &have_list, msg_id_size))
+		return;
+
+	if (!group_id.isEmpty() && !is_member(group_id, me(), from, &g))
+		return;
+
+	have = have_list.toSet();
+	L = h.GetMessages(group_id.isEmpty() ? from : group_id, !group_id.isEmpty(), since, 0xFFFFFFFF);
+
+	QList<QByteArray> records;
+
+	for (int i = 0; i < L.size(); i++)
+	{
+		// unsigned records (older clients, pre-upgrade history) have a different random ID on
+		// each side, so serving them would duplicate what the requester already has
+		if (have.contains(L[i].msg_id) || L[i].sig.isEmpty())
+			continue;
+
+		QByteArray rec;
+		QDataStream rs(&rec, QIODevice::WriteOnly);
+
+		rs.setVersion(QDataStream::Qt_5_0);
+		rs << L[i].msg_id << h.Author(L[i]) << L[i].timestamp << L[i].message.toUtf8() << L[i].prev_hash << L[i].sig;
+		records << rec;
+	}
+
+	// records go out in chunks that fit one EXTMSG; the last chunk is sent even when empty
+	int pos = 0;
+
+	do
+	{
+		QByteArray chunk, body;
+		quint32 count = 0;
+
+		while (pos < records.size() && (body.size() + records[pos].size() < ext_chunk_size || count == 0))
+		{
+			body += records[pos++];
+			count++;
+		}
+
+		{
+			QDataStream cs(&chunk, QIODevice::WriteOnly);
+			cs.setVersion(QDataStream::Qt_5_0);
+			cs << (quint8)EXT_SYNCDATA << group_id << (bool)(pos >= records.size()) << count;
+		}
+		chunk += body;
+
+		send_ext(from, chunk);
+	}
+	while (pos < records.size());
+
+	// a new device of this peer learns which groups it belongs to
+	if (group_id.isEmpty())
+	{
+		QList<Groups::GroupRecord> groups = Groups(config_dbname, me(), network_sql_connection_name).GetGroups();
+
+		for (int i = 0; i < groups.size(); i++)
+		{
+			if (!groups[i].members.contains(from) || groups[i].sig.isEmpty())
+				continue;
+
+			QByteArray payload;
+			QDataStream ps(&payload, QIODevice::WriteOnly);
+
+			ps.setVersion(QDataStream::Qt_5_0);
+			write_groupinfo(ps, groups[i]);
+			send_ext(from, payload);
+		}
+	}
+}
+
+void SkyNet::handle_ext_syncdata(QByteArray from, QDataStream &ds)
+{
+	History h(config_dbname, me(), network_sql_connection_name);
+	Groups::GroupRecord g;
+	QByteArray group_id;
+	bool last = false;
+	quint32 count = 0;
+	int added = 0;
+
+	ds >> group_id >> last >> count;
+
+	if (ds.status() != QDataStream::Ok || count > ext_max_list)
+		return;
+
+	if (!group_id.isEmpty() && !is_member(group_id, me(), from, &g))
+		return;
+
+	for (quint32 i = 0; i < count; i++)
+	{
+		History::HistoryRecord r;
+		QByteArray author, text;
+
+		ds >> r.msg_id >> author >> r.timestamp >> text >> r.prev_hash >> r.sig;
+
+		if (ds.status() != QDataStream::Ok)
+			return;
+
+		if (r.msg_id.size() != msg_id_size)
+			continue;
+
+		if (group_id.isEmpty() ? (author != me() && author != from) : !g.members.contains(author))
+			continue;
+
+		r.is_me = author == me();
+		r.peer_id = group_id.isEmpty() ? from : author;
+		r.group_id = group_id;
+		r.is_delivered = true;
+		r.message = QString::fromUtf8(text);
+
+		// the peer could make up anything it serves, so others' messages must carry the author's signature
+		// shortcut: messages from before signing existed are accepted only when the peer itself wrote them
+		if (r.sig.isEmpty() ? author != from : !h.VerifySignature(r))
+			continue;
+
+		if (h.Add(r))
+			added++;
+	}
+
+	if (added)
+		emit HistorySynced(group_id.isEmpty() ? from : group_id, added);
+
+	if (last)
+		h.SetLastSync(from, group_id.isEmpty() ? from : group_id, (quint32)time(NULL));
+}
+
+void SkyNet::SaveGroup(QByteArray group_id, QString name, QList<QByteArray> members)
+{
+	QMetaObject::invokeMethod(this, "do_SaveGroup", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, group_id), Q_ARG(QString, name),
+	                           Q_ARG(QList<QByteArray>, members));
+}
+
+void SkyNet::do_SaveGroup(QByteArray group_id, QString name, QList<QByteArray> members)
+{
+	History h(config_dbname, me(), network_sql_connection_name);
+	Groups gs(config_dbname, me(), network_sql_connection_name);
+	Groups::GroupRecord g;
+	QList<QByteArray> notify;
+
+	if (gs.Get(group_id, &g))
+	{
+		if (g.owner != me())
+		{
+			emit StatusMsg(tr("Only the owner of a group can change it"), false);
+			return;
+		}
+
+		notify = g.members;
+		g.version++;
+	}
+	else
+	{
+		g.id = group_id;
+		g.owner = me();
+		g.version = 1;
+	}
+
+	g.name = name;
+	g.members = (members.toSet() << me()).toList();
+	g.sig = sign(Groups::SignedData(g));
+
+	if (g.sig.isEmpty())
+	{
+		emit StatusMsg(tr("Unable to sign the group information"), true);
+		return;
+	}
+
+	gs.Store(g);
+	emit ContactsUpdated();
+
+	// removed members are told too, so they know they are out
+	notify = (notify.toSet() + g.members.toSet()).toList();
+	notify.removeAll(me());
+
+	for (int i = 0; i < notify.size(); i++)
+	{
+		h.OutboxAdd(notify[i], g.id, History::OutboxGroupInfo);
+		sent_on_chan[notify[i]].remove(g.id);
+		deliver(notify[i]);
+	}
 }

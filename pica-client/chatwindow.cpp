@@ -18,6 +18,7 @@
 #include "globals.h"
 #include "contacts.h"
 #include "accounts.h"
+#include "skynet.h"
 #include <QVBoxLayout>
 #include <QDateTime>
 #include <QAction>
@@ -26,14 +27,26 @@
 #include <QDateTime>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QUuid>
 
 
 ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 	QWidget(0), peer_id_(peer_id), hist(config_dbname, Accounts::GetCurrentAccount().id)
 {
 	QVBoxLayout *layout;
+	Groups::GroupRecord g;
+
+	is_group_ = Groups(config_dbname, Accounts::GetCurrentAccount().id).Get(peer_id_, &g);
+	addcontactquestion = false;
 
 	set_peer_name();
+
+	if (!is_group_)
 	{
 		Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
 
@@ -58,7 +71,7 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 
 	layout = new QVBoxLayout;
 
-	lbConnStatus = new QLabel(status);
+	lbConnStatus = new QLabel(is_group_ ? tr("Group chat, %1 members").arg(g.members.size()) : status);
 	chatw = new QTextEdit(this);
 	sendtextw = new TextSend(this);
 
@@ -119,15 +132,21 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 	hist1week = new QAction(tr("Last &Week"), this);
 	histAll = new QAction(tr("&All"), this);
 	histSearch = new QAction(tr("&Search History..."), this);
+	histVerify = new QAction(tr("&Verify Integrity"), this);
+	groupMembers = new QAction(tr("&Members..."), this);
 
 	{
-		QMenu *m;
-		m = menu->addMenu(tr("&History"));
-		m = m->addMenu(tr("Show History"));
+		QMenu *m, *h;
+		h = menu->addMenu(tr("&History"));
+		m = h->addMenu(tr("Show History"));
 		m->addAction(hist24h);
 		m->addAction(hist1week);
 		m->addAction(histAll);
 		m->addAction(histSearch);
+		h->addAction(histVerify);
+
+		if (is_group_)
+			menu->addMenu(tr("&Group"))->addAction(groupMembers);
 	}
 	layout->insertSpacing(0, menu->size().height());
 
@@ -135,39 +154,41 @@ ChatWindow::ChatWindow(QByteArray peer_id, QString status) :
 	connect(hist1week, SIGNAL(triggered()), this, SLOT(show_history1w()));
 	connect(histAll, SIGNAL(triggered()), this, SLOT(show_historyAll()));
 	connect(histSearch, SIGNAL(triggered()), this, SLOT(show_historySearch()));
+	connect(histVerify, SIGNAL(triggered()), this, SLOT(verify_history()));
+	connect(groupMembers, SIGNAL(triggered()), this, SLOT(edit_members()));
 
 }
 
 void ChatWindow::update_status(QString status)
 {
+	if (is_group_)
+		return;
+
 	lbConnStatus->setText(status);
 }
 
-void ChatWindow::put_message(QString msg, QByteArray id, bool is_me)
+QString ChatWindow::name_of(QByteArray id)
 {
-	QString color, name;
-	QTextCharFormat fmt;
+	if (id == Accounts::GetCurrentAccount().id)
+		return my_name_;
+
+	if (id == peer_id_)
+		return peer_name_;
+
+	QString name = Contacts(config_dbname, Accounts::GetCurrentAccount().id).GetContactName(id);
+
+	return name.isEmpty() ? QString(id.toBase64()) : name;
+}
+
+void ChatWindow::put_message(QString msg, QByteArray id, bool is_me, QByteArray msg_id)
+{
 	int pos;
 
-	if (is_me)
-	{
-		color = "#0000ff";
-		name = my_name_;
-	}
-	else
-	{
-		color = "#ff0000";
-
-		if (id == peer_id_)
-			name = peer_name_;
-		else
-			name = id.toBase64();
-	}
-
-	pos = draw_message(msg, name, QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"), color, false);
+	pos = draw_message(msg, name_of(id), QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"),
+	                   is_me ? "#2a6fdb" : "#c0392b", false);
 
 	if (is_me)
-		undelivered_msgs.append(pos);
+		undelivered_msgs[msg_id] = pos;
 }
 
 int ChatWindow::draw_message(QString msg, QString nickname, QString datetime, QString color, bool is_delivered)
@@ -177,7 +198,7 @@ int ChatWindow::draw_message(QString msg, QString nickname, QString datetime, QS
 	int ret;
 
 	if (is_delivered)
-		delivered_mark = "+";
+		delivered_mark = "&#x2713;";
 	else
 		delivered_mark = "&nbsp;";
 
@@ -206,70 +227,37 @@ int ChatWindow::draw_message(QString msg, QString nickname, QString datetime, QS
 void ChatWindow::print_history(QList<History::HistoryRecord> H)
 {
 	chatw->clear();
+	undelivered_msgs.clear(); // positions refer to the cleared text
 
 	while(!H.isEmpty())
 	{
 		History::HistoryRecord r = H.takeFirst();
-		QString color, name;
 		QDateTime dt;
 
-		if (r.is_me)
-		{
-			color = "#0000ff";
-			name = my_name_;
-		}
-		else
-		{
-			color = "#ff0000";
-
-			if (r.peer_id == peer_id_)
-				name = peer_name_;
-			else
-				name = r.peer_id.toBase64();
-		}
-
 		dt.setTime_t(r.timestamp);
-		//put_message(r.message, r.peer_id, r.is_me);
-		draw_message(r.message, name, dt.toString("yyyy-MM-dd hh:mm:ss"), color, r.is_delivered);
+		draw_message(r.message, name_of(hist.Author(r)), dt.toString("yyyy-MM-dd hh:mm:ss"),
+		             r.is_me ? "#2a6fdb" : "#c0392b", r.is_delivered);
 	}
 }
 
-void ChatWindow::msg_from_peer(QString msg)
+void ChatWindow::msg_from_peer(QByteArray author, QString msg)
 {
 	if (isMinimized())
 		showNormal();
 
-	put_message(msg, peer_id_, false);
-	hist.Add(peer_id_, msg, false);
+	put_message(msg, author, false);
 }
 
-void ChatWindow::msg_delivered()
+void ChatWindow::msg_delivered(QByteArray msg_id)
 {
-	if (undelivered_msgs.isEmpty())
-	{
-		// undelivered_msgs can be empty if new chatwindow instance was created
-		// and undelivered message from previous chat session is delivered
-		// after that.
+	// messages sent before this window was opened are not shown, and are already marked in history
+	if (!undelivered_msgs.contains(msg_id))
+		return;
 
-		QByteArray my_id = Accounts::GetCurrentAccount().id;
-		QMap<QByteArray, QList<QString> > undl = hist.GetUndeliveredMessages();
-
-		// GetUndeliveredMessages() is keyed by the peer's contact_id, not by
-		// our own id, so this must look up peer_id_ to find anything.
-		if (!undl[peer_id_].isEmpty())
-			put_message(undl[peer_id_].first(), my_id, true);
-	}
-
-	if (!undelivered_msgs.isEmpty())
-	{
-		QTextCursor c(chatw->document());
-		c.setPosition(undelivered_msgs.first());
-		c.deleteChar();
-		c.insertText("+");
-		undelivered_msgs.removeFirst();
-	}
-
-	hist.SetDelivered(peer_id_);
+	QTextCursor c(chatw->document());
+	c.setPosition(undelivered_msgs.take(msg_id));
+	c.deleteChar();
+	c.insertText(QString(QChar(0x2713)));
 }
 
 void ChatWindow::msg_informational(QString text)
@@ -277,7 +265,7 @@ void ChatWindow::msg_informational(QString text)
 	QString color;
 	QTextCharFormat fmt;
 
-	color = "#303030";
+	color = "gray";
 
 	fmt = chatw->currentCharFormat();
 
@@ -310,17 +298,10 @@ void ChatWindow::send_message()
 	QString message = sendtextw->toPlainText();
 	if (!isEmptyMessage(message))
 	{
-		put_message(message, Accounts::GetCurrentAccount().id, true);
-		hist.Add(peer_id_, message, true);
+		QByteArray msg_id = QUuid::createUuid().toRfc4122();
 
-		if (!hist.isOK())
-		{
-			QMessageBox mbx;
-			mbx.setText(hist.GetLastError());
-			mbx.exec();
-		}
-
-		emit msg_input(message, this);
+		put_message(message, Accounts::GetCurrentAccount().id, true, msg_id);
+		emit msg_input(message, msg_id, this);
 
 		sendtextw->clear();
 	}
@@ -352,19 +333,19 @@ void TextSend::keyPressEvent(QKeyEvent *e)
 
 void ChatWindow::show_history24h()
 {
-	print_history(hist.GetMessages(peer_id_, QDateTime::currentDateTime().addDays(-1).toTime_t(),
+	print_history(hist.GetMessages(peer_id_, is_group_, QDateTime::currentDateTime().addDays(-1).toTime_t(),
 	                               QDateTime::currentDateTime().toTime_t()));
 }
 
 void ChatWindow::show_history1w()
 {
-	print_history(hist.GetMessages(peer_id_, QDateTime::currentDateTime().addDays(-7).toTime_t(),
+	print_history(hist.GetMessages(peer_id_, is_group_, QDateTime::currentDateTime().addDays(-7).toTime_t(),
 	                               QDateTime::currentDateTime().toTime_t()));
 }
 
 void ChatWindow::show_historyAll()
 {
-	print_history(hist.GetMessages(peer_id_, 0, QDateTime::currentDateTime().toTime_t()));
+	print_history(hist.GetMessages(peer_id_, is_group_, 0, QDateTime::currentDateTime().toTime_t()));
 }
 
 void ChatWindow::show_historySearch()
@@ -375,7 +356,82 @@ void ChatWindow::show_historySearch()
 	                                     QString(), &ok);
 
 	if (ok)
-		print_history(hist.GetMessages(peer_id_, keyword));
+		print_history(hist.GetMessages(peer_id_, is_group_, keyword));
+}
+
+void ChatWindow::verify_history()
+{
+	History::ChainReport r = hist.VerifyChain(peer_id_, is_group_);
+	QMessageBox mbx;
+
+	mbx.setIcon(r.bad_signatures || r.broken_links ? QMessageBox::Warning : QMessageBox::Information);
+	mbx.setText(tr("Messages: %1\nSigned and valid: %2\nUnsigned (from older clients): %3\n"
+	               "Invalid signatures: %4\nLinks to missing messages: %5\n\n"
+	               "Links to missing messages are normal for messages you were offline for, "
+	               "until they are synchronized.")
+	            .arg(r.total).arg(r.valid).arg(r.unsigned_msgs).arg(r.bad_signatures).arg(r.broken_links));
+	mbx.exec();
+}
+
+void ChatWindow::edit_members()
+{
+	Groups::GroupRecord g;
+	QByteArray me = Accounts::GetCurrentAccount().id;
+
+	if (!Groups(config_dbname, me).Get(peer_id_, &g))
+		return;
+
+	if (edit_group_dialog(this, &g.name, &g.members, g.owner == me) && g.owner == me)
+		skynet->SaveGroup(g.id, g.name, g.members);
+}
+
+bool edit_group_dialog(QWidget *parent, QString *name, QList<QByteArray> *members, bool editable)
+{
+	QByteArray me = Accounts::GetCurrentAccount().id;
+	Contacts ct(config_dbname, me);
+	QList<Contacts::ContactRecord> contacts = ct.GetContacts();
+	QList<QByteArray> ids;
+	QDialog d(parent);
+	QFormLayout *form = new QFormLayout(&d);
+	QLineEdit *le = new QLineEdit(*name);
+	QListWidget *lw = new QListWidget;
+	QDialogButtonBox *bb = new QDialogButtonBox(editable ? QDialogButtonBox::Ok | QDialogButtonBox::Cancel : QDialogButtonBox::Close);
+
+	for (int i = 0; i < contacts.size(); i++)
+		ids << contacts[i].id;
+
+	for (int i = 0; i < members->size(); i++)
+		if (!ids.contains(members->at(i)) && members->at(i) != me)
+			ids << members->at(i);
+
+	for (int i = 0; i < ids.size(); i++)
+	{
+		QString cname = ct.GetContactName(ids[i]);
+		QListWidgetItem *it = new QListWidgetItem(QString("(%1...) %2").arg(ids[i].toBase64().left(8).constData()).arg(cname), lw);
+
+		it->setFlags(editable ? Qt::ItemIsUserCheckable | Qt::ItemIsEnabled : Qt::ItemIsEnabled);
+		it->setCheckState(members->contains(ids[i]) ? Qt::Checked : Qt::Unchecked);
+	}
+
+	le->setReadOnly(!editable);
+	form->addRow(QObject::tr("Group name:"), le);
+	form->addRow(QObject::tr("Members:"), lw);
+	form->addRow(bb);
+	QObject::connect(bb, SIGNAL(accepted()), &d, SLOT(accept()));
+	QObject::connect(bb, SIGNAL(rejected()), &d, SLOT(reject()));
+	d.setWindowTitle(QObject::tr("Group"));
+
+	if (d.exec() != QDialog::Accepted || !editable)
+		return false;
+
+	*name = le->text().trimmed();
+	members->clear();
+
+	for (int i = 0; i < ids.size(); i++)
+		if (lw->item(i)->checkState() == Qt::Checked)
+			*members << ids[i];
+
+	return true;
 }
 
 void ChatWindow::addct_yes()
@@ -417,6 +473,14 @@ void ChatWindow::set_peer_name()
 {
 	QString title;
 	Contacts ct(config_dbname, Accounts::GetCurrentAccount().id);
+	Groups::GroupRecord g;
+
+	if (Groups(config_dbname, Accounts::GetCurrentAccount().id).Get(peer_id_, &g))
+	{
+		peer_name_ = g.name;
+		setWindowTitle(QObject::tr("Group chat: ") + g.name);
+		return;
+	}
 
 	peer_name_ = ct.GetContactName(peer_id_);
 

@@ -43,6 +43,7 @@ class ChatWindow : public QWidget
 {
 	Q_OBJECT
 public:
+	// peer_id is a contact's ID or a group ID
 	explicit ChatWindow(QByteArray peer_id, QString status);
 
 	QByteArray getPeerId()
@@ -50,14 +51,24 @@ public:
 		return peer_id_;
 	};
 
+	QString getPeerName()
+	{
+		return peer_name_;
+	};
+
+	bool isGroup()
+	{
+		return is_group_;
+	};
+
 signals:
-	void msg_input(QString msg, ChatWindow *sender_window);
+	void msg_input(QString msg, QByteArray msg_id, ChatWindow *sender_window);
 	void chatwindow_close(ChatWindow *sender_window);
 	void contacts_update();
 
 public slots:
-	void msg_from_peer(QString msg);
-	void msg_delivered();
+	void msg_from_peer(QByteArray author, QString msg);
+	void msg_delivered(QByteArray msg_id);
 	void msg_informational(QString text);//юзер в оффлайне, набирает сообщение, и т.д. серым шрифтом, курсив
 	void set_peer_name();
 	void update_status(QString status);
@@ -67,13 +78,16 @@ private:
 	QTextEdit *chatw;
 	TextSend *sendtextw;
 	QByteArray peer_id_;
-	QList<int> undelivered_msgs;
+	QMap<QByteArray, int> undelivered_msgs; // msg_id -> position of the delivery mark
+	bool is_group_;
 	History hist;
 	QMenuBar *menu;
 	QAction *hist24h;
 	QAction *hist1week;
 	QAction *histAll;
 	QAction *histSearch;
+	QAction *histVerify;
+	QAction *groupMembers;
 	QString peer_name_;
 	QString my_name_;
 	bool addcontactquestion;
@@ -84,7 +98,8 @@ private:
 	QLabel *lbConnStatus;
 
 	bool isEmptyMessage(const QString &msg) const;
-	void put_message(QString msg, QByteArray id, bool is_me);
+	void put_message(QString msg, QByteArray id, bool is_me, QByteArray msg_id = QByteArray());
+	QString name_of(QByteArray id);
 	int draw_message(QString msg, QString nickname, QString datetime, QString color, bool is_delivered);
 	void print_history(QList<History::HistoryRecord> H);
 
@@ -97,11 +112,16 @@ private slots:
 	void show_history1w();
 	void show_historyAll();
 	void show_historySearch();
+	void verify_history();
+	void edit_members();
 
 	void addct_yes();
 	void addct_no();
 	void addct_blacklist();
 	void addct_removequestion();
 };
+
+// Lets the user pick a group name and members among the contacts. Returns false if cancelled.
+bool edit_group_dialog(QWidget *parent, QString *name, QList<QByteArray> *members, bool editable);
 
 #endif // CHATWINDOW_H
