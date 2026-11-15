@@ -42,6 +42,10 @@ int random_message_mode = 0;
 int delivery_acks_count = 0;
 int rmm_wait_for_reply = 0;
 
+/* -u: 1 - ask the node for our TCP and UDP addresses once connected, 2 - asked */
+int request_addresses = 0;
+int udp_sck = -1;
+
 unsigned char buf[64 * 1024];
 
 int accept_cb(const unsigned char *id)
@@ -90,7 +94,7 @@ void msgok_cb(const unsigned char *peer_id)
 	puts("[V]");
 }
 //создание канала с собеседником
-void c2c_established_cb(const unsigned char *peer_id)
+void c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
 {
 	c2c_active = 1;
 	c2c_in_progress = 0;
@@ -217,9 +221,22 @@ void listener_error(struct PICA_listener *lst, int errorcode)
 	l = NULL;
 }
 
-void multilogin_cb(time_t timestamp, void *addr_bin, const char *addr_str, uint16_t port)
+void multilogin_cb(uint64_t timestamp, void *addr_bin, const char *addr_str, uint16_t port)
 {
 	printf("received MULTILOGIN\n");
+}
+
+void tcp_address_cb(struct PICA_c2n *c2n, int type, void *addr_bin, const char *addr_str, uint16_t port)
+{
+	printf("tcp_address_cb: type 0x%X address %s port %u\n", type, addr_str, port);
+}
+
+void udp_address_cb(struct PICA_c2n *c2n, int status, int type, void *addr_bin, const char *addr_str, uint16_t port)
+{
+	if (status == PICA_OK)
+		printf("udp_address_cb: type 0x%X address %s port %u\n", type, addr_str, port);
+	else
+		printf("udp_address_cb: failed, status %i\n", status);
 }
 
 struct PICA_client_callbacks cbs =
@@ -243,7 +260,9 @@ struct PICA_client_callbacks cbs =
 	c2n_failed_cb,
 	c2n_closed_cb,
 	listener_error,
-	multilogin_cb
+	multilogin_cb,
+	.tcp_address_cb = tcp_address_cb,
+	.udp_address_cb = udp_address_cb
 };
 
 int main(int argc, char** argv)
@@ -264,7 +283,7 @@ int main(int argc, char** argv)
 
 	int multilogin = PICA_MULTILOGIN_PROHIBIT;
 
-	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:f:tmrM:")) != -1)
+	while ((opt = getopt(argc, argv, "a:p:c:i:d:e:l:f:tmruM:")) != -1)
 	{
 		switch(opt)
 		{
@@ -312,6 +331,10 @@ int main(int argc, char** argv)
 			random_message_mode = 1;
 		break;
 
+		case 'u':
+			request_addresses = 1;
+		break;
+
 		case 'M':
 			if (strcmp(optarg, "prohibit") == 0)
 				multilogin = PICA_MULTILOGIN_PROHIBIT;
@@ -348,6 +371,7 @@ int main(int argc, char** argv)
 		-m start in echo mode, received messages are sent back, input from stdin is not accepted\n\
 		-r send random test messages and exit, expects other side to be run in echo mode\n\
 		-M multilogin policy, one from \"prohibit\", \"replace\", \"sync\"\n\
+		-u ask the node for the TCP and UDP addresses it sees this client coming from\n\
 cert_filename should point to file that contains client certificate, private key and Diffie-Hellman parameters in PEM format");
 		return 0;
 	}
@@ -412,6 +436,30 @@ cert_filename should point to file that contains client certificate, private key
 	while(PICA_event_loop(c2ns, 500) == PICA_OK && c != NULL)
 	{
 		//puts("event loop...");
+		if (request_addresses == 1 && connected_to_node == 1)
+		{
+			struct sockaddr_in any;
+
+			request_addresses = 2;
+
+			ret = PICA_request_tcp_address(c);
+			printf("PICA_request_tcp_address: ret=%i\n", ret);
+
+			memset(&any, 0, sizeof(any));
+			any.sin_family = AF_INET;
+
+			udp_sck = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+			if (udp_sck == -1 || bind(udp_sck, (struct sockaddr*)&any, sizeof(any)) == -1)
+			{
+				perror("failed to open UDP socket");
+				return 1;
+			}
+
+			ret = PICA_request_udp_address(c, udp_sck);
+			printf("PICA_request_udp_address: ret=%i\n", ret);
+		}
+
 		if (peerid && connected_to_node == 1 && c2c_active == 0 && c2c_in_progress == 0)
 		{
 			if (PICA_id_from_base64(peerid, peer_id) == NULL)

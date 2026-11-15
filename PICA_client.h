@@ -20,6 +20,7 @@
 
 #include <time.h>
 #include "PICA_id.h"
+#include "PICA_proto.h"
 
 #ifdef WIN32
 
@@ -142,6 +143,12 @@ typedef u_short in_port_t;
 
 #define PICA_C2C_ACTIVATE_TIMEOUT 30
 
+/* PICA_request_udp_address(): how long the node's answer is waited for, and
+ * how many datagrams are sent to the node, one per second, until it comes.
+ */
+#define PICA_UDPADDR_TIMEOUT 10
+#define PICA_UDPADDR_PROBES 3
+
 /* How long an incoming direct connection may take to finish its TLS handshake
  * before it is reaped, and how many half-open incoming connections may sit in
  * a listener at once - both bound a peer's ability to tie up the listener.
@@ -186,6 +193,15 @@ enum PICA_c2n_state
 	PICA_C2N_STATE_CONNECTED
 };
 
+enum PICA_udpaddr_state
+{
+	PICA_UDPADDR_STATE_IDLE = 0,
+	/* request sent, waiting for the node to issue a token */
+	PICA_UDPADDR_STATE_WAITINGTOKEN,
+	/* sending the token to the node's UDP port, waiting for the address */
+	PICA_UDPADDR_STATE_PROBING
+};
+
 enum PICA_directc2c_config
 {
 	PICA_DIRECTC2C_CFG_DISABLED,
@@ -221,6 +237,16 @@ struct PICA_c2n
 	unsigned char node_ver_major, node_ver_minor;
 	int disconnect_on_empty_write_buf;
 	int want_write;
+
+	int tcpaddr_requested;
+
+	/* request made by PICA_request_udp_address() */
+	enum PICA_udpaddr_state udpaddr_state;
+	SOCKET udpaddr_sck;
+	unsigned char udpaddr_token[PICA_PROTO_MYUDPADDR_TOKENSIZE];
+	time_t udpaddr_started;
+	time_t udpaddr_last_probe;
+	int udpaddr_probes_sent;
 };
 
 enum PICA_c2c_state
@@ -464,6 +490,32 @@ struct PICA_client_callbacks
 	 */
 	void (*call_media_transport_cb)(const unsigned char *peer_id, int transport,
 	                                const char *ciphersuitename, unsigned int max_payload);
+
+	/* The callbacks below are optional and can be left NULL. */
+
+	/**
+	 * The node's answer to PICA_request_tcp_address(): the address and port
+	 * the c2n connection comes from, as the node sees them.
+	 * \param type address type, PICA_PROTO_MYTCPADDR_{IPV4,IPV6}
+	 * \param addr_bin address in binary form, network byte order
+	 * \param addr_str address in string format, zero-terminated
+	 * \param port port number, in host byte order
+	 */
+	void (*tcp_address_cb)(struct PICA_c2n *c2n, int type, void *addr_bin, const char *addr_str, uint16_t port);
+
+	/**
+	 * The outcome of PICA_request_udp_address().
+	 * \param status PICA_OK - the node saw a datagram from the socket coming
+	 * from the address described by the remaining arguments, which have the
+	 * same meaning as in tcp_address_cb, except that type is
+	 * PICA_PROTO_MYUDPADDR_{IPV4,IPV6}. PICA_ERRTIMEDOUT - no answer; the
+	 * node does not offer this, or UDP does not get through to it. The
+	 * remaining arguments are zero then.
+	 *
+	 * The address is what the node saw, and is not authenticated: it is only
+	 * good as a place for a peer to try, never as a proof of who is there.
+	 */
+	void (*udp_address_cb)(struct PICA_c2n *c2n, int status, int type, void *addr_bin, const char *addr_str, uint16_t port);
 };
 
 
@@ -511,6 +563,24 @@ int PICA_open_acc(const char *cert_file,
 //connections, listeners - NULL-terminated arrays of pointers to appropriate structures
 // timeout - timeout in milliseconds
 int PICA_event_loop(struct PICA_c2n **connections, int timeout);
+
+/**
+ * Asks the node which address and TCP port the c2n connection comes from.
+ * The answer is delivered to tcp_address_cb.
+ */
+int PICA_request_tcp_address(struct PICA_c2n *c2n);
+/**
+ * Asks the node which address and port the datagrams sent from udp_sck come
+ * from, i.e. what the NAT in front of this host maps that socket to. The
+ * outcome is delivered to udp_address_cb.
+ * \param udp_sck bound, unconnected IPv4 UDP socket - the one the address is
+ * wanted for. It is only sent from, and has to stay open until the callback
+ * is called. The mapping learned is only useful with this same socket.
+ *
+ * One request per c2n connection can be in progress; another call restarts
+ * it. A node serves only a few of these in a row from one client.
+ */
+int PICA_request_udp_address(struct PICA_c2n *c2n, SOCKET udp_sck);
 
 int PICA_send_msg(struct PICA_c2c *chn, char *buf, unsigned int len);
 

@@ -13,6 +13,8 @@ octets. It is used as a user identifier.
 
 Connections.
 There are 5 types of connections between Pica Pica nodes and clients.
+Apart from them, a node accepts single UDP datagrams from clients, see the "Get
+my UDP address" messages.
 
 -client to node (c2n) - a control connection from client to node
 
@@ -209,6 +211,104 @@ signature - a digital signature using the SHA224 hash and the private RSA key
 of the sending client. The signature is calculated from the sender's
 concatenated UH, timestamp and node address = Sign(UH|timestamp|node address)
 
+====================================================
+Get my TCP address.
+
+Sent by a client. Requests the node to respond with the client
+address and TCP port as seen by the node. The response should
+be one packet of the type A0 or A1 corresponding to protocol used for this
+TCP connection - IPv4 or IPv6
+
+[0x0F 0x0F][2 pseudo-random octets]
+
+4 octets
+====================================================
+My TCP address.
+Sent by the node in reply to 0x0F.
+
+[0xA0 0xA0][IP address - 4 octets, network byte order][port number - 2 octets, network byte order]
+
+8 octets
+
+or
+
+[0xA1 0xA1][IPv6 address - 16 octets, network byte order][port number - 2 octets, network byte order]
+
+20 octets
+
+A client must ignore this message unless it is waiting for it.
+====================================================
+Get my UDP address.
+Sent by a client.
+
+[0x10 0x10][2 pseudo-random octets]
+
+4 octets
+
+Requests a token that lets the client learn the address and port its UDP
+datagrams arrive at the node from, i.e. what the NAT in front of the client
+maps one of its UDP sockets to. The exchange is:
+
+  c2n  client -> node  0x10  request
+  c2n  node -> client  0x11  token
+  UDP  client -> node  0x10  the token, from the socket in question
+  c2n  node -> client  0x12  source address and port of that datagram
+
+A node serves only a limited number of these requests in a row from one
+client, and may not serve them at all (e.g. it has no UDP port open); a request
+that is not served is not answered. The client gives up by timeout.
+====================================================
+UDP address token.
+Sent by the node in reply to 0x10.
+
+[0x11 0x11][token, 16 octets]
+
+18 octets
+
+token - random octets from a cryptographically secure generator, chosen by the
+node. It is valid for a short time (10 seconds) and for one datagram. A client
+has at most one valid token: a new 0x10 request invalidates the token issued
+for the previous one.
+====================================================
+UDP address probe.
+Sent by a client to the node as a UDP datagram, not over a connection.
+
+[0x10 0x10][token, 16 octets]
+
+18 octets, the whole datagram
+
+Sent to the UDP port with the same number as the TCP port the c2n connection
+was made to, from the socket whose external address the client wants to learn.
+Datagrams can be lost, so the client sends it a few times, about a second
+apart, until 0x12 arrives.
+
+The node never answers over UDP, whatever it receives. A datagram that is not
+exactly 18 octets long, or does not carry a currently valid token, is silently
+dropped. When a valid token arrives, the node invalidates it and sends 0x12
+over the c2n connection the token was issued on. Copies of the datagram that
+arrive afterwards are therefore dropped as well.
+====================================================
+My UDP address.
+Sent by the node over the c2n connection.
+
+[0x12 0x12][length, 1 octet][address]
+
+address - the source address and port of the datagram that carried the token,
+in network byte order:
+[0xA0][IP address - 4 octets][port number - 2 octets], length 7, or
+[0xA1][IPv6 address - 16 octets][port number - 2 octets], length 19.
+
+A client must ignore this message unless it is waiting for it.
+
+Security considerations.
+The token only ties a datagram to an authenticated c2n connection. The source
+address the node reports cannot be authenticated - it is not known to the
+client, and is rewritten on the way by design - so somebody able to observe the
+datagram can send a copy of it from another address, and have that address
+reported if the copy arrives first. The reported address must therefore be
+treated only as a place where the client might be reachable, never as proof of
+who is reachable there: a connection made to it has to authenticate the peer
+on its own, as directc2c and mediac2c connections do.
 ====================================================
 
 	The message below is transmitted over the connection between a node

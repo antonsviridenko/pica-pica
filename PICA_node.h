@@ -52,6 +52,7 @@
 #include <time.h>
 #include "PICA_nodeaddrlist.h"
 #include "PICA_id.h"
+#include "PICA_proto.h"
 
 #include <event2/event.h>
 
@@ -142,6 +143,16 @@ struct client
 	int disconnect_ticking;//on sending message TO client this var is set to 1, on receiving some message FROM client this var is reset to 0
 	struct event *ev_read;
 	struct event *ev_write;
+
+	//Pending "get my UDP address" request. The token is what ties a datagram
+	//arriving at the UDP socket to this connection, see process_udp_read()
+	unsigned char udpaddr_token[PICA_PROTO_MYUDPADDR_TOKENSIZE];
+	int udpaddr_token_issued;
+	time_t udpaddr_token_tmst;
+	struct client *udpaddr_token_next;//next client in the same bucket of udpaddr_tokens[]
+	//how many more MYUDPADDRREQ messages are served right now, see client_udpaddr_req_allowed()
+	unsigned int udpaddr_req_allowance;
+	time_t udpaddr_req_tmst;
 };
 
 struct cclink //структура, описывающая соединение двух клиентов между собой через сервер

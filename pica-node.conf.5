@@ -28,7 +28,14 @@ future releases). If the computer running pica-node is behind the NAT, external
 .I listen_port
 Specifies the port number that 
 .BR pica-node (8)
-listens on.  The default is 2299
+listens on.  The default is 2299.
+The number is used for the TCP port that accepts connections, and for a UDP
+port that clients send a datagram to in order to learn which address and port
+their NAT gives them.
+.BR pica-node (8)
+never sends anything from the UDP port, but it has to be reachable for
+incoming datagrams, so both have to be allowed through a firewall or forwarded
+by a router.
 .TP
 .I nodes_db_file
 Specifies the nodes database file. This is the SQLite 3 database. It stores

@@ -87,6 +87,9 @@ static unsigned int procmsg_CALL_AUDIO_PACKET(unsigned char*, unsigned int, void
 static unsigned int procmsg_CALL_VIDEO_PACKET(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_MEDIA_PINGREQ(unsigned char*, unsigned int, void*);
 static unsigned int procmsg_MEDIA_PINGREP(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_MYTCPADDR(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_MYUDPADDRTOKEN(unsigned char*, unsigned int, void*);
+static unsigned int procmsg_MYUDPADDR(unsigned char*, unsigned int, void*);
 
 static struct PICA_proto_msg* c2n_writebuf_push(struct PICA_c2n *ci, unsigned int msgid, unsigned int size);
 static struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgid, unsigned int size);
@@ -112,7 +115,11 @@ const struct PICA_msginfo  c2n_messages[] =
 	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ},
 	{PICA_PROTO_INITRESPOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_INITRESPOK_SIZE, procmsg_INITRESP},
 	{PICA_PROTO_VERDIFFER, PICA_MSG_FIXED_SIZE, PICA_PROTO_VERDIFFER_SIZE, procmsg_INITRESP},
-	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN}
+	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN},
+	{PICA_PROTO_MYTCPADDR_IPV4, PICA_MSG_FIXED_SIZE, PICA_PROTO_MYTCPADDR_IPV4_SIZE, procmsg_MYTCPADDR},
+	{PICA_PROTO_MYTCPADDR_IPV6, PICA_MSG_FIXED_SIZE, PICA_PROTO_MYTCPADDR_IPV6_SIZE, procmsg_MYTCPADDR},
+	{PICA_PROTO_MYUDPADDRTOKEN, PICA_MSG_FIXED_SIZE, PICA_PROTO_MYUDPADDRTOKEN_SIZE, procmsg_MYUDPADDRTOKEN},
+	{PICA_PROTO_MYUDPADDR, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT8, procmsg_MYUDPADDR}
 };
 
 const struct PICA_msginfo  c2c_messages[] =
@@ -1050,6 +1057,186 @@ unsigned int procmsg_PINGREQ(unsigned char* buf, unsigned int nb, void* p)
 		return 0;
 
 	return 1;
+}
+
+/* Reads the address and the port following it, both in network byte order,
+ * for one of the "my address" callbacks. addr_str has to have room for
+ * INET6_ADDRSTRLEN characters.
+ */
+static int myaddr_parse(int af, const unsigned char *addr, char *addr_str, uint16_t *port)
+{
+	if (!inet_ntop(af, addr, addr_str, INET6_ADDRSTRLEN))
+		return 0;
+
+	memcpy(port, addr + (af == AF_INET6 ? 16 : 4), 2);
+	*port = ntohs(*port);
+
+	return 1;
+}
+
+static unsigned int procmsg_MYTCPADDR(unsigned char* buf, unsigned int nb, void* p)
+{
+	PICA_TRACEFUNC
+	struct PICA_c2n *c2n = (struct PICA_c2n *)p;
+	char addr_str[INET6_ADDRSTRLEN];
+	uint16_t port;
+
+	/* not something we asked for */
+	if (!c2n->tcpaddr_requested)
+		return 1;
+
+	c2n->tcpaddr_requested = 0;
+
+	/* the message size is fixed for each of the two types, see c2n_messages[] */
+	if (!myaddr_parse(buf[0] == PICA_PROTO_MYTCPADDR_IPV6 ? AF_INET6 : AF_INET, buf + 2, addr_str, &port))
+		return 0;
+
+	if (callbacks.tcp_address_cb)
+		callbacks.tcp_address_cb(c2n, buf[0], buf + 2, addr_str, port);
+
+	return 1;
+}
+
+static void udpaddr_send_probe(struct PICA_c2n *c2n)
+{
+	unsigned char probe[PICA_PROTO_MYUDPADDRPROBE_SIZE];
+
+	probe[0] = probe[1] = PICA_PROTO_MYUDPADDRPROBE;
+	memcpy(probe + 2, c2n->udpaddr_token, PICA_PROTO_MYUDPADDR_TOKENSIZE);
+
+	/* The node's UDP port has the same number as the TCP port the c2n
+	 * connection was made to. A failed send is treated like a lost datagram.
+	 */
+	sendto(c2n->udpaddr_sck, (const char*)probe, sizeof(probe), 0,
+	       (const struct sockaddr*)&c2n->srv_addr, sizeof(c2n->srv_addr));
+
+	c2n->udpaddr_last_probe = time(0);
+	c2n->udpaddr_probes_sent++;
+}
+
+static unsigned int procmsg_MYUDPADDRTOKEN(unsigned char* buf, unsigned int nb, void* p)
+{
+	PICA_TRACEFUNC
+	struct PICA_c2n *c2n = (struct PICA_c2n *)p;
+
+	/* not something we asked for, or the answer to a request already given up on */
+	if (c2n->udpaddr_state == PICA_UDPADDR_STATE_IDLE)
+		return 1;
+
+	/* A token arriving while an earlier one is being sent belongs to a
+	 * request that restarted this one - the node has dropped the earlier
+	 * token by now, so the new one is the one to use.
+	 */
+	memcpy(c2n->udpaddr_token, buf + 2, PICA_PROTO_MYUDPADDR_TOKENSIZE);
+	c2n->udpaddr_state = PICA_UDPADDR_STATE_PROBING;
+	c2n->udpaddr_probes_sent = 0;
+
+	udpaddr_send_probe(c2n);
+
+	return 1;
+}
+
+static unsigned int procmsg_MYUDPADDR(unsigned char* buf, unsigned int nb, void* p)
+{
+	PICA_TRACEFUNC
+	struct PICA_c2n *c2n = (struct PICA_c2n *)p;
+	char addr_str[INET6_ADDRSTRLEN];
+	uint16_t port;
+	int af;
+
+	if (c2n->udpaddr_state != PICA_UDPADDR_STATE_PROBING)
+		return 1;
+
+	/* buf[2] is the length of the address that starts with its type at buf[3] */
+	if (nb < 4)
+		return 0;
+
+	if (buf[3] == PICA_PROTO_MYUDPADDR_IPV4 && buf[2] == PICA_PROTO_MYUDPADDR_IPV4_SIZE)
+		af = AF_INET;
+	else if (buf[3] == PICA_PROTO_MYUDPADDR_IPV6 && buf[2] == PICA_PROTO_MYUDPADDR_IPV6_SIZE)
+		af = AF_INET6;
+	else
+		return 0;
+
+	if (!myaddr_parse(af, buf + 4, addr_str, &port))
+		return 0;
+
+	/* before the callback, which is free to make another request */
+	c2n->udpaddr_state = PICA_UDPADDR_STATE_IDLE;
+
+	if (callbacks.udp_address_cb)
+		callbacks.udp_address_cb(c2n, PICA_OK, buf[3], buf + 4, addr_str, port);
+
+	return 1;
+}
+
+/* resends the datagram of a request in progress, and gives up on one that
+ * was not answered in time
+ */
+static void process_udpaddr(struct PICA_c2n *c2n)
+{
+	time_t now;
+
+	if (c2n->udpaddr_state == PICA_UDPADDR_STATE_IDLE)
+		return;
+
+	now = time(0);
+
+	if (now - c2n->udpaddr_started > PICA_UDPADDR_TIMEOUT || now < c2n->udpaddr_started)
+	{
+		c2n->udpaddr_state = PICA_UDPADDR_STATE_IDLE;
+
+		if (callbacks.udp_address_cb)
+			callbacks.udp_address_cb(c2n, PICA_ERRTIMEDOUT, 0, NULL, NULL, 0);
+
+		return;
+	}
+
+	if (c2n->udpaddr_state == PICA_UDPADDR_STATE_PROBING
+	        && c2n->udpaddr_probes_sent < PICA_UDPADDR_PROBES
+	        && now != c2n->udpaddr_last_probe)
+		udpaddr_send_probe(c2n);
+}
+
+int PICA_request_tcp_address(struct PICA_c2n *c2n)
+{
+	struct PICA_proto_msg *mp;
+
+	if (!c2n || c2n->state != PICA_C2N_STATE_CONNECTED)
+		return PICA_ERRINVARG;
+
+	mp = c2n_writebuf_push(c2n, PICA_PROTO_MYTCPADDRREQ, PICA_PROTO_MYTCPADDRREQ_SIZE);
+
+	if (!mp)
+		return PICA_ERRNOMEM;
+
+	RAND_pseudo_bytes(mp->tail, 2);
+
+	c2n->tcpaddr_requested = 1;
+
+	return PICA_OK;
+}
+
+int PICA_request_udp_address(struct PICA_c2n *c2n, SOCKET udp_sck)
+{
+	struct PICA_proto_msg *mp;
+
+	if (!c2n || c2n->state != PICA_C2N_STATE_CONNECTED || udp_sck == (SOCKET)-1)
+		return PICA_ERRINVARG;
+
+	mp = c2n_writebuf_push(c2n, PICA_PROTO_MYUDPADDRREQ, PICA_PROTO_MYUDPADDRREQ_SIZE);
+
+	if (!mp)
+		return PICA_ERRNOMEM;
+
+	RAND_pseudo_bytes(mp->tail, 2);
+
+	c2n->udpaddr_sck = udp_sck;
+	c2n->udpaddr_started = time(0);
+	c2n->udpaddr_probes_sent = 0;
+	c2n->udpaddr_state = PICA_UDPADDR_STATE_WAITINGTOKEN;
+
+	return PICA_OK;
 }
 
 int PICA_deny_file(struct PICA_c2c *chan)
@@ -3391,6 +3578,8 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 
 			//processing media connections of calls in progress
 			PICA_media_process(*ic2n, &rfds);
+
+			process_udpaddr(*ic2n);
 		}
 		ic2n++;
 	}
