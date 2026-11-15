@@ -33,6 +33,7 @@
 
 #define PREFIX4   htonl(0xf0000000U)
 #define PREFIX8   htonl(0xff000000U)
+#define PREFIX10 htonl(0xffc00000U)
 #define PREFIX12 htonl(0xfff00000U)
 #define PREFIX16 htonl(0xffff0000U)
 #define PREFIX24 htonl(0xffffff00U)
@@ -44,6 +45,7 @@ int PICA_is_reserved_addr_ipv4(in_addr_t addr)
 {
 	if ((addr & PREFIX8)  == 0 //0.0.0.0/8
 	        ||  (addr & PREFIX8)  == MAKEIP(10, 0, 0, 0) //10.0.0.0/8
+	        ||  (addr & PREFIX10) == MAKEIP(100, 64, 0, 0) //100.64.0.0/10
 	        ||  (addr & PREFIX8)  == MAKEIP(127, 0, 0, 0)//127.0.0.0/8
 	        ||  (addr & PREFIX16) == MAKEIP(169, 254, 0, 0) //169.254.0.0/16
 	        ||  (addr & PREFIX12) == MAKEIP(172, 16, 0, 0) //172.16.0.0/12
