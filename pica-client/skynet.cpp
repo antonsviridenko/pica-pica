@@ -289,7 +289,7 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 				emit StatusMsg(QString("Node %1:%2 has older protocol. Disconnected.")
 				               .arg(connecting_nodes[i].second.address)
 				               .arg(connecting_nodes[i].second.port),
-				               false);
+				               true);
 				break;
 			}
 
