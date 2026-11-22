@@ -3998,6 +3998,88 @@ void ReportSvcStatus( DWORD dwCurrentState,
 }
 #endif
 
+#ifdef HAVE_LIBMINIUPNPC
+/* The port mapping made for the node's listening port, kept for as long as
+ * the node runs so that its lease can be renewed.
+ */
+static struct PICA_upnp_ctx *upnp_ctx;
+static struct event *upnp_refresh_event;
+
+static void upnp_schedule_refresh(void);
+
+static void upnp_refresh_cb(evutil_socket_t fd, short event, void *arg)
+{
+	int ret;
+
+	/* Blocks the event loop for as long as the IGD takes to answer, normally
+	 * a few milliseconds, once in half a lease.
+	 */
+	ret = PICA_upnp_refresh(upnp_ctx);
+
+	if (ret != PICA_UPNP_OK)
+	{
+		PICA_error("UPnP: failed to renew the port mapping, the node may become unreachable from the Internet - %s",
+		           PICA_upnp_strerror(ret));
+		return;
+	}
+
+	upnp_schedule_refresh();
+}
+
+static void upnp_schedule_refresh(void)
+{
+	struct timeval tv;
+	unsigned int lease = PICA_upnp_lease(upnp_ctx);
+
+	/* a permanent mapping still disappears when the IGD reboots */
+	if (lease == 0)
+		lease = PICA_UPNP_LEASE_DEFAULT;
+
+	tv.tv_sec = lease / 2;
+	tv.tv_usec = 0;
+
+	if (!upnp_refresh_event)
+		upnp_refresh_event = evtimer_new(pica_event_base, upnp_refresh_cb, NULL);
+
+	if (upnp_refresh_event)
+		evtimer_add(upnp_refresh_event, &tv);
+}
+
+/* Forwards the listening port, TCP and UDP - the latter carries the "get my
+ * UDP address" datagrams - and reports the IGD's external address.
+ * \return 1 on success
+ */
+static int upnp_forward_listen_port(int port, char *public_ip, size_t public_ip_size)
+{
+	int ret;
+
+	ret = PICA_upnp_discover(PICA_UPNP_DISCOVER_TIMEOUT, &upnp_ctx);
+
+	if (ret != PICA_UPNP_OK)
+	{
+		PICA_info("UPnP: %s", PICA_upnp_strerror(ret));
+		return 0;
+	}
+
+	ret = PICA_upnp_external_addr(upnp_ctx, public_ip, public_ip_size);
+
+	if (ret == PICA_UPNP_OK)
+		ret = PICA_upnp_map(upnp_ctx, port, PICA_UPNP_LEASE_DEFAULT, "Pica Pica node");
+
+	if (ret != PICA_UPNP_OK)
+	{
+		PICA_info("UPnP: failed to forward port %i - %s", port, PICA_upnp_strerror(ret));
+		PICA_upnp_free(upnp_ctx);
+		upnp_ctx = NULL;
+		return 0;
+	}
+
+	upnp_schedule_refresh();
+
+	return 1;
+}
+#endif
+
 int pica_node_main(int argc, char** argv)
 {
 	uint32_t pid;
@@ -4057,12 +4139,10 @@ int pica_node_main(int argc, char** argv)
 		if (PICA_is_reserved_addr_ipv4(guess) && nodecfg.disable_reserved_addrs)
 		{
 			char public_ip[64];
-			int ret;
 
 			PICA_info("trying to get global IP with UPnP...");
 
-			ret = PICA_upnp_autoconfigure_ipv4(atoi(nodecfg.listen_port), atoi(nodecfg.listen_port), public_ip);
-			if (ret)
+			if (upnp_forward_listen_port(atoi(nodecfg.listen_port), public_ip, sizeof(public_ip)))
 			{
 				free(nodecfg.announced_addr);
 				nodecfg.announced_addr = strdup(public_ip);

@@ -112,6 +112,9 @@
 #define PICA_PROTO_CALL_VIDEOPARAM 0x75
 #define PICA_PROTO_CALL_AUDIO_PACKET 0x76
 #define PICA_PROTO_CALL_VIDEO_PACKET 0x77
+// The only datagram of a call sent outside of DTLS, see "Establishing the
+// media connection" in doc/proto-doc-latest.txt.
+#define PICA_PROTO_MEDIAPROBE 0x78
 
 //size
 #define PICA_PROTO_INITREQ_SIZE 4
@@ -171,8 +174,11 @@
 #define PICA_PROTO_N2NALLOW_SIZE 58
 #define PICA_PROTO_N2NNOTFOUND_SIZE 58
 
-#define PICA_PROTO_CALLREQ_SIZE 4
-#define PICA_PROTO_CALLANS_SIZE 4
+// 0x70 and 0x71: probe token, then a list of up to this many addresses in the
+// 0xA4 format that the receiver uses
+#define PICA_PROTO_CALL_TOKENSIZE 8
+#define PICA_PROTO_CALL_MAXADDRS 8
+#define PICA_PROTO_MEDIAPROBE_SIZE (2 + PICA_PROTO_CALL_TOKENSIZE)
 #define PICA_PROTO_CALLREJ_SIZE 4
 #define PICA_PROTO_CALLFIN_SIZE 4
 #define PICA_PROTO_CALL_AUDIOPARAM_SIZE 24

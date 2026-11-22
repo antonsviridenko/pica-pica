@@ -22,7 +22,9 @@
 #include "../PICA_media.h"
 #include "../PICA_proto.h"
 #include "accounts.h"
+#include "directlistener.h"
 #include <QObject>
+#include <QThread>
 #include <QMap>
 #include <QVector>
 #include <QPair>
@@ -117,6 +119,17 @@ private:
 	struct PICA_c2n *active_nodelink;
 	struct PICA_acc *acc;
 	struct PICA_listener *listener;
+	// Opens the listener and looks after its UPnP mapping on a thread of its
+	// own, see directlistener.h. The listener is waited for before the nodes
+	// are connected to, so that the first 0x0B messages already carry the
+	// external address.
+	DirectListener *direct_listener;
+	QThread direct_listener_thread;
+	bool listener_setup_pending;
+	bool listener_failed;
+	// Join() was called and Exit() has not been since, so that a listener
+	// arriving late does not bring the client back online.
+	bool join_wanted;
 	Accounts::AccountRecord skynet_account;
 
 	QMap<QByteArray, QList<QString> > msgqueues;
@@ -266,6 +279,10 @@ private slots:
 	void multilogin_event(quint64 timestamp, QString node_addr, quint16 node_port);
 
 	void node_status_changed(Nodes::NodeRecord nr, bool alive);
+
+	void listener_ready(quintptr l, QString upnp_addr, int upnp_port);
+	void listener_upnp_changed(QString upnp_addr, int upnp_port);
+	void listener_status_msg(QString msg, bool is_critical);
 	void verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified);
 
 	// Connected to the network thread's QThread::started() signal. Runs

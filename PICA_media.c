@@ -19,6 +19,8 @@
 #include "PICA_media.h"
 #include "PICA_proto.h"
 #include "PICA_common.h"
+#include "PICA_netconf.h"
+#include <openssl/rand.h>
 #include <string.h>
 #include <time.h>
 
@@ -32,10 +34,37 @@
 
 static void media_fail(struct PICA_media_channel *m);
 static void media_handshake(struct PICA_media_channel *m);
+static int media_punch_start(struct PICA_c2c *c2c);
+
+#ifdef WIN32
+uint64_t PICA_media_now(void)
+{
+	/* GetTickCount64() would be simpler, but needs Vista as the minimum
+	 * target and the headers are set up for XP
+	 */
+	static LARGE_INTEGER freq;
+	LARGE_INTEGER count;
+
+	if (freq.QuadPart == 0)
+		QueryPerformanceFrequency(&freq);
+
+	QueryPerformanceCounter(&count);
+
+	return (uint64_t)(count.QuadPart / (freq.QuadPart / 1000));
+}
+#else
+uint64_t PICA_media_now(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+
+	return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+#endif
 
 static int media_socket_open(SOCKET *s, int local_port)
 {
-	int flag = 1;
 	struct sockaddr_in a;
 
 	*s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -43,8 +72,11 @@ static int media_socket_open(SOCKET *s, int local_port)
 	if (*s == SOCKET_ERROR)
 		return PICA_ERRSOCK;
 
-	setsockopt(*s, SOL_SOCKET, SO_REUSEADDR, (const char*)&flag, sizeof(flag));
-
+	/* No SO_REUSEADDR: UDP has no TIME_WAIT for it to get around, while for
+	 * UDP it lets a second socket bind to a port another one already uses -
+	 * and the listener has to find out when its port is taken, so that it
+	 * can try the next one instead of sharing it.
+	 */
 	memset(&a, 0, sizeof(a));
 	a.sin_family = AF_INET;
 	a.sin_addr.s_addr = INADDR_ANY;
@@ -204,30 +236,309 @@ static struct PICA_media_channel *media_channel_new(struct PICA_c2c *c2c)
 	return m;
 }
 
-void PICA_media_start(struct PICA_c2c *c2c)
+/* Whether an address from the peer's 0x70/0x71 is one worth sending probes
+ * to: a unicast address of a host, not of this one, and a port.
+ */
+static int is_probe_target(const struct sockaddr_in *a)
+{
+	in_addr_t addr = a->sin_addr.s_addr;
+
+	if (a->sin_port == 0)
+		return 0;
+
+	return PICA_is_private_addr_ipv4(addr) || !PICA_is_reserved_addr_ipv4(addr);
+}
+
+/* Stops a request for the call socket's address still waiting for the node,
+ * so that a late answer is not delivered to a call that no longer wants it.
+ */
+static void media_call_stop_learning(struct PICA_c2c *c2c)
+{
+	struct PICA_media_call *mc = c2c->media_call;
+
+	if (!mc->learning)
+		return;
+
+	mc->learning = 0;
+
+	if (c2c->conn->udpaddr_c2c == c2c)
+	{
+		c2c->conn->udpaddr_c2c = NULL;
+		c2c->conn->udpaddr_state = PICA_UDPADDR_STATE_IDLE;
+	}
+}
+
+int PICA_media_call_prepare(struct PICA_c2c *c2c, int is_caller,
+                            const unsigned char *peer_info, unsigned int peer_info_len)
+{
+	struct PICA_media_call *mc;
+	struct sockaddr_in a;
+#ifdef WIN32
+	int alen = sizeof(a);
+#else
+	socklen_t alen = sizeof(a);
+#endif
+
+	PICA_TRACEFUNC
+
+	PICA_media_call_free(c2c);
+
+	mc = (struct PICA_media_call*)calloc(sizeof(struct PICA_media_call), 1);
+
+	if (!mc)
+		return PICA_ERRNOMEM;
+
+	mc->sck = -1;
+	mc->is_caller = is_caller;
+
+	if (RAND_bytes(mc->token, sizeof(mc->token)) != 1)
+	{
+		free(mc);
+		return PICA_ERRSSL;
+	}
+
+	c2c->media_call = mc;
+
+	if (peer_info)
+		PICA_media_call_read_info(c2c, peer_info, peer_info_len);
+
+	/* Hole punching reveals this client's addresses to the peer, which the
+	 * user has not agreed to with direct connections disabled. A callee
+	 * whose caller sent no addresses could not punch anywhere either.
+	 */
+	if (c2c->conn->directc2c_config == PICA_DIRECTC2C_CFG_DISABLED || !c2c->acc->dtls_ctx)
+		return PICA_OK;
+
+	if (!is_caller && mc->peer_addrs_count == 0)
+		return PICA_OK;
+
+	if (media_socket_open(&mc->sck, 0) != PICA_OK)
+		return PICA_OK;
+
+	if (getsockname(mc->sck, (struct sockaddr*)&a, &alen) == SOCKET_ERROR)
+	{
+		CLOSE(mc->sck);
+		mc->sck = -1;
+		return PICA_OK;
+	}
+
+	mc->local_port = ntohs(a.sin_port);
+
+	/* What the node sees is what the NAT in front of us maps this socket to
+	 * - the one address a peer outside the local network can punch through
+	 * to. Without it, only the interface addresses are announced.
+	 */
+	if (PICA_request_udp_address(c2c->conn, mc->sck) == PICA_OK)
+	{
+		c2c->conn->udpaddr_c2c = c2c;
+		mc->learning = 1;
+		mc->learn_started = PICA_media_now();
+	}
+
+	return PICA_OK;
+}
+
+void PICA_media_call_learned(struct PICA_c2c *c2c, int status, const unsigned char *addr_bin, int type, uint16_t port)
+{
+	struct PICA_media_call *mc = c2c->media_call;
+
+	PICA_TRACEFUNC
+
+	if (!mc || !mc->learning)
+		return;
+
+	mc->learning = 0;
+
+	if (status != PICA_OK || type != PICA_PROTO_MYUDPADDR_IPV4)
+		return;
+
+	memset(&mc->learned_addr, 0, sizeof(mc->learned_addr));
+	mc->learned_addr.sin_family = AF_INET;
+	memcpy(&mc->learned_addr.sin_addr.s_addr, addr_bin, 4);
+	mc->learned_addr.sin_port = htons(port);
+	mc->learned = 1;
+}
+
+int PICA_media_call_ready(struct PICA_c2c *c2c)
+{
+	struct PICA_media_call *mc = c2c->media_call;
+
+	if (!mc || !mc->learning)
+		return 1;
+
+	return PICA_media_now() >= mc->pending_deadline;
+}
+
+static unsigned char *write_addr_ipv4(unsigned char *p, in_addr_t addr, uint16_t port_netorder)
+{
+	*p++ = PICA_PROTO_DIRECTC2C_IPV4;
+	memcpy(p, &addr, 4);
+	p += 4;
+	memcpy(p, &port_netorder, 2);
+
+	return p + 2;
+}
+
+unsigned int PICA_media_call_write_info(struct PICA_c2c *c2c, unsigned char *buf)
+{
+	struct PICA_media_call *mc = c2c->media_call;
+	unsigned char *p = buf;
+	in_addr_t ifaddrs[PICA_IFADDRS_MAX];
+	int n, i, count = 0;
+	int learned_is_ifaddr = 0;
+
+	PICA_TRACEFUNC
+
+	if (!mc)
+		return 0;
+
+	/* whatever the node did not answer in time stays unknown */
+	media_call_stop_learning(c2c);
+
+	memcpy(p, mc->token, PICA_PROTO_CALL_TOKENSIZE);
+	p += PICA_PROTO_CALL_TOKENSIZE;
+
+	if (mc->sck < 0)
+		return (unsigned int)(p - buf);
+
+	/* The interface addresses first, so that two clients on the same local
+	 * network reach each other inside it, which works whether or not their
+	 * router can loop traffic for its own external address back in. One
+	 * place is kept for the address the node reported.
+	 */
+	n = PICA_get_ifaddrs_ipv4(ifaddrs, PICA_IFADDRS_MAX);
+
+	for (i = 0; i < n && count < PICA_PROTO_CALL_MAXADDRS - 1; i++)
+	{
+		if (mc->learned && ifaddrs[i] == mc->learned_addr.sin_addr.s_addr
+		        && ntohs(mc->learned_addr.sin_port) == mc->local_port)
+			learned_is_ifaddr = 1;
+
+		p = write_addr_ipv4(p, ifaddrs[i], htons((uint16_t)mc->local_port));
+		count++;
+	}
+
+	/* the same as an interface address when there is no NAT on the way */
+	if (mc->learned && !learned_is_ifaddr)
+		p = write_addr_ipv4(p, mc->learned_addr.sin_addr.s_addr, mc->learned_addr.sin_port);
+
+	return (unsigned int)(p - buf);
+}
+
+int PICA_media_call_read_info(struct PICA_c2c *c2c, const unsigned char *buf, unsigned int len)
+{
+	struct PICA_media_call *mc = c2c->media_call;
+	unsigned int pos;
+	int addresses = 0;
+
+	if (!mc)
+		return 0;
+
+	mc->peer_info_received = 1;
+	mc->peer_addrs_count = 0;
+
+	if (len < PICA_PROTO_CALL_TOKENSIZE)
+		return 0;
+
+	memcpy(mc->peer_token, buf, PICA_PROTO_CALL_TOKENSIZE);
+	pos = PICA_PROTO_CALL_TOKENSIZE;
+
+	while (pos < len && addresses < PICA_PROTO_CALL_MAXADDRS)
+	{
+		struct sockaddr_in *a;
+
+		switch (buf[pos])
+		{
+		case PICA_PROTO_DIRECTC2C_IPV4:
+			if (pos + PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE > len)
+				goto malformed;
+
+			addresses++;
+			a = &mc->peer_addrs[mc->peer_addrs_count];
+			memset(a, 0, sizeof(*a));
+			a->sin_family = AF_INET;
+			memcpy(&a->sin_addr.s_addr, buf + pos + 1, 4);
+			memcpy(&a->sin_port, buf + pos + 5, 2);
+
+			if (is_probe_target(a))
+				mc->peer_addrs_count++;
+
+			pos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
+			break;
+
+		case PICA_PROTO_DIRECTC2C_IPV6:
+			/* counts as an address, but the media sockets are IPv4 ones */
+			if (pos + PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV6_SIZE > len)
+				goto malformed;
+
+			addresses++;
+			pos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV6_SIZE;
+			break;
+
+		case PICA_PROTO_DIRECTC2C_DNS:
+			if (pos + 1 >= len || pos + 2 + buf[pos + 1] + 2 > len)
+				goto malformed;
+
+			pos += 2 + buf[pos + 1] + 2;
+			break;
+
+		default:
+			/* no way of knowing where an element of an unknown type ends */
+			goto malformed;
+		}
+	}
+
+	return 1;
+
+malformed:
+	/* An address list that does not parse cannot be relied on in any of its
+	 * parts. The call goes ahead, only without hole punching.
+	 */
+	mc->peer_addrs_count = 0;
+	return 0;
+}
+
+void PICA_media_call_free(struct PICA_c2c *c2c)
+{
+	struct PICA_media_call *mc = c2c->media_call;
+
+	if (!mc)
+		return;
+
+	/* the media connection of attempt 2 uses the call socket */
+	if (c2c->media && c2c->media->attempt == 2)
+		PICA_media_close(c2c);
+
+	media_call_stop_learning(c2c);
+
+	if (mc->sck >= 0)
+		CLOSE(mc->sck);
+
+	c2c->media_call = NULL;
+	free(mc);
+}
+
+/* Attempt 1, over the address of the directc2c connection. It goes first
+ * because that address is known to work already - the port behind it is
+ * public or forwarded, whatever the NATs on the way do with UDP.
+ */
+static int media_direct_start(struct PICA_c2c *c2c)
 {
 	struct PICA_media_channel *m;
 	int ret;
 
 	PICA_TRACEFUNC
 
-	if (c2c->media)
-		return;
-
-	/* Media over UDP is only attempted between clients that already reached
-	 * each other directly over TCP: that address is known to work and the
-	 * user has already agreed to reveal it by enabling direct connections.
-	 */
 	if (c2c->directc2c_state != PICA_DIRECTC2C_STATE_ACTIVE || !c2c->direct)
-		return;
-
-	if (!c2c->acc->dtls_ctx)
-		return;
+		return PICA_ERRNOTFOUND;
 
 	m = media_channel_new(c2c);
 
 	if (!m)
-		return;
+		return PICA_ERRNOMEM;
+
+	m->attempt = 1;
+	m->deadline = PICA_media_now() + PICA_MEDIA_DIRECT_TIMEOUT;
 
 	if (c2c->direct->is_outgoing == PICA_DIRECTC2C_OUTGOING)
 	{
@@ -243,7 +554,7 @@ void PICA_media_start(struct PICA_c2c *c2c)
 		if (ret != PICA_OK)
 		{
 			free(m);
-			return;
+			return ret;
 		}
 
 		m->owns_sck = 1;
@@ -252,14 +563,14 @@ void PICA_media_start(struct PICA_c2c *c2c)
 		{
 			CLOSE(m->sck);
 			free(m);
-			return;
+			return PICA_ERRSOCK;
 		}
 
 		if (media_ssl_new(m) != PICA_OK)
 		{
 			CLOSE(m->sck);
 			free(m);
-			return;
+			return PICA_ERRSSL;
 		}
 
 		SSL_set_connect_state(m->ssl);
@@ -267,6 +578,7 @@ void PICA_media_start(struct PICA_c2c *c2c)
 		m->state = PICA_MEDIA_STATE_HANDSHAKE;
 		c2c->media = m;
 
+		/* can fail, and start attempt 2 from there */
 		media_handshake(m);
 	}
 	else
@@ -276,7 +588,7 @@ void PICA_media_start(struct PICA_c2c *c2c)
 		if (!c2c->conn->directc2c_listener || !c2c->conn->directc2c_listener->media)
 		{
 			free(m);
-			return;
+			return PICA_ERRNOTFOUND;
 		}
 
 		ml = c2c->conn->directc2c_listener->media;
@@ -284,7 +596,7 @@ void PICA_media_start(struct PICA_c2c *c2c)
 		if (ml->sck < 0 || ml->channel)
 		{
 			free(m);
-			return;
+			return PICA_ERRSOCK;
 		}
 
 		/* Nothing to do until the peer sends its first datagram: the source
@@ -299,6 +611,91 @@ void PICA_media_start(struct PICA_c2c *c2c)
 		ml->channel = m;
 		c2c->media = m;
 	}
+
+	return PICA_OK;
+}
+
+static void media_send_probe_to(struct PICA_media_channel *m, const struct sockaddr_in *to)
+{
+	unsigned char probe[PICA_PROTO_MEDIAPROBE_SIZE];
+
+	probe[0] = probe[1] = PICA_PROTO_MEDIAPROBE;
+	memcpy(probe + 2, m->c2c->media_call->peer_token, PICA_PROTO_CALL_TOKENSIZE);
+
+	/* A failed send is the same as a datagram lost on the way. Once an
+	 * address is selected the socket is connected to it, and sendto() with
+	 * an address is not allowed on a connected socket everywhere.
+	 */
+	if (to)
+		sendto(m->sck, (const char*)probe, sizeof(probe), 0, (const struct sockaddr*)to, sizeof(*to));
+	else
+		send(m->sck, (const char*)probe, sizeof(probe), 0);
+}
+
+/* Sends the probes that are due: to every address of the peer until one is
+ * selected, to the selected one afterwards until the peer's first DTLS
+ * datagram shows that it has selected us too.
+ */
+static void media_send_probes(struct PICA_media_channel *m, uint64_t now)
+{
+	struct PICA_media_call *mc = m->c2c->media_call;
+	int i;
+
+	if (m->dtls_seen || now - m->last_probe < PICA_MEDIA_PROBE_INTERVAL)
+		return;
+
+	m->last_probe = now;
+
+	if (m->state == PICA_MEDIA_STATE_PUNCHING)
+	{
+		for (i = 0; i < mc->peer_addrs_count; i++)
+			media_send_probe_to(m, &mc->peer_addrs[i]);
+	}
+	else
+		media_send_probe_to(m, NULL);
+}
+
+/* Attempt 2, by hole punching between the call sockets. */
+static int media_punch_start(struct PICA_c2c *c2c)
+{
+	struct PICA_media_call *mc = c2c->media_call;
+	struct PICA_media_channel *m;
+
+	PICA_TRACEFUNC
+
+	if (c2c->media || !mc || mc->sck < 0 || mc->peer_addrs_count == 0)
+		return PICA_ERRNOTFOUND;
+
+	m = media_channel_new(c2c);
+
+	if (!m)
+		return PICA_ERRNOMEM;
+
+	m->attempt = 2;
+	m->sck = mc->sck;
+	m->owns_sck = 0;
+	m->is_dtls_client = mc->is_caller;
+	m->state = PICA_MEDIA_STATE_PUNCHING;
+	m->deadline = PICA_media_now() + PICA_MEDIA_PUNCH_TIMEOUT;
+
+	c2c->media = m;
+
+	media_send_probes(m, PICA_media_now());
+
+	return PICA_OK;
+}
+
+void PICA_media_start(struct PICA_c2c *c2c)
+{
+	PICA_TRACEFUNC
+
+	if (c2c->media || !c2c->acc->dtls_ctx)
+		return;
+
+	if (media_direct_start(c2c) == PICA_OK)
+		return;
+
+	media_punch_start(c2c);
 }
 
 void PICA_media_close(struct PICA_c2c *c2c)
@@ -336,10 +733,15 @@ void PICA_media_close(struct PICA_c2c *c2c)
 static void media_fail(struct PICA_media_channel *m)
 {
 	struct PICA_c2c *c2c = m->c2c;
+	/* attempt 2 follows attempt 1 that did not succeed, see PICA_media.h */
+	int try_punching = m->attempt == 1 && m->state != PICA_MEDIA_STATE_ACTIVE;
 
 	PICA_TRACEFUNC
 
 	PICA_media_close(c2c);
+
+	if (try_punching && media_punch_start(c2c) == PICA_OK)
+		return;
 
 	/* the call carries on, its media goes back to the c2c connection */
 	PICA_media_transport_changed(c2c, PICA_CALL_TRANSPORT_C2C, NULL);
@@ -513,6 +915,151 @@ static void media_accept(struct PICA_media_channel *m)
 	media_handshake(m);
 }
 
+/* Whether a datagram is a probe carrying our own token, i.e. one that comes
+ * from the peer of this call.
+ */
+static int is_our_probe(struct PICA_media_channel *m, const unsigned char *buf, int len)
+{
+	return len == PICA_PROTO_MEDIAPROBE_SIZE
+	       && buf[0] == PICA_PROTO_MEDIAPROBE && buf[1] == PICA_PROTO_MEDIAPROBE
+	       && memcmp(buf + 2, m->c2c->media_call->token, PICA_PROTO_CALL_TOKENSIZE) == 0;
+}
+
+/* The peer's probe came from this address, so this is where its NAT lets
+ * our datagrams through to it. From now on the socket only talks to it.
+ */
+static void media_punch_select(struct PICA_media_channel *m, const struct sockaddr_in *from)
+{
+	PICA_TRACEFUNC
+
+	m->peer_addr = *from;
+
+	if (connect(m->sck, (const struct sockaddr*)&m->peer_addr, sizeof(m->peer_addr)) == SOCKET_ERROR)
+	{
+		media_fail(m);
+		return;
+	}
+
+	m->deadline = PICA_media_now() + PICA_MEDIA_PUNCH_HANDSHAKE_TIMEOUT;
+
+	if (!m->is_dtls_client)
+	{
+		/* the caller learns that it can reach us from our probes */
+		m->state = PICA_MEDIA_STATE_SELECTED;
+		m->last_probe = 0;
+		media_send_probes(m, PICA_media_now());
+		return;
+	}
+
+	if (media_ssl_new(m) != PICA_OK)
+	{
+		media_fail(m);
+		return;
+	}
+
+	SSL_set_connect_state(m->ssl);
+
+	m->state = PICA_MEDIA_STATE_HANDSHAKE;
+	m->last_probe = 0;
+	media_send_probes(m, PICA_media_now());
+
+	media_handshake(m);
+}
+
+/* Reads what has arrived while no address is selected yet. Only a probe
+ * with our token counts; a DTLS datagram arriving this early is dropped and
+ * retransmitted by the peer later on, anything else is not from the peer.
+ */
+static void media_punch_read(struct PICA_media_channel *m)
+{
+	unsigned char buf[PICA_MEDIA_READBUFSIZE];
+	struct sockaddr_in from;
+#ifdef WIN32
+	int fromlen;
+#else
+	socklen_t fromlen;
+#endif
+	int ret;
+
+	while (1)
+	{
+		fromlen = sizeof(from);
+
+		ret = recvfrom(m->sck, (char*)buf, sizeof(buf), 0, (struct sockaddr*)&from, &fromlen);
+
+		if (ret < 0)
+		{
+#ifdef WIN32
+			/* Windows reports an ICMP port unreachable, caused by a probe
+			 * sent to an address where nothing listens, on the next
+			 * recvfrom() of the socket - which says nothing about the
+			 * datagrams queued behind it.
+			 */
+			if (WSAGetLastError() == WSAECONNRESET)
+				continue;
+#endif
+			return;
+		}
+
+		if (from.sin_family == AF_INET && is_our_probe(m, buf, ret))
+		{
+			/* can free m */
+			media_punch_select(m, &from);
+			return;
+		}
+	}
+}
+
+/* Takes the probes that are still arriving after an address was selected
+ * off the socket, before DTLS gets to read it - a DTLS record never starts
+ * with the octet of a probe.
+ * \return 1 if a datagram other than a probe is waiting
+ */
+static int media_skip_probes(struct PICA_media_channel *m)
+{
+	unsigned char buf[PICA_MEDIA_READBUFSIZE];
+	int ret;
+
+	while (1)
+	{
+		/* Large enough for any datagram, so that the peek never truncates:
+		 * a truncated peek is reported as an error on Windows.
+		 */
+		ret = recv(m->sck, (char*)buf, sizeof(buf), MSG_PEEK);
+
+		if (ret < 0)
+			return 0;
+
+		if (ret == 0 || buf[0] == PICA_PROTO_MEDIAPROBE)
+		{
+			recv(m->sck, (char*)buf, sizeof(buf), 0);
+			continue;
+		}
+
+		m->dtls_seen = 1;
+
+		return 1;
+	}
+}
+
+/* Attempt 2, the callee: the caller's handshake has started arriving. */
+static void media_punch_accept(struct PICA_media_channel *m)
+{
+	PICA_TRACEFUNC
+
+	if (media_ssl_new(m) != PICA_OK)
+	{
+		media_fail(m);
+		return;
+	}
+
+	SSL_set_accept_state(m->ssl);
+
+	m->state = PICA_MEDIA_STATE_HANDSHAKE;
+
+	media_handshake(m);
+}
+
 static void media_read(struct PICA_media_channel *m)
 {
 	struct PICA_c2c *c2c = m->c2c;
@@ -523,6 +1070,10 @@ static void media_read(struct PICA_media_channel *m)
 	 */
 	while (1)
 	{
+		/* a late probe of a hole punched connection */
+		if (m->attempt == 2 && SSL_pending(m->ssl) == 0 && !media_skip_probes(m))
+			return;
+
 		ret = SSL_read(m->ssl, m->read_buf, PICA_MEDIA_READBUFSIZE);
 
 		if (ret <= 0)
@@ -584,47 +1135,69 @@ void PICA_media_process(struct PICA_c2n *c2n, fd_set *rfds)
 {
 	struct PICA_c2c *chan = c2n->chan_list_head;
 	time_t now = time(0);
+	uint64_t now_ms = PICA_media_now();
 
 	while (chan)
 	{
 		struct PICA_c2c *c2c = chan;
 		struct PICA_media_channel *m = c2c->media;
+		int readable;
 
 		chan = chan->next;
 
 		if (!m)
 			continue;
 
-		if (m->state != PICA_MEDIA_STATE_ACTIVE
-		        && (now - m->started) > PICA_MEDIA_HANDSHAKE_TIMEOUT)
+		if (m->state != PICA_MEDIA_STATE_ACTIVE && now_ms >= m->deadline)
 		{
-			fprintf(stderr, "media connection was not established in time\n");
+			fprintf(stderr, "media connection attempt %i was not completed in time\n", m->attempt);
 			media_fail(m);
 			continue;
 		}
 
-		/* Anything below can close the media connection, which frees m -
-		 * hence the checks through c2c, which stays valid.
+		readable = m->sck >= 0 && FD_ISSET(m->sck, rfds);
+
+		/* Anything below that can close the media connection - which frees m,
+		 * and can start another attempt in its place - is the last thing
+		 * done with m in this pass, or is followed by a check through c2c,
+		 * which stays valid.
 		 */
 		switch (m->state)
 		{
 		case PICA_MEDIA_STATE_LISTENING:
-			if (m->sck >= 0 && FD_ISSET(m->sck, rfds))
+			if (readable)
 				media_accept(m);
 			break;
 
+		case PICA_MEDIA_STATE_PUNCHING:
+			media_send_probes(m, now_ms);
+
+			if (readable)
+				media_punch_read(m);
+			break;
+
+		case PICA_MEDIA_STATE_SELECTED:
+			media_send_probes(m, now_ms);
+
+			if (readable && media_skip_probes(m))
+				media_punch_accept(m);
+			break;
+
 		case PICA_MEDIA_STATE_HANDSHAKE:
+			if (m->attempt == 2)
+				media_send_probes(m, now_ms);
+
 			/* Lost handshake messages are retransmitted by OpenSSL, but
 			 * only when it is told that its timer has expired.
 			 */
 			DTLSv1_handle_timeout(m->ssl);
 
-			if (m->sck >= 0 && FD_ISSET(m->sck, rfds))
+			if (readable && (m->attempt != 2 || media_skip_probes(m)))
 				media_handshake(m);
 			break;
 
 		case PICA_MEDIA_STATE_ACTIVE:
-			if (m->sck >= 0 && FD_ISSET(m->sck, rfds))
+			if (readable)
 				media_read(m);
 
 			if (!PICA_media_is_active(c2c))

@@ -239,6 +239,11 @@ void udp_address_cb(struct PICA_c2n *c2n, int status, int type, void *addr_bin, 
 		printf("udp_address_cb: failed, status %i\n", status);
 }
 
+void direct_c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
+{
+	printf("direct c2c connection established, %s\n", ciphersuitename);
+}
+
 struct PICA_client_callbacks cbs =
 {
 	newmsg_cb,
@@ -261,6 +266,7 @@ struct PICA_client_callbacks cbs =
 	c2n_closed_cb,
 	listener_error,
 	multilogin_cb,
+	.direct_c2c_established_cb = direct_c2c_established_cb,
 	.tcp_address_cb = tcp_address_cb,
 	.udp_address_cb = udp_address_cb
 };
@@ -364,7 +370,7 @@ int main(int argc, char** argv)
 	if (argc < 4 || !nodeaddr || !nodeport || !certfile)
 	{
 		puts("usage: test_client -a node address -p node port -c cert_filename  [-i peer id]\n\
-		-d local address for direct incoming c2c connections\n\
+		-d local address for direct incoming c2c connections, \"auto\" for automatic configuration\n\
 		-e external port for incoming direct connections\n\
 		-l internal port to listen for incoming direct connections\n\
 		-t enable connect-only mode for direct c2c connections\n\
@@ -405,7 +411,33 @@ cert_filename should point to file that contains client certificate, private key
 
 		printf("new listener on %s port %i external announced port %i\n", localdirectaddr, intp, extp);
 
-		ret = PICA_new_listener(acc, localdirectaddr, extp, intp, &l);
+		ret = PICA_new_listener(acc, intp, &l);
+
+		/* "auto" leaves the announced addresses to the listener */
+		if (ret == PICA_OK && strcmp(localdirectaddr, "auto") != 0)
+		{
+			/* a comma separated list, announced in its order */
+			const char *addrs[PICA_DIRECTC2C_MAX_ADDRS];
+			int ports[PICA_DIRECTC2C_MAX_ADDRS];
+			char *list = strdup(localdirectaddr), *a;
+			int n = 0;
+
+			for (a = strtok(list, ","); a && n < PICA_DIRECTC2C_MAX_ADDRS; a = strtok(NULL, ","))
+			{
+				addrs[n] = a;
+				ports[n] = extp;
+				n++;
+			}
+
+			ret = PICA_listener_set_addrlist(l, addrs, ports, n);
+			free(list);
+
+			if (ret != PICA_OK)
+			{
+				fprintf(stderr, "failed to set the listener's address, error code: %i\n", ret);
+				PICA_close_listener(l);
+			}
+		}
 
 		if (ret != PICA_OK)
 		{

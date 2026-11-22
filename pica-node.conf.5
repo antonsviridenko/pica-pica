@@ -23,7 +23,8 @@ future releases). If the computer running pica-node is behind the NAT, external
  configured. Default value is "autoconfigure" which makes pica-node try to guess
  its external IP address. If pica-node is build with miniupnpc support, it will
  try to employ UPnP protocol to get external IP from the router and enable port
- forwarding.
+ forwarding of both the TCP and the UDP port, see listen_port. The forwarding
+ is renewed for as long as pica-node runs.
 .TP
 .I listen_port
 Specifies the port number that 

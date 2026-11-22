@@ -156,6 +156,19 @@ typedef u_short in_port_t;
 #define PICA_DIRECTC2C_ACCEPT_TIMEOUT 30
 #define PICA_DIRECTC2C_MAX_ACCEPTED 32
 
+/* How long an outgoing direct connection may take to connect and finish its
+ * TLS handshake before the next announced address is tried. Without it, an
+ * address that silently drops the packets - a private address of the peer's
+ * network, seen from another one - would hold up the addresses after it for
+ * as long as the system keeps retrying the connection, minutes.
+ */
+#define PICA_DIRECTC2C_CONNECT_TIMEOUT 5
+
+/* Most addresses of a received 0x0B message that are tried, and most that
+ * a listener announces.
+ */
+#define PICA_DIRECTC2C_MAX_ADDRS 32
+
 
 #define PICA_C2C_INCOMING 0
 #define PICA_C2C_OUTGOING 1
@@ -247,6 +260,11 @@ struct PICA_c2n
 	time_t udpaddr_started;
 	time_t udpaddr_last_probe;
 	int udpaddr_probes_sent;
+	/* The call the request was made for by the library itself, or NULL when
+	 * the application made it. The answer goes to that call instead of
+	 * udp_address_cb.
+	 */
+	struct PICA_c2c *udpaddr_c2c;
 };
 
 enum PICA_c2c_state
@@ -285,6 +303,12 @@ enum PICA_call_state
 	PICA_CALL_STATE_IDLE = 0,
 	PICA_CALL_STATE_CALLING,
 	PICA_CALL_STATE_INCOMINGCALL,
+	/* Answered by the user, but 0x71 not sent yet: it waits for the node to
+	 * report the address of the media socket, see PICA_media_call. Call
+	 * parameters set meanwhile are sent right after 0x71, media packets are
+	 * dropped.
+	 */
+	PICA_CALL_STATE_ANSWERING,
 	PICA_CALL_STATE_ACTIVE
 };
 
@@ -302,6 +326,11 @@ struct PICA_directc2c
 	struct sockaddr_in addr;
 
 	enum PICA_directc2c_connection_state state;
+
+	/* when the connection to the current address was started, see
+	 * PICA_DIRECTC2C_CONNECT_TIMEOUT
+	 */
+	time_t attempt_started;
 
 	/* When this incoming connection was accepted, used to reap it if its TLS
 	 * handshake never completes. Only meaningful for accepted (incoming)
@@ -362,6 +391,20 @@ struct PICA_c2c
 	int call_video_params_are_set;
 	/** media connection of the call in progress, see PICA_media.h */
 	struct PICA_media_channel *media;
+	/** what the call in progress needs for UDP hole punching, see PICA_media.h */
+	struct PICA_media_call *media_call;
+};
+
+/* One entry of a manually configured address list, see
+ * PICA_listener_set_addrlist()
+ */
+struct PICA_listener_addr
+{
+	in_addr_t addr;
+	/** network byte order */
+	uint16_t port;
+	/** stands for the external address and port of the UPnP port mapping */
+	int is_upnp;
 };
 
 struct PICA_listener
@@ -369,11 +412,21 @@ struct PICA_listener
 	const struct PICA_acc *acc;
 	SOCKET  sck_listener;
 
-	int public_port;
+	/** TCP and UDP port listened on */
 	int local_port;
 
-	in_addr_t public_addr_ipv4;
-	const char *public_addr_dns;
+	/** The addresses announced in 0x0B. Automatic configuration when 0: the
+	 *  addresses of the network interfaces with local_port, then the UPnP
+	 *  mapping. Otherwise the list below, in its order.
+	 */
+	int addrs_manual;
+	struct PICA_listener_addr addrs[PICA_DIRECTC2C_MAX_ADDRS];
+	int addrs_count;
+
+	/** external address and port of the UPnP port mapping made for this
+	 *  listener, network byte order; 0 when there is none */
+	in_addr_t upnp_addr;
+	uint16_t upnp_port;
 
 	struct PICA_directc2c *accepted_connections;
 
@@ -542,17 +595,44 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
                  struct PICA_listener *l, struct PICA_c2n **ci);
 
 int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_listener *l, struct PICA_c2c **chn);
- /**
- * Opens socket to listen for incoming direct c2c connections bypassing nodes
+/**
+ * Opens the TCP port for incoming direct c2c connections bypassing nodes, and
+ * the UDP port with the same number for the media of calls.
+ *
+ * The addresses announced to peers are configured automatically until
+ * PICA_listener_set_addrlist() says otherwise: the addresses of the network
+ * interfaces, private ones first, with local_port, followed by the UPnP
+ * mapping once PICA_listener_set_upnp_addr() reports one.
+ *
  * \param acc - pointer to opened account instance
- * \param public_addr - DNS name or IP address string,
- * it is an address that will be used for connecting from global Internet.
- * Should be set to router's external IP if computer running pica-client is located behind the NAT.
- * \param public_port - TCP port for incoming connections from global Internet
- * \param local_port - TCP port that will be actually opened on computer listening for direct c2c connections
+ * \param local_port - port number to listen on, TCP and UDP
  * \param l - address of pointer that will be filled with address of created PICA_listener structure
+ * \retval PICA_ERRSOCK one of the two ports could not be opened, e.g. it is
+ * in use already
  */
-int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int public_port, int local_port, struct PICA_listener **l);
+int PICA_new_listener(const struct PICA_acc *acc, int local_port, struct PICA_listener **l);
+
+/**
+ * Sets the addresses announced to peers manually, in the order given.
+ * \param addrs IPv4 addresses or DNS names, the latter resolved here, which
+ * can block. A NULL entry stands for the external address of the UPnP port
+ * mapping, see PICA_listener_set_upnp_addr(), and is left out while there is
+ * none.
+ * \param ports the external port number of each address; for the UPnP entry
+ * the mapped port is announced instead
+ * \param count number of entries, up to PICA_DIRECTC2C_MAX_ADDRS; 0 goes
+ * back to automatic configuration
+ * \retval PICA_ERRDNSRESOLVE an address could not be resolved; the list is
+ * left as it was
+ */
+int PICA_listener_set_addrlist(struct PICA_listener *l, const char *const *addrs, const int *ports, int count);
+
+/**
+ * Reports the external address and port of a UPnP port mapping made for
+ * this listener, or that there is none any more when addr is NULL. Takes
+ * effect for the 0x0B messages sent from then on.
+ */
+int PICA_listener_set_upnp_addr(struct PICA_listener *l, const char *addr, int port);
 
 int PICA_open_acc(const char *cert_file,
                   const char *pkey_file,

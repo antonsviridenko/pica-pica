@@ -169,6 +169,9 @@ pica-client/picasystray.cpp \
 pica-client/picasystray.h \
 pica-client/skynet.cpp \
 pica-client/skynet.h \
+pica-client/directlistener.cpp \
+pica-client/directlistener.h \
+pica-client/directc2csettings.h \
 pica-client/history.h \
 pica-client/history.cpp \
 pica-client/dhparam.h \
@@ -245,6 +248,7 @@ moc_registeraccountdialog.cpp \
 moc_filetransferdialog.cpp \
 moc_audiovideocallcontroller.cpp \
 moc_skynet.cpp \
+moc_directlistener.cpp \
 moc_settingsdialog.cpp \
 moc_viewcertdialog.cpp \
 moc_showpicaiddialog.cpp \

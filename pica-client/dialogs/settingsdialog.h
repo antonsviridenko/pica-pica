@@ -25,6 +25,7 @@
 #include <QComboBox>
 #include <QCheckBox>
 #include <QLabel>
+#include <QTableWidget>
 #include <QThread>
 #include <QImage>
 #include <QList>
@@ -63,13 +64,37 @@ private:
 	QRadioButton *rbDisableDirectConns;
 	QRadioButton *rbEnableOutgoingConns;
 	QRadioButton *rbEnableIncomingConns;
-#ifdef HAVE_LIBMINIUPNPC
+	// Everything below "Enable incoming direct connections", disabled
+	// together with it.
+	QWidget *incomingBox;
+	// Null in a build without UPnP support, where offering it would only
+	// lead to an error message later on.
 	QCheckBox *cbEnableUPnP;
-#endif
 
-	QComboBox *addr;
-	QSpinBox *publicPort;
+	// direct_c2c.addr_config - which addresses go into the 0x0B message
+	QRadioButton *rbAddrAuto;
+	QRadioButton *rbAddrManual;
+	// what the automatic configuration would announce right now
+	QLabel *lbAutoAddrs;
+
+	// The manual configuration: the port listened on, and the announced
+	// addresses in the order peers try them. A row of the table can also
+	// stand for the UPnP router's external address, which is only known
+	// once the client runs - see addUpnpAddrRow().
+	QWidget *manualBox;
 	QSpinBox *localPort;
+	QTableWidget *addrTable;
+	QPushButton *btAddrUpnp;
+	QPushButton *btUpnpQuery;
+	QLabel *lbUpnpInfo;
+
+	void updateDirectConnWidgets();
+	void updateAutoAddrsLabel();
+	void addAddrRow(const QString &host, int port, bool upnp);
+	bool addrRowIsUpnp(int row) const;
+	// Checks the manual address list before it is stored; false, having
+	// told the user why, if it cannot be.
+	bool validateAddrTable();
 
 	QRadioButton *rbMLPProhibit;
 	QRadioButton *rbMLPReplace;
@@ -300,6 +325,18 @@ private slots:
 	void OK();
 	void Cancel();
 	void toggleIncomingConnections(bool checked);
+	// The manual address list's buttons. Declared unconditionally, see
+	// the note at audioDriver for why slots must not depend on a define.
+	void addAddr();
+	void removeAddr();
+	void moveAddrUp();
+	void moveAddrDown();
+	void addInterfaceAddrs();
+	void addUpnpAddrRow();
+	// Asks the UPnP router for its external address on a thread of its own -
+	// discovery alone takes two seconds - and adds it to the list.
+	void queryUpnpAddr();
+	void upnpQueryFinished(int status, QString addr);
 	void toggleMultipleLogins(bool checked);
 	void fillVideoDevices();
 	// Asks the newly selected camera what it can do and refills the two lists

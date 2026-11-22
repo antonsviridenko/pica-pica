@@ -31,17 +31,24 @@ communicated over a c2c connection.
 carrying the real time media of an audio/video call. It uses UDP transport
 and DTLS 1.2 with mutual certificate authentication.
 
-A mediac2c connection is established only while a call is in progress and
-only between clients that already have an established directc2c connection.
-It uses the address and port number the directc2c connection was made to,
-with UDP instead of TCP: the client that made the outgoing directc2c
-connection acts as the DTLS client and connects to that same address, the
-client that accepted it acts as the DTLS server and listens on the UDP port
-with the same number as its directc2c listening port. Each side verifies
-that the certificate presented by the peer hashes to the UH of the peer of
-the c2c connection the call belongs to, exactly as it does on a directc2c
-connection. No addresses are announced separately for this connection type
-and no additional protocol messages are needed to establish it.
+A mediac2c connection is established only while a call is in progress. It is
+made in one of two ways, see "Establishing the media connection" in the Audio
+and Video Calls section:
+
+-over the address of an established directc2c connection, with UDP instead
+of TCP: the client that made the outgoing directc2c connection acts as the
+DTLS client and connects to the address and port number that connection was
+made to, the client that accepted it acts as the DTLS server and listens on
+the UDP port with the same number as its directc2c listening port;
+
+-by UDP hole punching, between the media sockets the two clients opened for
+the call, over the addresses exchanged in the 0x70 and 0x71 messages: the
+caller acts as the DTLS client, the callee as the DTLS server. No directc2c
+connection is needed for this.
+
+Either way, each side verifies that the certificate presented by the peer
+hashes to the UH of the peer of the c2c connection the call belongs to,
+exactly as it does on a directc2c connection.
 
 Media packets are carried over the mediac2c connection whenever it is
 established, and over the c2c or directc2c connection otherwise. There is
@@ -350,12 +357,18 @@ Client direct address list.
 
 If a client is configured to accept incoming direct client to client
 connections (bypassing the node), it can send a list of its own addresses.
+The list can contain any number of addresses, e.g. one for every network
+interface of the client and the external address of a port forwarded to it.
 Local network addresses (if there are any) from the 192.168.0.0/16,
 172.16.0.0/12 and 10.0.0.0/8 subnets must be placed first in the list, so that
 clients residing in the same local network are able to connect directly. Public
 internet addresses follow them.
 If the client is behind NAT and forwards an open port to its local address, the
 external port number must be specified in the address.
+The connecting client tries the addresses one at a time, in the order of the
+list. It skips the elements of a type it does not connect to (e.g. 0xA1 without
+IPv6 connectivity), stepping over them by their size as given in the 0xA4
+description; such elements are not an error.
 Having received the announcement, the other client can create a connection to
 that address and close the connection through the node.
 The announced port numbers are used both for TCP directc2c connections and for
@@ -443,20 +456,47 @@ that and must not treat a malformed or unexpected packet as a protocol error
 breaking the connection. In particular, a media packet can arrive before the
 0x74 or 0x75 message describing the stream it belongs to, because those travel
 over a different connection; such a packet is discarded.
+The media connection probe is not a message of any connection: it is a UDP
+datagram sent while the media connection is being established, see below.
 ====================================================
 Call request (ring)
 
-[0x70 0x70]
-[2 pseudo-random octets]
+[0x70 0x70][length, 2 octets][probe token, 8 octets][address list]
 
-4 octets
+length - covers everything following it: 8 + the size of the address list.
+
+probe token - random octets from a cryptographically secure generator, chosen
+anew for every call. The peer puts it into the media connection probes it sends
+to the sender of this message.
+
+address list - the addresses where the sender's media socket for this call may
+be reachable, as elements of the 0xA4 format, of types 0xA0 and 0xA1 only:
+first the socket's port number with each of the sender's own interface
+addresses, then the address and port the node reported for that socket in a
+0x12 message, if the sender got one. The list is empty if the sender does not
+take part in hole punching, e.g. because direct connections are disabled in its
+settings.
+
+Before sending this message the caller opens its media socket and asks the node
+for the socket's address (0x10 - 0x12), waiting for the answer at most 2
+seconds; when it does not come in time, the message is sent without that
+address.
+
+The receiver skips elements of other types and uses at most the first 8
+addresses of the list.
 ====================================================
 Call answer (pick up)
 
-[0x71 0x71]
-[2 pseudo-random octets]
+[0x71 0x71][length, 2 octets][probe token, 8 octets][address list]
 
-4 octets
+The same format and meaning as in 0x70, for the callee's media socket.
+
+The callee opens its media socket and asks the node for its address when the
+0x70 message arrives, while the call is ringing, so that sending 0x71 is not
+delayed by it when the user answers; if the address has still not arrived by
+then, 0x71 waits for it at most 2 seconds. The callee's addresses are revealed
+only by this message, i.e. only if the call is answered. The list can be empty
+when the caller's list was.
 ====================================================
 Call reject
 
@@ -561,6 +601,73 @@ received, resuming assembly with the message following it. Without this
 rule, losing the first fragment of a frame would make the receiving side
 treat the second one as the beginning of a frame and pass a truncated frame
 to the decoder.
+====================================================
+Establishing the media connection.
+
+When a call becomes active - for the callee when it sends 0x71, for the
+caller when 0x71 arrives - each side makes up to two attempts to establish a
+mediac2c connection, one after another. Until one succeeds, and for the rest
+of the call if neither does, the media packets travel over the c2c or
+directc2c connection.
+
+Attempt 1, over the directc2c address. Made only if the c2c connection the
+call belongs to has an established directc2c connection, as described in the
+Connections section. Given up when the DTLS handshake fails, or when the
+connection is not established 5 seconds after the call became active.
+
+Attempt 2, by UDP hole punching. Made when attempt 1 is not made or is given
+up, and only if both the 0x70 and the 0x71 message carried a non-empty address
+list. Each side uses its media socket for the call - the one its address list
+was made for - and the caller acts as the DTLS client.
+
+1. Each side sends a media connection probe to every address of the peer's
+list, repeating every 200 milliseconds.
+2. When a side receives a probe carrying its own probe token, it selects the
+address the probe came from. That address need not be in the peer's list: a
+NAT can map the peer's socket to another port for this destination than for
+the node. From then on the side sends probes to the selected address only and
+accepts datagrams only from it.
+3. The caller starts the DTLS handshake as soon as it has selected an address,
+and keeps sending probes to it until the first datagram of the handshake
+arrives from the callee. The callee keeps sending probes until the first
+datagram of the handshake arrives from the caller. DTLS datagrams that arrive
+before the receiving side has selected an address are discarded; the DTLS
+retransmission takes care of them.
+4. The attempt is given up if no address has been selected 10 seconds after
+the side started sending probes, or if the handshake fails or is not complete
+10 seconds after that.
+
+A side starting attempt 2 late - having given up attempt 1, or having become
+active later than the peer - is still within the 10 seconds the peer keeps
+sending probes for.
+
+Security considerations.
+The probe token, sent over the authenticated c2c connection, keeps a host
+that does not see the probes from steering the choice of the address. One that
+does see them can send copies from another address, the same as with the 0x10
+datagram; the DTLS handshake authenticates the peer regardless, and a failed
+handshake only leaves the media on the c2c connection.
+The addresses in a peer's list are not checked, so a peer can make a client
+send probes to any host. This is bounded by the limits above: 8 addresses,
+5 probes a second each, 10 seconds - at most 400 datagrams of 10 octets per
+call.
+====================================================
+Media connection probe.
+Sent as a UDP datagram from the media socket of a call, outside of DTLS.
+
+[0x78 0x78][probe token, 8 octets]
+
+10 octets, the whole datagram
+
+probe token - the token the receiver of the probe sent in its 0x70 or 0x71
+message.
+
+A probe carries nothing but the token and is discarded after it has been
+looked at. One that is exactly 10 octets long, carries the receiver's token
+and arrives before the receiver has selected an address makes the receiver
+select the address it came from, see step 2 above; all others have no effect.
+A DTLS record never starts with the octet 0x78, so probes are told apart from
+DTLS records by their first octet at any stage of the connection.
 ====================================================
 
 

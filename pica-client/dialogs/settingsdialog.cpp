@@ -20,6 +20,7 @@
 #include "../audiodevice.h"
 #include "../videodevice.h"
 #include "../callsettings.h"
+#include "../directc2csettings.h"
 #include "../../PICA_netconf.h"
 #include "../../PICA_proto.h"
 
@@ -38,6 +39,10 @@
 #include <QEvent>
 #include <QTabWidget>
 #include <QTimer>
+#include <QHeaderView>
+#include <QMessageBox>
+#include <QHostAddress>
+#include <memory>
 
 // The device tests are not part of any call, but the devices only run for an
 // open call session (see MediaCallSession) - so each test is one, under a name
@@ -136,51 +141,117 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	rbEnableOutgoingConns = new QRadioButton(tr("Connect to the remote peer directly if possible"), this);
 	rbEnableIncomingConns = new QRadioButton(tr("Enable incoming direct connections"), this);
 
+	rbEnableIncomingConns->setChecked(true);
+
+	// Indented under "Enable incoming direct connections", which it all
+	// depends on. A widget of its own also keeps its radio buttons out of the
+	// exclusive group of the three above, QRadioButton grouping by parent.
+	incomingBox = new QWidget();
+	QVBoxLayout *incomingLayout = new QVBoxLayout();
+	incomingLayout->setContentsMargins(20, 0, 0, 0);
+
+	cbEnableUPnP = nullptr;
 #ifdef HAVE_LIBMINIUPNPC
 	cbEnableUPnP = new QCheckBox(tr("Enable UPnP"));
+	cbEnableUPnP->setToolTip(tr("Ask the router to forward the port for incoming direct connections, TCP and UDP, "
+	                            "and announce the router's external address to peers"));
 	cbEnableUPnP->setChecked(true);
+	incomingLayout->addWidget(cbEnableUPnP);
 #endif
 
-	rbEnableIncomingConns->setChecked(true);
-	connect(rbEnableIncomingConns, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
+	rbAddrAuto = new QRadioButton(tr("Automatic address configuration"));
+	rbAddrManual = new QRadioButton(tr("Manual"));
+	rbAddrAuto->setChecked(true);
 
-	QLabel *lbAddr = new QLabel(tr("Public address for incoming connections"), this);
-	addr = new QComboBox(this);
-	QLabel *lbPubPort = new QLabel(tr("External TCP port for incoming connections"), this);
-	publicPort = new QSpinBox(this);
-	QLabel *lbLocPort = new QLabel(tr("Local TCP port for incoming connections"), this);
-	localPort = new QSpinBox(this);
+	lbAutoAddrs = new QLabel();
+	lbAutoAddrs->setWordWrap(true);
+	lbAutoAddrs->setContentsMargins(20, 0, 0, 0);
 
-	addr->setEditable(true);
+	incomingLayout->addWidget(rbAddrAuto);
+	incomingLayout->addWidget(lbAutoAddrs);
+	incomingLayout->addWidget(rbAddrManual);
 
-	publicPort->setRange(1, 65535);
+	manualBox = new QWidget();
+	QVBoxLayout *manualLayout = new QVBoxLayout();
+	manualLayout->setContentsMargins(20, 0, 0, 0);
+
+	QHBoxLayout *portRow = new QHBoxLayout();
+	localPort = new QSpinBox();
 	localPort->setRange(1, 65535);
+	localPort->setValue(DirectC2CSettings::DefaultPort);
+	portRow->addWidget(new QLabel(tr("Local TCP and UDP port")));
+	portRow->addWidget(localPort);
+	portRow->addStretch(1);
+	manualLayout->addLayout(portRow);
 
-	publicPort->setValue(2298);
-	localPort->setValue(2298);
+	manualLayout->addWidget(new QLabel(tr("Addresses announced to peers, tried by them in this order. "
+	                                      "Put the external address and port of a port forwarded "
+	                                      "on your router here.")));
 
-	QList<QHostAddress> hostIfAddrs = QNetworkInterface::allAddresses();
-	QHostAddress ifAddr;
+	addrTable = new QTableWidget(0, 2);
+	addrTable->setHorizontalHeaderLabels(QStringList() << tr("Address") << tr("Port"));
+	addrTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+	addrTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+	addrTable->verticalHeader()->setVisible(false);
+	addrTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+	addrTable->setSelectionMode(QAbstractItemView::SingleSelection);
+	manualLayout->addWidget(addrTable);
 
-	addr->addItem(QString("autoconfigure"));
+	QHBoxLayout *addrButtons = new QHBoxLayout();
+	QPushButton *btAddrAdd = new QPushButton(tr("Add"));
+	QPushButton *btAddrRemove = new QPushButton(tr("Remove"));
+	QPushButton *btAddrUp = new QPushButton(tr("Move up"));
+	QPushButton *btAddrDown = new QPushButton(tr("Move down"));
+	addrButtons->addWidget(btAddrAdd);
+	addrButtons->addWidget(btAddrRemove);
+	addrButtons->addWidget(btAddrUp);
+	addrButtons->addWidget(btAddrDown);
+	addrButtons->addStretch(1);
+	manualLayout->addLayout(addrButtons);
 
-	foreach (ifAddr, hostIfAddrs)
-		if (ifAddr.protocol() == QAbstractSocket::IPv4Protocol)
-			addr->addItem(ifAddr.toString());
+	QHBoxLayout *addrButtons2 = new QHBoxLayout();
+	QPushButton *btAddrIfaces = new QPushButton(tr("Add interface addresses"));
+	btAddrIfaces->setToolTip(tr("Add the addresses of this computer's network interfaces, with the local port"));
+	btAddrUpnp = new QPushButton(tr("Add UPnP address"));
+	btAddrUpnp->setToolTip(tr("Add an entry for the external address of the UPnP router, "
+	                          "filled in with the forwarded port when Pica Pica runs"));
+	btUpnpQuery = new QPushButton(tr("Ask router for external address"));
+	btUpnpQuery->setToolTip(tr("Get the router's external address through UPnP now and add it with the local port"));
+	addrButtons2->addWidget(btAddrIfaces);
+	addrButtons2->addWidget(btAddrUpnp);
+	addrButtons2->addWidget(btUpnpQuery);
+	addrButtons2->addStretch(1);
+	manualLayout->addLayout(addrButtons2);
 
+	lbUpnpInfo = new QLabel();
+	lbUpnpInfo->setWordWrap(true);
+	manualLayout->addWidget(lbUpnpInfo);
+
+#ifndef HAVE_LIBMINIUPNPC
+	btAddrUpnp->hide();
+	btUpnpQuery->hide();
+#endif
+
+	manualBox->setLayout(manualLayout);
+	incomingLayout->addWidget(manualBox);
+	incomingBox->setLayout(incomingLayout);
+
+	connect(rbEnableIncomingConns, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
+	connect(rbAddrManual, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
+	if (cbEnableUPnP)
+		connect(cbEnableUPnP, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
+	connect(btAddrAdd, SIGNAL(clicked()), this, SLOT(addAddr()));
+	connect(btAddrRemove, SIGNAL(clicked()), this, SLOT(removeAddr()));
+	connect(btAddrUp, SIGNAL(clicked()), this, SLOT(moveAddrUp()));
+	connect(btAddrDown, SIGNAL(clicked()), this, SLOT(moveAddrDown()));
+	connect(btAddrIfaces, SIGNAL(clicked()), this, SLOT(addInterfaceAddrs()));
+	connect(btAddrUpnp, SIGNAL(clicked()), this, SLOT(addUpnpAddrRow()));
+	connect(btUpnpQuery, SIGNAL(clicked()), this, SLOT(queryUpnpAddr()));
 
 	directc2cLayout->addWidget(rbDisableDirectConns);
 	directc2cLayout->addWidget(rbEnableOutgoingConns);
 	directc2cLayout->addWidget(rbEnableIncomingConns);
-#ifdef HAVE_LIBMINIUPNPC
-	directc2cLayout->addWidget(cbEnableUPnP);
-#endif
-	directc2cLayout->addWidget(lbAddr);
-	directc2cLayout->addWidget(addr);
-	directc2cLayout->addWidget(lbPubPort);
-	directc2cLayout->addWidget(publicPort);
-	directc2cLayout->addWidget(lbLocPort);
-	directc2cLayout->addWidget(localPort);
+	directc2cLayout->addWidget(incomingBox);
 	directc2cLayout->addStretch(1);
 
 	directc2ctab->setLayout(directc2cLayout);
@@ -1633,12 +1704,289 @@ void SettingsDialog::fillAudioRingDevices()
 
 void SettingsDialog::toggleIncomingConnections(bool checked)
 {
-	addr->setEnabled(checked);
-	publicPort->setEnabled(checked);
-	localPort->setEnabled(checked);
-#ifdef HAVE_LIBMINIUPNPC
-	cbEnableUPnP->setEnabled(checked);
-#endif
+	Q_UNUSED(checked);
+
+	updateDirectConnWidgets();
+}
+
+void SettingsDialog::updateDirectConnWidgets()
+{
+	bool upnp = cbEnableUPnP && cbEnableUPnP->isChecked();
+
+	incomingBox->setEnabled(rbEnableIncomingConns->isChecked());
+	lbAutoAddrs->setEnabled(rbAddrAuto->isChecked());
+	manualBox->setEnabled(rbAddrManual->isChecked());
+	btAddrUpnp->setEnabled(upnp);
+
+	updateAutoAddrsLabel();
+}
+
+void SettingsDialog::updateAutoAddrsLabel()
+{
+	in_addr_t ifaddrs[PICA_IFADDRS_MAX];
+	QStringList addrs;
+	int n;
+
+	n = PICA_get_ifaddrs_ipv4(ifaddrs, PICA_IFADDRS_MAX);
+
+	for (int i = 0; i < n; i++)
+	{
+		struct in_addr in;
+
+		in.s_addr = ifaddrs[i];
+		addrs.append(QString::fromLatin1(inet_ntoa(in)));
+	}
+
+	QString text = addrs.isEmpty()
+	               ? tr("No network interface address found.")
+	               : tr("Announced to peers: %1, port %2 or the next free one")
+	               .arg(addrs.join(", ")).arg(DirectC2CSettings::DefaultPort);
+
+	if (cbEnableUPnP && cbEnableUPnP->isChecked())
+		text += tr(", followed by the external address of the UPnP router with the forwarded port.");
+	else
+		text += ".";
+
+	lbAutoAddrs->setText(text);
+}
+
+void SettingsDialog::addAddrRow(const QString &host, int port, bool upnp)
+{
+	int row = addrTable->rowCount();
+	QTableWidgetItem *hostItem, *portItem;
+
+	addrTable->insertRow(row);
+
+	if (upnp)
+	{
+		// Filled in at run time, so there is nothing to edit; the role marks
+		// it as the UPnP entry.
+		hostItem = new QTableWidgetItem(tr("UPnP router's external address"));
+		portItem = new QTableWidgetItem(tr("forwarded port"));
+		hostItem->setData(Qt::UserRole, true);
+		hostItem->setFlags(hostItem->flags() & ~Qt::ItemIsEditable);
+		portItem->setFlags(portItem->flags() & ~Qt::ItemIsEditable);
+	}
+	else
+	{
+		hostItem = new QTableWidgetItem(host);
+		portItem = new QTableWidgetItem(QString::number(port));
+	}
+
+	addrTable->setItem(row, 0, hostItem);
+	addrTable->setItem(row, 1, portItem);
+}
+
+bool SettingsDialog::addrRowIsUpnp(int row) const
+{
+	QTableWidgetItem *item = addrTable->item(row, 0);
+
+	return item && item->data(Qt::UserRole).toBool();
+}
+
+void SettingsDialog::addAddr()
+{
+	addAddrRow(QString(), localPort->value(), false);
+
+	addrTable->setCurrentCell(addrTable->rowCount() - 1, 0);
+	addrTable->editItem(addrTable->item(addrTable->rowCount() - 1, 0));
+}
+
+void SettingsDialog::removeAddr()
+{
+	int row = addrTable->currentRow();
+
+	if (row >= 0)
+		addrTable->removeRow(row);
+}
+
+static void swapTableRows(QTableWidget *t, int a, int b)
+{
+	for (int col = 0; col < t->columnCount(); col++)
+	{
+		QTableWidgetItem *ia = t->takeItem(a, col);
+		QTableWidgetItem *ib = t->takeItem(b, col);
+
+		t->setItem(a, col, ib);
+		t->setItem(b, col, ia);
+	}
+}
+
+void SettingsDialog::moveAddrUp()
+{
+	int row = addrTable->currentRow();
+
+	if (row <= 0)
+		return;
+
+	swapTableRows(addrTable, row, row - 1);
+	addrTable->setCurrentCell(row - 1, addrTable->currentColumn());
+}
+
+void SettingsDialog::moveAddrDown()
+{
+	int row = addrTable->currentRow();
+
+	if (row < 0 || row + 1 >= addrTable->rowCount())
+		return;
+
+	swapTableRows(addrTable, row, row + 1);
+	addrTable->setCurrentCell(row + 1, addrTable->currentColumn());
+}
+
+void SettingsDialog::addInterfaceAddrs()
+{
+	in_addr_t ifaddrs[PICA_IFADDRS_MAX];
+	int n;
+
+	// private addresses come first already, as they should in the list
+	n = PICA_get_ifaddrs_ipv4(ifaddrs, PICA_IFADDRS_MAX);
+
+	for (int i = 0; i < n; i++)
+	{
+		struct in_addr in;
+		QString host;
+		bool present = false;
+
+		in.s_addr = ifaddrs[i];
+		host = QString::fromLatin1(inet_ntoa(in));
+
+		for (int row = 0; row < addrTable->rowCount(); row++)
+			if (!addrRowIsUpnp(row) && addrTable->item(row, 0)->text().trimmed() == host
+			        && addrTable->item(row, 1)->text().trimmed().toInt() == localPort->value())
+				present = true;
+
+		if (!present)
+			addAddrRow(host, localPort->value(), false);
+	}
+
+	if (n == 0)
+		lbUpnpInfo->setText(tr("No network interface address found."));
+}
+
+void SettingsDialog::addUpnpAddrRow()
+{
+	for (int row = 0; row < addrTable->rowCount(); row++)
+		if (addrRowIsUpnp(row))
+		{
+			addrTable->setCurrentCell(row, 0);
+			return;
+		}
+
+	addAddrRow(QString(), 0, true);
+}
+
+void SettingsDialog::queryUpnpAddr()
+{
+	std::shared_ptr<int> status = std::make_shared<int>(PICA_UPNP_ERRNOIGD);
+	std::shared_ptr<QString> result = std::make_shared<QString>();
+
+	btUpnpQuery->setEnabled(false);
+	lbUpnpInfo->setText(tr("Asking the UPnP router..."));
+
+	// Parentless and deleting itself when done: the dialog may be closed
+	// before the router answers, and a QThread must not be destroyed while it
+	// runs. The answer only reaches the dialog if it is still there.
+	QThread *t = QThread::create([status, result]()
+	{
+		struct PICA_upnp_ctx *ctx = nullptr;
+		char addr[64];
+		int ret;
+
+		ret = PICA_upnp_discover(PICA_UPNP_DISCOVER_TIMEOUT, &ctx);
+
+		if (ret == PICA_UPNP_OK)
+		{
+			ret = PICA_upnp_external_addr(ctx, addr, sizeof(addr));
+
+			if (ret == PICA_UPNP_OK)
+				*result = QString::fromLatin1(addr);
+
+			PICA_upnp_free(ctx);
+		}
+
+		*status = ret;
+	});
+
+	connect(t, &QThread::finished, t, &QObject::deleteLater);
+	connect(t, &QThread::finished, this, [this, status, result]()
+	{
+		upnpQueryFinished(*status, *result);
+	});
+
+	t->start();
+}
+
+void SettingsDialog::upnpQueryFinished(int status, QString addr)
+{
+	btUpnpQuery->setEnabled(true);
+
+	if (status != PICA_UPNP_OK)
+	{
+		lbUpnpInfo->setText(tr("UPnP: %1").arg(PICA_upnp_strerror(status)));
+		return;
+	}
+
+	lbUpnpInfo->setText(tr("The router's external address is %1. Unless UPnP is enabled above, "
+	                       "the port has to be forwarded on the router by hand.").arg(addr));
+
+	for (int row = 0; row < addrTable->rowCount(); row++)
+		if (!addrRowIsUpnp(row) && addrTable->item(row, 0)->text().trimmed() == addr)
+			return;
+
+	addAddrRow(addr, localPort->value(), false);
+}
+
+bool SettingsDialog::validateAddrTable()
+{
+	bool upnp = cbEnableUPnP && cbEnableUPnP->isChecked();
+	int usable = 0;
+
+	if (!rbEnableIncomingConns->isChecked() || !rbAddrManual->isChecked())
+		return true;
+
+	for (int row = 0; row < addrTable->rowCount(); row++)
+	{
+		QString host;
+		bool ok = false;
+		int port;
+
+		if (addrRowIsUpnp(row))
+		{
+			usable += upnp ? 1 : 0;
+			continue;
+		}
+
+		host = addrTable->item(row, 0) ? addrTable->item(row, 0)->text().trimmed() : QString();
+		port = addrTable->item(row, 1) ? addrTable->item(row, 1)->text().trimmed().toInt(&ok) : 0;
+
+		// ';' and ':' would not survive DirectC2CSettings' stored form
+		if (host.isEmpty() || host.contains(';') || host.contains(':'))
+		{
+			QMessageBox::warning(this, tr("Direct connections"),
+			                     tr("Row %1 of the address list has no valid IPv4 address or host name.").arg(row + 1));
+			return false;
+		}
+
+		if (!ok || port <= 0 || port > 65535)
+		{
+			QMessageBox::warning(this, tr("Direct connections"),
+			                     tr("Row %1 of the address list has no valid port number.").arg(row + 1));
+			return false;
+		}
+
+		usable++;
+	}
+
+	if (usable == 0 && !upnp)
+	{
+		QMessageBox::warning(this, tr("Direct connections"),
+		                     tr("The address list is empty, so peers would have nowhere to connect to. "
+		                        "Add an address, or use the automatic configuration."));
+		return false;
+	}
+
+	return true;
 }
 
 void SettingsDialog::toggleMultipleLogins(bool checked)
@@ -1648,6 +1996,9 @@ void SettingsDialog::toggleMultipleLogins(bool checked)
 
 void SettingsDialog::OK()
 {
+	if (!validateAddrTable())
+		return;
+
 	storeSettings();
 	done(1);
 }
@@ -1663,8 +2014,10 @@ void SettingsDialog::loadSettings()
 
 	//Direct c2c connections
 	int c2c_state;
+	DirectC2CSettings dcs;
 
-	c2c_state = st.loadValue("direct_c2c.state", 1).toInt();
+	dcs.load(st);
+	c2c_state = dcs.state;
 
 	switch (c2c_state)
 	{
@@ -1684,40 +2037,22 @@ void SettingsDialog::loadSettings()
 		break;
 	}
 
-#ifdef HAVE_LIBMINIUPNPC
-	cbEnableUPnP->setChecked(st.loadValue("direct_c2c.upnp_enabled", 1).toBool());
-#endif
+	if (cbEnableUPnP)
+		cbEnableUPnP->setChecked(dcs.upnp);
 
-	addr->lineEdit()->setText(st.loadValue("direct_c2c.public_addr", "autoconfigure").toString());
+	if (dcs.addrConfig == DirectC2CSettings::AddrConfigManual)
+		rbAddrManual->setChecked(true);
+	else
+		rbAddrAuto->setChecked(true);
 
-	if (addr->lineEdit()->text().contains(QString("autoconfigure")))
-	{
-		in_addr_t guess;
-		struct in_addr in;
+	localPort->setValue(dcs.localPort);
 
-		guess = PICA_guess_listening_addr_ipv4();
-		in.s_addr = guess;
-		addr->lineEdit()->setText(QString("autoconfigured(%1)").arg(inet_ntoa(in)));
+	addrTable->setRowCount(0);
 
-#ifdef HAVE_LIBMINIUPNPC
-		if (cbEnableUPnP->isChecked() && PICA_is_reserved_addr_ipv4(guess))
-		{
-			int ret;
-			char public_ip[64];
-			ret = PICA_upnp_autoconfigure_ipv4(st.loadValue("direct_c2c.public_port", 2298).toInt(),
-			                                   st.loadValue("direct_c2c.local_port", 2298).toInt(),
-			                                   public_ip);
+	foreach (const DirectC2CSettings::Addr &a, dcs.addrs)
+		addAddrRow(a.host, a.port, a.upnp);
 
-			if (ret)
-			{
-				addr->lineEdit()->setText(QString("autoconfigured(%1)").arg(public_ip));
-			}
-		}
-#endif
-	}
-
-	publicPort->setValue(st.loadValue("direct_c2c.public_port", 2298).toInt());
-	localPort->setValue(st.loadValue("direct_c2c.local_port", 2298).toInt());
+	updateDirectConnWidgets();
 
 	//multiple logins
 	int mlpstate;
@@ -1836,24 +2171,37 @@ void SettingsDialog::storeSettings()
 	Settings st(config_dbname);
 
 	//Direct c2c connections
-	int c2c_state;
+	DirectC2CSettings dcs;
+
+	dcs.state = 1;
 
 	if (rbDisableDirectConns->isChecked())
-		c2c_state = 0;
+		dcs.state = 0;
 	else if (rbEnableOutgoingConns->isChecked())
-		c2c_state = 1;
+		dcs.state = 1;
 	else if (rbEnableIncomingConns->isChecked())
-		c2c_state = 2;
+		dcs.state = 2;
 
-	st.storeValue("direct_c2c.state", QString::number(c2c_state));
+	dcs.upnp = cbEnableUPnP ? cbEnableUPnP->isChecked() : false;
+	dcs.addrConfig = rbAddrManual->isChecked() ? DirectC2CSettings::AddrConfigManual
+	                                           : DirectC2CSettings::AddrConfigAuto;
+	dcs.localPort = localPort->value();
 
-#ifdef HAVE_LIBMINIUPNPC
-	st.storeValue("direct_c2c.upnp_enabled", cbEnableUPnP->isChecked() ? "1" : "0");
-#endif
+	// Kept even when the automatic configuration is selected, so that
+	// switching back to the manual one finds it as it was.
+	for (int row = 0; row < addrTable->rowCount(); row++)
+	{
+		DirectC2CSettings::Addr a;
 
-	st.storeValue("direct_c2c.public_addr", addr->lineEdit()->text());
-	st.storeValue("direct_c2c.public_port", QString::number(publicPort->value()));
-	st.storeValue("direct_c2c.local_port", QString::number(localPort->value()));
+		a.upnp = addrRowIsUpnp(row);
+		a.host = a.upnp ? QString() : addrTable->item(row, 0)->text().trimmed();
+		a.port = a.upnp ? 0 : addrTable->item(row, 1)->text().trimmed().toInt();
+
+		if (a.upnp || (!a.host.isEmpty() && a.port > 0 && a.port <= 65535))
+			dcs.addrs.append(a);
+	}
+
+	dcs.store(st);
 
 	//multiple logins
 	int mlpstate;

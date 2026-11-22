@@ -21,6 +21,7 @@
 #include "PICA_msgproc.h"
 #include "PICA_common.h"
 #include "PICA_signverify.h"
+#include "PICA_netconf.h"
 #include <openssl/dh.h>
 #include <string.h>
 #include <time.h>
@@ -126,8 +127,8 @@ const struct PICA_msginfo  c2c_messages[] =
 {
 	{PICA_PROTO_MSGUTF8, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MSGUTF8},
 	{PICA_PROTO_MSGOK, PICA_MSG_FIXED_SIZE, PICA_PROTO_MSGOK_SIZE, procmsg_MSGOK},
-	{PICA_PROTO_CALLREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLREQ_SIZE, procmsg_CALLREQ},
-	{PICA_PROTO_CALLANS, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLANS_SIZE, procmsg_CALLANS},
+	{PICA_PROTO_CALLREQ, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CALLREQ},
+	{PICA_PROTO_CALLANS, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_CALLANS},
 	{PICA_PROTO_CALLREJ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLREJ_SIZE, procmsg_CALLREJ},
 	{PICA_PROTO_CALLFIN, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALLFIN_SIZE, procmsg_CALLFIN},
 	{PICA_PROTO_CALL_AUDIOPARAM, PICA_MSG_FIXED_SIZE, PICA_PROTO_CALL_AUDIOPARAM_SIZE, procmsg_CALL_AUDIOPARAM},
@@ -642,11 +643,16 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 		CLOSE(dc2c->sck);
 	dc2c->sck = -1;
 
+	/* the list holds IPv4 elements only, behind a length field in host byte
+	 * order - see procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST()
+	 */
 	if (dc2c->addrpos == 0)
 		dc2c->addrpos += 2;
 
-	if (dc2c->addrpos >= *(uint16_t*)dc2c->addrlist)
+	if (dc2c->addrpos + PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE > *(uint16_t*)dc2c->addrlist + 2)
 		return PICA_ERRNOTFOUND;
+
+	dc2c->attempt_started = time(0);
 
 	switch(dc2c->addrlist[dc2c->addrpos])
 	{
@@ -674,12 +680,59 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 		dc2c->addrpos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
 		break;
 
-	case PICA_PROTO_DIRECTC2C_IPV6:
-		break;
-
+	default:
+		return PICA_ERRNOTFOUND;
 	}
 
 	return PICA_OK;
+}
+
+/* Picks the IPv4 elements out of a received address list, in their order,
+ * into list, behind a length field in host byte order.
+ * Elements of the other types are stepped over by their size, see the 0xA4
+ * message. An element of an unknown type ends the list, as there is no
+ * knowing where it ends; so does a truncated one.
+ * \return size of what was written to list
+ */
+static unsigned int directc2c_addrlist_ipv4(const unsigned char *items, unsigned int len, uint8_t *list)
+{
+	unsigned int pos = 0;
+	uint16_t n = 0;
+
+	while (pos < len && n < PICA_DIRECTC2C_MAX_ADDRS)
+	{
+		switch (items[pos])
+		{
+		case PICA_PROTO_DIRECTC2C_IPV4:
+			if (pos + PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE > len)
+				goto end;
+
+			memcpy(list + 2 + n * PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE,
+			       items + pos, PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE);
+			n++;
+			pos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
+			break;
+
+		case PICA_PROTO_DIRECTC2C_IPV6:
+			pos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV6_SIZE;
+			break;
+
+		case PICA_PROTO_DIRECTC2C_DNS:
+			if (pos + 1 >= len)
+				goto end;
+
+			pos += 2 + items[pos + 1] + 2;
+			break;
+
+		default:
+			goto end;
+		}
+	}
+
+end:
+	*(uint16_t*)list = n * PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
+
+	return 2 + n * PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
 }
 
 static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, unsigned int nb, void* p)
@@ -693,6 +746,10 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 		if (cc->directc2c_state != PICA_DIRECTC2C_STATE_INACTIVE && cc->directc2c_state != PICA_DIRECTC2C_STATE_WAITINGINCOMING)
 			return 0;
 
+		/* the peer announces its addresses once */
+		if (cc->direct)
+			return 1;
+
 		if (cc->outgoing == PICA_C2C_OUTGOING || cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_CONNECTONLY)
 			cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
 
@@ -704,13 +761,12 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 		cc->direct->is_outgoing = PICA_DIRECTC2C_OUTGOING;
 		cc->direct->state = PICA_DIRECTC2C_CONNSTATE_NEW;
 		cc->direct->sck = -1;
-		cc->direct->addrlist = malloc(nb - 2 + 1);
+		cc->direct->addrlist = malloc(2 + PICA_DIRECTC2C_MAX_ADDRS * PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE);
 
 		if (!cc->direct->addrlist)
 			return 1;
 
-		memcpy(cc->direct->addrlist, buf + 2, nb - 2);// copy size and address list
-		cc->direct->addrlist[nb - 2] = 0;
+		directc2c_addrlist_ipv4(buf + 4, nb - 4, cc->direct->addrlist);
 		cc->direct->addrpos = 0;
 
 		if (cc->outgoing == PICA_C2C_INCOMING && cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
@@ -1164,7 +1220,14 @@ static unsigned int procmsg_MYUDPADDR(unsigned char* buf, unsigned int nb, void*
 	/* before the callback, which is free to make another request */
 	c2n->udpaddr_state = PICA_UDPADDR_STATE_IDLE;
 
-	if (callbacks.udp_address_cb)
+	if (c2n->udpaddr_c2c)
+	{
+		struct PICA_c2c *c2c = c2n->udpaddr_c2c;
+
+		c2n->udpaddr_c2c = NULL;
+		PICA_media_call_learned(c2c, PICA_OK, buf + 4, buf[3], port);
+	}
+	else if (callbacks.udp_address_cb)
 		callbacks.udp_address_cb(c2n, PICA_OK, buf[3], buf + 4, addr_str, port);
 
 	return 1;
@@ -1186,7 +1249,14 @@ static void process_udpaddr(struct PICA_c2n *c2n)
 	{
 		c2n->udpaddr_state = PICA_UDPADDR_STATE_IDLE;
 
-		if (callbacks.udp_address_cb)
+		if (c2n->udpaddr_c2c)
+		{
+			struct PICA_c2c *c2c = c2n->udpaddr_c2c;
+
+			c2n->udpaddr_c2c = NULL;
+			PICA_media_call_learned(c2c, PICA_ERRTIMEDOUT, NULL, 0, 0);
+		}
+		else if (callbacks.udp_address_cb)
 			callbacks.udp_address_cb(c2n, PICA_ERRTIMEDOUT, 0, NULL, NULL, 0);
 
 		return;
@@ -1235,6 +1305,14 @@ int PICA_request_udp_address(struct PICA_c2n *c2n, SOCKET udp_sck)
 	c2n->udpaddr_started = time(0);
 	c2n->udpaddr_probes_sent = 0;
 	c2n->udpaddr_state = PICA_UDPADDR_STATE_WAITINGTOKEN;
+	/* a request of the application replaces one the library made for a
+	 * call, which then sends its address list without that address
+	 */
+	if (c2n->udpaddr_c2c)
+	{
+		PICA_media_call_learned(c2n->udpaddr_c2c, PICA_ERRTIMEDOUT, NULL, 0, 0);
+		c2n->udpaddr_c2c = NULL;
+	}
 
 	return PICA_OK;
 }
@@ -1652,14 +1730,13 @@ static int check_pkey_passphrase(const char *pkey_file,
 }
 
 
-int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int public_port, int local_port, struct PICA_listener **l)
+int PICA_new_listener(const struct PICA_acc *acc, int local_port, struct PICA_listener **l)
 {
-	int ret, ret_err, flag;
+	int ret, ret_err;
 	struct PICA_listener *lst = NULL;
 	struct sockaddr_in s;
 
-
-	if (!acc || !public_addr || public_port <= 0 || public_port > 65535 || local_port <= 0 || local_port > 65535 || !l)
+	if (!acc || local_port <= 0 || local_port > 65535 || !l)
 		return PICA_ERRINVARG;
 
 	lst = *l = (struct PICA_listener*)calloc(sizeof(struct PICA_listener), 1);
@@ -1667,18 +1744,7 @@ int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int p
 	if (!lst)
 		return PICA_ERRNOMEM;
 
-	lst->public_addr_dns = strdup(public_addr);
-
-	if (!lst->public_addr_dns)
-	{
-		ret_err = PICA_ERRNOMEM;
-		goto error_ret_0;
-	}
-
-	lst->public_addr_ipv4 = inet_addr(public_addr);
-
 	lst->acc = acc;
-	lst->public_port = public_port;
 	lst->local_port = local_port;
 
 	lst->sck_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); //(1)
@@ -1686,11 +1752,21 @@ int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int p
 	if (lst->sck_listener == SOCKET_ERROR)
 	{
 		ret_err = PICA_ERRSOCK;
-		goto error_ret_1;
+		goto error_ret_0;
 	}
 
-	flag = 1;
-	setsockopt(lst->sck_listener, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+#ifndef WIN32
+	{
+		int flag = 1;
+
+		/* Lets the port be listened on again right after a restart, while
+		 * connections of the previous run linger in TIME_WAIT. On Windows the
+		 * same option lets a socket take over a port that another one is
+		 * listening on, which would hide that the port is taken.
+		 */
+		setsockopt(lst->sck_listener, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+	}
+#endif
 
 	IOCTLSETNONBLOCKINGSOCKET(lst->sck_listener, 1);
 
@@ -1704,7 +1780,7 @@ int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int p
 	if (ret == SOCKET_ERROR)
 	{
 		ret_err = PICA_ERRSOCK;
-		goto error_ret_2;
+		goto error_ret_1;
 	}
 
 	ret = listen(lst->sck_listener, 10);
@@ -1712,28 +1788,29 @@ int PICA_new_listener(const struct PICA_acc *acc, const char *public_addr, int p
 	if (ret == SOCKET_ERROR)
 	{
 		ret_err = PICA_ERRSOCK;
-		goto error_ret_2;
+		goto error_ret_1;
 	}
 
 	/* The UDP port with the same number carries call media, see PICA_media.h.
-	 * Failing to open it is not fatal: direct connections still work and
-	 * calls keep their media on the c2c connection.
+	 * The announced port numbers are used for both protocols, so a listener
+	 * that has only one of them is no good - the caller can try another
+	 * number instead.
 	 */
-	if (PICA_media_listener_new(acc, public_port, local_port, &lst->media) != PICA_OK)
+	ret = PICA_media_listener_new(acc, local_port, local_port, &lst->media);
+
+	if (ret != PICA_OK)
 	{
 		fprintf(stderr, "failed to open UDP port %i for call media\n", local_port);
 		lst->media = NULL;
+		ret_err = ret;
+		goto error_ret_1;
 	}
 
 	return PICA_OK;
 
-error_ret_2: //(2)
-
-	CLOSE(lst->sck_listener);
-
 error_ret_1: //(1)
 
-	free(lst->public_addr_dns);
+	CLOSE(lst->sck_listener);
 
 error_ret_0: //(0)
 
@@ -1741,6 +1818,85 @@ error_ret_0: //(0)
 	*l = 0;
 
 	return ret_err;
+}
+
+/* IPv4 address of an address string, resolving a DNS name if it is one. */
+static int resolve_ipv4(const char *name, in_addr_t *addr)
+{
+	struct addrinfo h, *r;
+
+	*addr = inet_addr(name);
+
+	if (*addr != INADDR_NONE)
+		return PICA_OK;
+
+	memset(&h, 0, sizeof(h));
+	h.ai_family = AF_INET;
+	h.ai_socktype = SOCK_STREAM;
+	h.ai_protocol = IPPROTO_TCP;
+
+	if (getaddrinfo(name, NULL, &h, &r) != 0)
+		return PICA_ERRDNSRESOLVE;
+
+	*addr = ((struct sockaddr_in*)r->ai_addr)->sin_addr.s_addr;
+
+	freeaddrinfo(r);
+
+	return PICA_OK;
+}
+
+int PICA_listener_set_addrlist(struct PICA_listener *l, const char *const *addrs, const int *ports, int count)
+{
+	struct PICA_listener_addr list[PICA_DIRECTC2C_MAX_ADDRS];
+	int i, ret;
+
+	if (!l || count < 0 || count > PICA_DIRECTC2C_MAX_ADDRS || (count > 0 && (!addrs || !ports)))
+		return PICA_ERRINVARG;
+
+	for (i = 0; i < count; i++)
+	{
+		if (ports[i] <= 0 || ports[i] > 65535)
+			return PICA_ERRINVARG;
+
+		list[i].port = htons((uint16_t)ports[i]);
+		list[i].is_upnp = addrs[i] == NULL;
+		list[i].addr = INADDR_ANY;
+
+		if (addrs[i])
+		{
+			ret = resolve_ipv4(addrs[i], &list[i].addr);
+
+			if (ret != PICA_OK)
+				return ret;
+		}
+	}
+
+	memcpy(l->addrs, list, count * sizeof(list[0]));
+	l->addrs_count = count;
+	l->addrs_manual = count > 0;
+
+	return PICA_OK;
+}
+
+int PICA_listener_set_upnp_addr(struct PICA_listener *l, const char *addr, int port)
+{
+	if (!l)
+		return PICA_ERRINVARG;
+
+	if (!addr)
+	{
+		l->upnp_addr = 0;
+		l->upnp_port = 0;
+		return PICA_OK;
+	}
+
+	if (port <= 0 || port > 65535 || inet_addr(addr) == INADDR_NONE)
+		return PICA_ERRINVARG;
+
+	l->upnp_addr = inet_addr(addr);
+	l->upnp_port = htons((uint16_t)port);
+
+	return PICA_OK;
 }
 
 int PICA_open_acc(const char *cert_file,
@@ -2166,6 +2322,99 @@ multilogin_err1:
 	return 1;
 }
 
+/* Everything a call held, given back when it ends. */
+static void call_release(struct PICA_c2c *chn)
+{
+	chn->call_state = PICA_CALL_STATE_IDLE;
+
+	PICA_media_close(chn);
+	PICA_media_call_free(chn);
+
+	chn->call_audio_params_are_set = 0;
+	chn->call_video_params_are_set = 0;
+}
+
+/* Sends 0x70 or 0x71 with the probe token and the addresses of the call
+ * socket. */
+static int call_send_info(struct PICA_c2c *chn, unsigned int msgid)
+{
+	struct PICA_proto_msg *mp;
+	unsigned char info[PICA_MEDIA_CALL_INFO_MAXSIZE];
+	unsigned int len;
+
+	len = PICA_media_call_write_info(chn, info);
+
+	mp = c2c_writebuf_push(chn, msgid, 4 + len);
+
+	if (!mp)
+		return PICA_ERRNOMEM;
+
+	mp->tail[0] = len & 0xFF;
+	mp->tail[1] = (len >> 8) & 0xFF;
+	memcpy(mp->tail + 2, info, len);
+
+	if (chn->media_call)
+		chn->media_call->pending_msg = 0;
+
+	return PICA_OK;
+}
+
+static int call_send_audio_params(struct PICA_c2c *chn, const char *codec_name, uint16_t sample_rate);
+static int call_send_video_params(struct PICA_c2c *chn, const char *codec_name, uint16_t width, uint16_t height);
+
+/* 0x71 is out, the call is active for the callee now. */
+static int call_answered(struct PICA_c2c *chn)
+{
+	struct PICA_media_call *mc = chn->media_call;
+	int ret;
+
+	ret = call_send_info(chn, PICA_PROTO_CALLANS);
+
+	if (ret != PICA_OK)
+		return ret;
+
+	chn->call_state = PICA_CALL_STATE_ACTIVE;
+
+	/* the parameters set while 0x71 was waiting, which the caller must not
+	 * see before it
+	 */
+	if (mc && mc->audio_params_pending)
+		call_send_audio_params(chn, mc->audio_codec, mc->audio_sample_rate);
+
+	if (mc && mc->video_params_pending)
+		call_send_video_params(chn, mc->video_codec, mc->video_width, mc->video_height);
+
+	if (mc)
+		mc->audio_params_pending = mc->video_params_pending = 0;
+
+	PICA_media_start(chn);
+
+	return PICA_OK;
+}
+
+/* Sends 0x70 and 0x71 that were waiting for the address of the call socket
+ * once it is known, or once waiting for it is over.
+ */
+static void process_calls(struct PICA_c2n *c2n)
+{
+	struct PICA_c2c *c2c;
+
+	for (c2c = c2n->chan_list_head; c2c; c2c = c2c->next)
+	{
+		struct PICA_media_call *mc = c2c->media_call;
+
+		if (!mc || !mc->pending_msg || !PICA_media_call_ready(c2c))
+			continue;
+
+		if (mc->pending_msg == PICA_PROTO_CALLREQ && c2c->call_state == PICA_CALL_STATE_CALLING)
+			call_send_info(c2c, PICA_PROTO_CALLREQ);
+		else if (mc->pending_msg == PICA_PROTO_CALLANS && c2c->call_state == PICA_CALL_STATE_ANSWERING)
+			call_answered(c2c);
+		else
+			mc->pending_msg = 0;
+	}
+}
+
 static unsigned int procmsg_CALLREQ(unsigned char* buf, unsigned int nb, void *p)
 {
 	struct PICA_c2c *chan = (struct PICA_c2c *)p;
@@ -2186,6 +2435,12 @@ static unsigned int procmsg_CALLREQ(unsigned char* buf, unsigned int nb, void *p
 		return 1;
 	}
 
+	/* The callee starts finding out the address of its call socket now,
+	 * while the call rings, so that answering is not held up by it. A call
+	 * that cannot have it still rings.
+	 */
+	PICA_media_call_prepare(chan, 0, buf + 4, nb - 4);
+
 	chan->call_state = PICA_CALL_STATE_INCOMINGCALL;
 	callbacks.incoming_call_cb(chan->peer_id);
 
@@ -2201,6 +2456,9 @@ static unsigned int procmsg_CALLANS(unsigned char* buf, unsigned int nb, void *p
 		fprintf(stderr, "unexpected CALLANS, we did not initiate a call");
 		return 0;
 	}
+
+	/* a malformed list only costs the call its hole punching */
+	PICA_media_call_read_info(chan, buf + 4, nb - 4);
 
 	chan->call_state = PICA_CALL_STATE_ACTIVE;
 	callbacks.call_picked_up_cb(chan->peer_id);
@@ -2220,7 +2478,7 @@ static unsigned int procmsg_CALLREJ(unsigned char* buf, unsigned int nb, void *p
 		return 0;
 	}
 
-	chan->call_state = PICA_CALL_STATE_IDLE;
+	call_release(chan);
 
 	callbacks.call_rejected_cb(chan->peer_id);
 
@@ -2237,13 +2495,9 @@ static unsigned int procmsg_CALLFIN(unsigned char* buf, unsigned int nb, void *p
 		return 0;
 	}
 
-	chan->call_state = PICA_CALL_STATE_IDLE;
-
-	PICA_media_close(chan);
+	call_release(chan);
 
 	callbacks.call_hangup_cb(chan->peer_id);
-	chan->call_audio_params_are_set = 0;
-	chan->call_video_params_are_set = 0;
 
 	return 1;
 }
@@ -3141,6 +3395,14 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 			d = c2c->direct;
 			ret = PICA_OK;
 
+			/* on to the next address, see PICA_DIRECTC2C_CONNECT_TIMEOUT */
+			if ((d->state == PICA_DIRECTC2C_CONNSTATE_CONNECTING || d->state == PICA_DIRECTC2C_CONNSTATE_WAITINGTLS)
+			        && time(0) - d->attempt_started > PICA_DIRECTC2C_CONNECT_TIMEOUT)
+			{
+				printf("direct connection to %s port %i timed out\n", inet_ntoa(d->addr.sin_addr), ntohs(d->addr.sin_port));
+				d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
+			}
+
 			switch(d->state)
 			{
 			case PICA_DIRECTC2C_CONNSTATE_CONNECTING:
@@ -3579,6 +3841,8 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 			//processing media connections of calls in progress
 			PICA_media_process(*ic2n, &rfds);
 
+			process_calls(*ic2n);
+
 			process_udpaddr(*ic2n);
 		}
 		ic2n++;
@@ -3818,21 +4082,96 @@ struct PICA_proto_msg* c2c_writebuf_push(struct PICA_c2c *chn, unsigned int msgi
 	return mp;
 }
 
+/* Adds an address to a list under construction, unless it is in it already
+ * - an interface address that is public is what UPnP reports too, when the
+ * IGD runs on this very machine.
+ */
+static void addrlist_add(struct PICA_listener_addr *list, int *count, in_addr_t addr, uint16_t port)
+{
+	int i;
+
+	if (addr == INADDR_ANY || port == 0 || *count >= PICA_DIRECTC2C_MAX_ADDRS)
+		return;
+
+	for (i = 0; i < *count; i++)
+		if (list[i].addr == addr && list[i].port == port)
+			return;
+
+	list[*count].addr = addr;
+	list[*count].port = port;
+	list[*count].is_upnp = 0;
+	(*count)++;
+}
+
+/* The addresses to announce in 0x0B, see the description of the message:
+ * private ones first, then public ones. Built when it is sent rather than
+ * once, since interfaces come and go - a VPN connected, a laptop moved to
+ * another network.
+ */
+static int listener_addrlist(const struct PICA_listener *l, struct PICA_listener_addr *list)
+{
+	int count = 0;
+	int i;
+
+	if (l->addrs_manual)
+	{
+		for (i = 0; i < l->addrs_count; i++)
+		{
+			if (l->addrs[i].is_upnp)
+				addrlist_add(list, &count, l->upnp_addr, l->upnp_port);
+			else
+				addrlist_add(list, &count, l->addrs[i].addr, l->addrs[i].port);
+		}
+	}
+	else
+	{
+		in_addr_t ifaddrs[PICA_IFADDRS_MAX];
+		int n;
+
+		n = PICA_get_ifaddrs_ipv4(ifaddrs, PICA_IFADDRS_MAX);
+
+		for (i = 0; i < n; i++)
+			addrlist_add(list, &count, ifaddrs[i], htons((uint16_t)l->local_port));
+
+		addrlist_add(list, &count, l->upnp_addr, l->upnp_port);
+	}
+
+	return count;
+}
+
 int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 {
 	PICA_TRACEFUNC
 	if (chn->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING && chn->conn->directc2c_listener)
 	{
 		struct PICA_proto_msg *mp;
-		//TODO send all possible interface addresses, not one
-		unsigned int len = PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
+		struct PICA_listener_addr list[PICA_DIRECTC2C_MAX_ADDRS];
+		int count, i;
+		unsigned int len;
+		unsigned char *p;
+
+		count = listener_addrlist(chn->conn->directc2c_listener, list);
+
+		/* nothing a peer could connect to */
+		if (count == 0)
+			return PICA_OK;
+
+		len = count * PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
 
 		if ((mp = c2c_writebuf_push(chn, PICA_PROTO_DIRECTC2C_ADDRLIST, len + 4)))
 		{
-			*((uint16_t*)mp->tail) = len;
-			*((uint8_t*)mp->tail + 2) = PICA_PROTO_DIRECTC2C_IPV4;
-			*((uint32_t*)(mp->tail + 3)) = chn->conn->directc2c_listener->public_addr_ipv4;
-			*((uint16_t*)(mp->tail + 7)) = htons(chn->conn->directc2c_listener->public_port);
+			mp->tail[0] = len & 0xFF;
+			mp->tail[1] = (len >> 8) & 0xFF;
+
+			p = mp->tail + 2;
+
+			for (i = 0; i < count; i++)
+			{
+				*p++ = PICA_PROTO_DIRECTC2C_IPV4;
+				memcpy(p, &list[i].addr, 4);
+				memcpy(p + 4, &list[i].port, 2);
+				p += 6;
+			}
 
 			chn->directc2c_state = PICA_DIRECTC2C_STATE_WAITINGINCOMING;
 		}
@@ -4098,46 +4437,63 @@ int PICA_send_file_fragment(struct PICA_c2c *chn)
 
 int PICA_start_call(struct PICA_c2c *chn)
 {
-	struct PICA_proto_msg *mp;
+	int ret;
 
 	if (chn->call_state != PICA_CALL_STATE_IDLE)
 		return PICA_ERRCALLINPROGRESS;
 
-	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALLREQ, PICA_PROTO_CALLREQ_SIZE)))
-	{
-		RAND_pseudo_bytes(mp->tail, 2);
-	}
-	else
-	{
-		return PICA_ERRNOMEM;
-	}
+	ret = PICA_media_call_prepare(chn, 1, NULL, 0);
+
+	if (ret != PICA_OK)
+		return ret;
 
 	chn->call_state = PICA_CALL_STATE_CALLING;
 
-	return PICA_OK;
+	/* 0x70 carries the address the node sees the call socket at, so it
+	 * waits for the node's answer - normally one round trip - for a limited
+	 * time, see process_calls()
+	 */
+	chn->media_call->pending_deadline = PICA_media_now() + PICA_MEDIA_LEARN_TIMEOUT;
+
+	if (!PICA_media_call_ready(chn))
+	{
+		chn->media_call->pending_msg = PICA_PROTO_CALLREQ;
+		return PICA_OK;
+	}
+
+	ret = call_send_info(chn, PICA_PROTO_CALLREQ);
+
+	if (ret != PICA_OK)
+		call_release(chn);
+
+	return ret;
 }
 
 int PICA_pickup_call(struct PICA_c2c *chn)
 {
-	struct PICA_proto_msg *mp;
+	int ret;
 
 	if (chn->call_state != PICA_CALL_STATE_INCOMINGCALL)
 		return PICA_ERRCALLNOTINPROGRESS;
 
-	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALLANS, PICA_PROTO_CALLANS_SIZE)))
+	/* The address of the call socket has been asked for since the call
+	 * started ringing and is usually known by now. If it is not, 0x71 waits
+	 * for it a little longer; the call counts as answered for the user
+	 * meanwhile.
+	 */
+	if (chn->media_call)
+		chn->media_call->pending_deadline = PICA_media_now() + PICA_MEDIA_LEARN_TIMEOUT;
+
+	if (!PICA_media_call_ready(chn))
 	{
-		RAND_pseudo_bytes(mp->tail, 2);
-	}
-	else
-	{
-		return PICA_ERRNOMEM;
+		chn->media_call->pending_msg = PICA_PROTO_CALLANS;
+		chn->call_state = PICA_CALL_STATE_ANSWERING;
+		return PICA_OK;
 	}
 
-	chn->call_state = PICA_CALL_STATE_ACTIVE;
+	ret = call_answered(chn);
 
-	PICA_media_start(chn);
-
-	return PICA_OK;
+	return ret;
 }
 
 int PICA_reject_call(struct PICA_c2c *chn)
@@ -4156,7 +4512,7 @@ int PICA_reject_call(struct PICA_c2c *chn)
 		return PICA_ERRNOMEM;
 	}
 
-	chn->call_state = PICA_CALL_STATE_IDLE;
+	call_release(chn);
 
 	return PICA_OK;
 }
@@ -4168,6 +4524,16 @@ int PICA_hangup_call(struct PICA_c2c *chn)
 	if (chn->call_state == PICA_CALL_STATE_IDLE)
 		return PICA_ERRCALLNOTINPROGRESS;
 
+	/* A call whose 0x70 is still waiting to be sent does not exist for the
+	 * peer yet, and a 0x73 would be a protocol error to it.
+	 */
+	if (chn->call_state == PICA_CALL_STATE_CALLING && chn->media_call
+	        && chn->media_call->pending_msg == PICA_PROTO_CALLREQ)
+	{
+		call_release(chn);
+		return PICA_OK;
+	}
+
 	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALLFIN, PICA_PROTO_CALLFIN_SIZE)))
 	{
 		RAND_pseudo_bytes(mp->tail, 2);
@@ -4177,21 +4543,15 @@ int PICA_hangup_call(struct PICA_c2c *chn)
 		return PICA_ERRNOMEM;
 	}
 
-	// release call resources??
 	// handle incoming last stream packets?
-	chn->call_state = PICA_CALL_STATE_IDLE;
-
-	PICA_media_close(chn);
+	call_release(chn);
 
 	return PICA_OK;
 }
 
-int PICA_set_call_audio_params(struct PICA_c2c *chn, const char *codec_name, uint16_t sample_rate)
+static int call_send_audio_params(struct PICA_c2c *chn, const char *codec_name, uint16_t sample_rate)
 {
 	struct PICA_proto_msg *mp;
-
-	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
-		return PICA_ERRCALLNOTINPROGRESS;
 
 	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_AUDIOPARAM, PICA_PROTO_CALL_AUDIOPARAM_SIZE)))
 	{
@@ -4207,12 +4567,28 @@ int PICA_set_call_audio_params(struct PICA_c2c *chn, const char *codec_name, uin
 	return PICA_OK;
 }
 
-int PICA_set_call_video_params(struct PICA_c2c *chn, const char *codec_name, uint16_t width, uint16_t height)
+int PICA_set_call_audio_params(struct PICA_c2c *chn, const char *codec_name, uint16_t sample_rate)
 {
-	struct PICA_proto_msg *mp;
+	struct PICA_media_call *mc = chn->media_call;
+
+	/* kept until 0x71 is out, see call_answered() */
+	if (chn->call_state == PICA_CALL_STATE_ANSWERING && mc)
+	{
+		snprintf(mc->audio_codec, sizeof(mc->audio_codec), "%s", codec_name);
+		mc->audio_sample_rate = sample_rate;
+		mc->audio_params_pending = 1;
+		return PICA_OK;
+	}
 
 	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
 		return PICA_ERRCALLNOTINPROGRESS;
+
+	return call_send_audio_params(chn, codec_name, sample_rate);
+}
+
+static int call_send_video_params(struct PICA_c2c *chn, const char *codec_name, uint16_t width, uint16_t height)
+{
+	struct PICA_proto_msg *mp;
 
 	if ((mp = c2c_writebuf_push(chn, PICA_PROTO_CALL_VIDEOPARAM, PICA_PROTO_CALL_VIDEOPARAM_SIZE)))
 	{
@@ -4227,6 +4603,25 @@ int PICA_set_call_video_params(struct PICA_c2c *chn, const char *codec_name, uin
 	}
 
 	return PICA_OK;
+}
+
+int PICA_set_call_video_params(struct PICA_c2c *chn, const char *codec_name, uint16_t width, uint16_t height)
+{
+	struct PICA_media_call *mc = chn->media_call;
+
+	if (chn->call_state == PICA_CALL_STATE_ANSWERING && mc)
+	{
+		snprintf(mc->video_codec, sizeof(mc->video_codec), "%s", codec_name);
+		mc->video_width = width;
+		mc->video_height = height;
+		mc->video_params_pending = 1;
+		return PICA_OK;
+	}
+
+	if (chn->call_state != PICA_CALL_STATE_ACTIVE)
+		return PICA_ERRCALLNOTINPROGRESS;
+
+	return call_send_video_params(chn, codec_name, width, height);
 }
 
 static int PICA_send_call_packet(struct PICA_c2c *chn, unsigned int msgid, uint16_t seq_num,
@@ -4337,6 +4732,7 @@ void PICA_close_c2c(struct PICA_c2c *chn)
 //puts("PICA_close_c2c_chkp1");//debug
 
 	PICA_media_close(chn);
+	PICA_media_call_free(chn);
 
 	if (chn -> sendfile_stream)
 		fclose(chn -> sendfile_stream);
@@ -4414,8 +4810,6 @@ void PICA_close_listener(struct PICA_listener *l)
 
 	if (l->media)
 		PICA_media_listener_close(l->media);
-
-	free(l->public_addr_dns);
 
 	while(l->accepted_connections)
 	{

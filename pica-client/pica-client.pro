@@ -27,6 +27,7 @@ SOURCES += main.cpp\
     contactlistwidget.cpp \
     mediadevice.cpp \
     skynet.cpp \
+    directlistener.cpp \
     nodes.cpp \
     accountswindow.cpp \
     accounts.cpp \
@@ -56,6 +57,8 @@ SOURCES += main.cpp\
     videodshow.cpp
 
 HEADERS  += mainwindow.h \
+    directlistener.h \
+    directc2csettings.h \
     audiodevice.h \
     audioring.h \
     echocanceller.h \
