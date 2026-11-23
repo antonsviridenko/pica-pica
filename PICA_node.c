@@ -60,14 +60,31 @@ typedef u_short uint16_t;
 #define NOREPLY_TIMEOUT 15
 #define KEEPALIVE_TIMEOUT 60
 
+//"Get my UDP address": how long an issued token is accepted from the UDP socket
+#define UDPADDR_TOKEN_TIMEOUT 10 //sec
+//A client is served this many MYUDPADDRREQ messages in a row, and one more
+//for every UDPADDR_REQ_PERIOD seconds after that
+#define UDPADDR_REQ_BURST 4
+#define UDPADDR_REQ_PERIOD 5 //sec
+#define UDPADDR_TOKEN_BUCKETS 1024
+//datagrams taken from the UDP socket per event, so that a flood of them does
+//not keep the event loop away from the connections
+#define UDP_READ_BATCH 64
+
 time_t skynet_refresh_tmst;
 
-clock_t TMO_CCLINK_WAITACTIVE = 15; //CONF
+time_t TMO_CCLINK_WAITACTIVE = 15; //CONF
 
 char *my_addr;//TEMP CONF FIXME
 
 static struct event_base *pica_event_base;
 SOCKET listen_comm_sck;//*
+//UDP socket on the port with the same number as listen_comm_sck, -1 if it
+//could not be opened. Nothing is ever sent from it.
+SOCKET listen_udp_sck = -1;
+
+//clients with an issued "get my UDP address" token, hashed by the token
+static struct client *udpaddr_tokens[UDPADDR_TOKEN_BUCKETS];
 
 static int stop_node_loop = 0;
 
@@ -119,6 +136,8 @@ unsigned int procmsg_PINGREP_node(unsigned char* buf, unsigned int size, void* p
 unsigned int procmsg_dummy_multi_c2n(unsigned char* buf, unsigned int size, void* ptr);
 unsigned int procmsg_MULTILOGIN_client(unsigned char* buf, unsigned int size, void* ptr);
 unsigned int procmsg_MULTILOGIN_node(unsigned char* buf, unsigned int size, void* ptr);
+unsigned int procmsg_MYTCPADDRREQ(unsigned char* buf, unsigned int size, void* ptr);
+unsigned int procmsg_MYUDPADDRREQ(unsigned char* buf, unsigned int size, void* ptr);
 
 struct cclink* cclink_list_add(struct client *clr, struct client *cle);
 struct cclink* cclink_list_search(const unsigned char *caller_id, const unsigned char *callee_id);
@@ -164,6 +183,7 @@ void process_n2n_read(evutil_socket_t s, short event, void *arg);
 void process_n2n_write(evutil_socket_t s, short event, void *arg);
 void process_c2c_read(evutil_socket_t s, short event, void *arg);
 void process_c2c_write(evutil_socket_t s, short event, void *arg);
+void process_udp_read(evutil_socket_t s, short event, void *arg);
 void process_nodewait();
 
 #define MSGINFO_MSGSNUM(arr) (sizeof(arr)/sizeof(struct PICA_msginfo))
@@ -176,7 +196,9 @@ struct PICA_msginfo  _msginfo_comm[] =
 	{PICA_PROTO_CLNODELISTREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CLNODELISTREQ_SIZE, procmsg_NODELISTREQ},
 	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ_client},
 	{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREP_SIZE, procmsg_PINGREP_client},
-	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN_client}
+	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN_client},
+	{PICA_PROTO_MYTCPADDRREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_MYTCPADDRREQ_SIZE, procmsg_MYTCPADDRREQ},
+	{PICA_PROTO_MYUDPADDRREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_MYUDPADDRREQ_SIZE, procmsg_MYUDPADDRREQ}
 };
 
 struct PICA_msginfo _msginfo_node[] =
@@ -214,7 +236,9 @@ struct PICA_msginfo  _msginfo_multi[] =
 	{PICA_PROTO_CLNODELISTREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_CLNODELISTREQ_SIZE, procmsg_NODELISTREQ},
 	{PICA_PROTO_PINGREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREQ_SIZE, procmsg_PINGREQ_client},
 	{PICA_PROTO_PINGREP, PICA_MSG_FIXED_SIZE, PICA_PROTO_PINGREP_SIZE, procmsg_PINGREP_client},
-	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN_client}
+	{PICA_PROTO_MULTILOGIN, PICA_MSG_VAR_SIZE, PICA_MSG_VARSIZE_INT16, procmsg_MULTILOGIN_client},
+	{PICA_PROTO_MYTCPADDRREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_MYTCPADDRREQ_SIZE, procmsg_MYTCPADDRREQ},
+	{PICA_PROTO_MYUDPADDRREQ, PICA_MSG_FIXED_SIZE, PICA_PROTO_MYUDPADDRREQ_SIZE, procmsg_MYUDPADDRREQ}
 };
 
 static int process_async_ssl_readwrite(SSL *ssl, int ret)
@@ -267,6 +291,13 @@ unsigned int procmsg_INITREQ(unsigned char* buf, unsigned int size, void* ptr)
 	struct PICA_proto_msg *mp;
 
 	PICA_debug1("received INITREQ");
+
+	/* Exactly one request message per newconn. A second (e.g. two INITREQs in
+	 * one record) would create a second client on the same socket and orphan
+	 * the first, which later closes a socket it no longer owns.
+	 */
+	if (nc->type != NEWCONN_UNKNOWN)
+		return 0;
 
 	nc->type = NEWCONN_C2N;
 
@@ -350,6 +381,10 @@ unsigned int procmsg_CONNID(unsigned char* buf, unsigned int size, void* ptr)
 
 	PICA_debug1("received CONNID");
 
+	/* One request message per newconn - see procmsg_INITREQ(). */
+	if (nc->type != NEWCONN_UNKNOWN)
+		return 0;
+
 	nc->type = NEWCONN_C2C;
 
 	caller_id = buf + 2;
@@ -404,6 +439,10 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 	struct PICA_proto_msg *mp;
 
 	PICA_debug1("received NODECONNREQ");
+
+	/* One request message per newconn - see procmsg_INITREQ(). */
+	if (nc->type != NEWCONN_UNKNOWN)
+		return 0;
 
 	nc->type = NEWCONN_N2N;
 
@@ -645,6 +684,136 @@ unsigned int procmsg_PINGREP_client(unsigned char* buf, unsigned int size, void*
 	return 1;
 }
 
+unsigned int procmsg_MYTCPADDRREQ(unsigned char* buf, unsigned int size, void* ptr)
+{
+	struct client *c = (struct client*)ptr;
+	struct PICA_proto_msg *mp;
+
+	PICA_debug3("MYTCPADDRREQ");
+
+	//IPv6
+	if ((mp = client_wbuf_push(c, PICA_PROTO_MYTCPADDR_IPV4, PICA_PROTO_MYTCPADDR_IPV4_SIZE)))
+	{
+		memcpy(mp->tail, &c->addr.sin_addr.s_addr, 4);
+		memcpy(mp->tail + 4, &c->addr.sin_port, 2);
+	}
+	else
+		return 0;
+
+	return 1;
+}
+
+static unsigned int udpaddr_token_bucket(const unsigned char *token)
+{
+	//tokens are random and are generated by the node itself, so any part of
+	//one is as good a hash as any other, and a client has no say in which
+	//bucket it ends up in
+	return (token[0] | (token[1] << 8)) % UDPADDR_TOKEN_BUCKETS;
+}
+
+static void client_udpaddr_token_drop(struct client *c)
+{
+	struct client **pp;
+
+	if (!c->udpaddr_token_issued)
+		return;
+
+	pp = &udpaddr_tokens[udpaddr_token_bucket(c->udpaddr_token)];
+
+	while(*pp && *pp != c)
+		pp = &(*pp)->udpaddr_token_next;
+
+	if (*pp)
+		*pp = c->udpaddr_token_next;
+
+	c->udpaddr_token_next = NULL;
+	c->udpaddr_token_issued = 0;
+}
+
+static struct client *udpaddr_token_search(const unsigned char *token)
+{
+	struct client *c = udpaddr_tokens[udpaddr_token_bucket(token)];
+
+	while(c && CRYPTO_memcmp(c->udpaddr_token, token, PICA_PROTO_MYUDPADDR_TOKENSIZE) != 0)
+		c = c->udpaddr_token_next;
+
+	return c;
+}
+
+static int client_udpaddr_req_allowed(struct client *c)
+{
+	time_t now = time(0);
+	time_t periods;
+
+	if (now < c->udpaddr_req_tmst)//the clock was set back
+		c->udpaddr_req_tmst = now;
+
+	periods = (now - c->udpaddr_req_tmst) / UDPADDR_REQ_PERIOD;
+
+	if (periods >= (time_t)(UDPADDR_REQ_BURST - c->udpaddr_req_allowance))
+	{
+		c->udpaddr_req_allowance = UDPADDR_REQ_BURST;
+		c->udpaddr_req_tmst = now;
+	}
+	else
+	{
+		c->udpaddr_req_allowance += periods;
+		c->udpaddr_req_tmst += periods * UDPADDR_REQ_PERIOD;
+	}
+
+	if (!c->udpaddr_req_allowance)
+		return 0;
+
+	c->udpaddr_req_allowance--;
+
+	return 1;
+}
+
+//The reply to this message is a token, which the client then sends to the UDP
+//socket - see process_udp_read() for what makes that exchange safe to offer.
+unsigned int procmsg_MYUDPADDRREQ(unsigned char* buf, unsigned int size, void* ptr)
+{
+	struct client *c = (struct client*)ptr;
+	struct PICA_proto_msg *mp;
+	unsigned char token[PICA_PROTO_MYUDPADDR_TOKENSIZE];
+
+	PICA_debug3("MYUDPADDRREQ");
+
+	//A request that is not served is ignored rather than answered: the client
+	//has to cope with its datagrams being lost anyway, and gives up by timeout.
+	if (listen_udp_sck == -1)
+		return 1;
+
+	if (!client_udpaddr_req_allowed(c))
+	{
+		PICA_debug2("too many MYUDPADDRREQ from client %p, ignoring", (void*)c);
+		return 1;
+	}
+
+	if (RAND_bytes(token, sizeof token) != 1)
+	{
+		PICA_error("RAND_bytes() failed, unable to issue a token for MYUDPADDRREQ");
+		return 1;
+	}
+
+	if (!(mp = client_wbuf_push(c, PICA_PROTO_MYUDPADDRTOKEN, PICA_PROTO_MYUDPADDRTOKEN_SIZE)))
+		return 0;
+
+	memcpy(mp->tail, token, sizeof token);
+
+	//one outstanding token per connection, a new request replaces the old one
+	client_udpaddr_token_drop(c);
+
+	memcpy(c->udpaddr_token, token, sizeof token);
+	c->udpaddr_token_tmst = time(0);
+	c->udpaddr_token_issued = 1;
+
+	c->udpaddr_token_next = udpaddr_tokens[udpaddr_token_bucket(token)];
+	udpaddr_tokens[udpaddr_token_bucket(token)] = c;
+
+	return 1;
+}
+
 unsigned int procmsg_MULTILOGIN_client(unsigned char* buf, unsigned int size, void* ptr)
 {
 	struct client *other, *me = (struct client*)ptr;
@@ -769,7 +938,7 @@ unsigned int procmsg_MULTILOGIN_node(unsigned char* buf, unsigned int size, void
 
 		if (mp)
 		{
-			memcpy(mp, buf, size);
+			memcpy(mp->tail, buf + 2, size - 2);
 		}
 
 		c = c->next_multi;
@@ -957,7 +1126,7 @@ unsigned int procmsg_NODELISTREQ(unsigned char* buf, unsigned int size, void* pt
 		switch(nlp->addr_type)
 		{
 		case PICA_PROTO_NEWNODE_IPV4:
-			if ( PICA_PROTO_NODELISTREQ == buf[0] &&
+			if ( PICA_PROTO_NODELISTREQ == buf[0] && n->node_addr &&
 			        ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->addr == ((struct PICA_nodeaddr_ipv4*)n->node_addr)->addr    &&
 			        ((struct PICA_nodeaddr_ipv4*)nlp->node_addr)->port == ((struct PICA_nodeaddr_ipv4*)n->node_addr)->port )
 				break;//exclude requester's address
@@ -1004,68 +1173,72 @@ unsigned int procmsg_NODELIST(unsigned char* buf, unsigned int size, void* ptr)
 
 	while(listleft)
 	{
-#warning "strict error checking!!! -- listleft overflow, unknown list items, check listleft >= possible item size"
+		unsigned char item_type = buf[size - listleft];
+
+		/* The IPv6 and DNS list item types are defined by the protocol but
+		 * are not produced or parsed yet (see procmsg_NODELISTREQ, which only
+		 * emits IPv4 items). Their on-wire length is therefore not handled
+		 * here, so the parse cannot advance past one and has to stop.
+		 */
+		if (item_type == PICA_PROTO_NEWNODE_IPV6 || item_type == PICA_PROTO_NEWNODE_DNS)
+		{
+			PICA_warn("NODELIST contains a %s address item, which is not implemented yet, aborting parse",
+			          item_type == PICA_PROTO_NEWNODE_IPV6 ? "IPv6" : "DNS");
+			return 0;
+		}
+
+		/* Any other type byte is not a list item type at all: its length is
+		 * unknown, so parsing cannot safely continue. Without bailing here
+		 * the loop would spin forever on a byte it never decrements past.
+		 */
+		if (item_type != PICA_PROTO_NEWNODE_IPV4)
+		{
+			PICA_warn("NODELIST contains unknown address type 0x%02X, aborting parse", item_type);
+			return 0;
+		}
+
+		/* Bounds check before reading the 4-byte address and 2-byte port,
+		 * so a short trailing item cannot read past the packet or underflow
+		 * listleft on the subtraction below.
+		 */
+		if (listleft < PICA_PROTO_NODELIST_ITEM_IPV4_SIZE)
+		{
+			PICA_warn("Unexpected end of nodelist packet");
+			return 0;
+		}
+
+		na_ipv4.magick = PICA_PROTO_NEWNODE_IPV4;
+		na_ipv4.addr = *(in_addr_t*)(buf + size - listleft + 1);
+		na_ipv4.port = *(in_port_t*)(buf + size - listleft + 5);
+
 		if (listleft == listsize) //first entry, sender node's address
 		{
-			switch(buf[size - listleft])
-			{
-			case PICA_PROTO_NEWNODE_IPV4:
-				na_ipv4.magick = PICA_PROTO_NEWNODE_IPV4;
-				na_ipv4.addr = *(in_addr_t*)(buf + size - listleft + 1);
-				na_ipv4.port = *(in_port_t*)(buf + size - listleft + 5);
-				nodelink_attach_nodeaddr(n, na_ipv4.magick, &na_ipv4, sizeof(struct PICA_nodeaddr_ipv4));
-
-				listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
-				break;
-			}
-			continue;
+			nodelink_attach_nodeaddr(n, na_ipv4.magick, &na_ipv4, sizeof(struct PICA_nodeaddr_ipv4));
 		}
 		else
 		{
 			struct PICA_nodeaddr na;
-			//char addr[256];
-			struct newconn nc;
-			struct nodelink *nlp;
-			int skip_save = 0;
 
 			memset(na.addr, 0, 256);
-			memset(&nc, 0, sizeof(struct newconn));
 
-			switch(buf[size - listleft])
+			sprintf(na.addr, "%.16s", inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
+			na.port = ntohs(na_ipv4.port);
+
+			PICA_debug3("NODELIST item %.16s:%hu", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
+
+			if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(na_ipv4.addr))
 			{
-			case PICA_PROTO_NEWNODE_IPV4:
-				na_ipv4.magick = PICA_PROTO_NEWNODE_IPV4;
-				na_ipv4.addr = *(in_addr_t*)(buf + size - listleft + 1);
-				na_ipv4.port = *(in_port_t*)(buf + size - listleft + 5);
-
-				sprintf(na.addr, "%.16s", inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-				na.port = ntohs(na_ipv4.port);
-
-				//nodewait_start_connection(&na);
-// 			if (try_connect_to_node(na.addr,ntohs(na_ipv4.port),&nc))
-// 				if (try_get_reply(&nc))
-// 					{
-// 					nlp=nodelink_list_addnew(&nc);
-// 					send_newnode(nlp,my_addr);
-// 					nodelink_attach_nodeaddr(nlp,na_ipv4.magick,&na_ipv4,sizeof(struct PICA_nodeaddr_ipv4));
-// 					PICA_debug1("LINKED NODE:%s\n",inet_ntoa(*(struct in_addr*)&na_ipv4.addr));
-// 					}
-
-				PICA_debug3("NODELIST item %.16s:%hu", inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port));
-
-				if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(na_ipv4.addr))
-				{
-					skip_save = 1;
-					PICA_debug1("Received NODELIST item %.16s:%hu is in private range, skipping",
-					            inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port)
-					           );
-				}
-				listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
-				break;
+				PICA_debug1("Received NODELIST item %.16s:%hu is in private range, skipping",
+				            inet_ntoa(*(struct in_addr*)&na_ipv4.addr), ntohs(na_ipv4.port)
+				           );
 			}
-			if (!skip_save)
+			else
+			{
 				PICA_nodeaddr_save(nodecfg.nodes_db_file, &na);//CONF filename
+			}
 		}
+
+		listleft -= PICA_PROTO_NODELIST_ITEM_IPV4_SIZE;
 	}
 
 	return 1;
@@ -1157,7 +1330,14 @@ unsigned int procmsg_N2NALLOW(unsigned char* buf, unsigned int size, void* ptr)
 
 	cc = cclink_list_search(caller_id, callee_id);
 
-	if (cc)
+	/* N2NALLOW is the reply this (caller's) node awaits in N2NCLR_WAITREP.
+	 * That state only exists on caller-local links, which always have a
+	 * non-NULL p1 - gating on it both prevents a client_wbuf_push(NULL) on a
+	 * callee-local (p1 == NULL) link an attacker can create with
+	 * N2NCONNREQOUTG, and stops a stray N2NALLOW from disturbing other links.
+	 * callee_node == n ties the reply to the node that answered the search.
+	 */
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP && cc->callee_node == n)
 	{
 		if ((mp = client_wbuf_push(cc->p1, PICA_PROTO_FOUND, PICA_PROTO_FOUND_SIZE)))
 		{
@@ -1182,7 +1362,12 @@ unsigned int procmsg_N2NNOTFOUND(unsigned char* buf, unsigned int size, void* pt
 
 	cc = cclink_list_search(caller_id, callee_id);
 
-	if (cc)
+	/* Same gate as N2NALLOW: act only on the caller-local link awaiting this
+	 * reply, so a callee-local link (p1 == NULL) cannot crash client_wbuf_push
+	 * and a stray N2NNOTFOUND cannot delete an unrelated link. callee_node == n
+	 * ties the reply to the node that answered the search.
+	 */
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_WAITREP && cc->callee_node == n)
 	{
 		if ((mp = client_wbuf_push(cc->p1, PICA_PROTO_NOTFOUND, PICA_PROTO_NOTFOUND_SIZE)))
 		{
@@ -1215,7 +1400,11 @@ unsigned int procmsg_N2NMSG(unsigned char* buf, unsigned int size, void* ptr)
 
 	cc = cclink_list_search(sender_id, receiver_id);
 
-	if (cc && cc->state == PICA_CCLINK_N2NCLE_ACTIVE)
+	/* Accept relayed data only from the node that owns the remote (caller)
+	 * half of this link, so a third node cannot inject into or overflow a
+	 * relay between two other users' clients.
+	 */
+	if (cc && cc->state == PICA_CCLINK_N2NCLE_ACTIVE && cc->caller_node == n)
 	{
 		if (datalen + cc->bufpos_p1p2 > cc->buflen_p1p2)
 		{
@@ -1230,7 +1419,8 @@ unsigned int procmsg_N2NMSG(unsigned char* buf, unsigned int size, void* ptr)
 ///////////////
 	cc = cclink_list_search(receiver_id, sender_id);
 
-	if (cc && cc->state == PICA_CCLINK_N2NCLR_ACTIVE)
+	/* Likewise, only from the node that owns the remote (callee) half. */
+	if (cc && cc->state == PICA_CCLINK_N2NCLR_ACTIVE && cc->callee_node == n)
 	{
 		if (datalen + cc->bufpos_p2p1 > cc->buflen_p2p1)
 		{
@@ -1285,6 +1475,41 @@ struct cclink* cclink_list_search(const unsigned char *caller_id, const unsigned
 void cclink_list_delete(struct cclink *l)
 {
 	PICA_debug1("cclink_list_delete(%p)", (void*)l);
+
+	/* A CONNID connection may still be mid anon-TLS-shutdown with its socket
+	 * handed to this link (sck_p1/sck_p2) and nc->iconn.cc pointing here. If
+	 * the link is torn down first (WAITACTIVE timeout, or a client
+	 * disconnecting), that newconn would later double-close the socket and
+	 * re-delete this freed link from newconn_close(). Retire it now: drop its
+	 * event and anon SSL and relinquish the fd, which is closed below.
+	 */
+	{
+		int i;
+		for (i = 0; i < MAX_NEWCONNS; i++)
+		{
+			struct newconn *nc = &newconns[i];
+
+			if (nc->type == NEWCONN_C2C && nc->iconn.cc == l)
+			{
+				if (nc->ev)
+				{
+					event_del(nc->ev);
+					event_free(nc->ev);
+					nc->ev = NULL;
+				}
+				if (nc->anonssl)
+				{
+					SSL_free(nc->anonssl);
+					nc->anonssl = NULL;
+				}
+				nc->iconn.cc = NULL;
+				nc->sck = -1;   /* owned and closed by the link below */
+				nc->pos = 0;
+				nc->type = NEWCONN_UNKNOWN;
+			}
+		}
+	}
+
 //удаление из глобального списка
 	if (l->prev)
 		l->prev->next = l->next;
@@ -1525,18 +1750,21 @@ void cclink_setwaitconn(struct cclink *ccl)
 
 int cclink_allocbufs(struct cclink *ccl)
 {
-	ccl->buf_p1p2 = malloc(DEFAULT_BUF_SIZE);
-	ccl->buf_p2p1 = malloc(DEFAULT_BUF_SIZE);
+	ccl->buf_p1p2 = malloc(C2C_BUF_SIZE);
+	ccl->buf_p2p1 = malloc(C2C_BUF_SIZE);
 	if (!ccl->buf_p1p2 || !ccl->buf_p2p1)
 	{
 		if (ccl->buf_p1p2)
 			free(ccl->buf_p1p2);
 		if (ccl->buf_p2p1)
 			free(ccl->buf_p2p1);
+		//cclink_list_delete() frees these again on the way out
+		ccl->buf_p1p2 = NULL;
+		ccl->buf_p2p1 = NULL;
 		return 0;
 	}
-	ccl->buflen_p1p2 = DEFAULT_BUF_SIZE;
-	ccl->buflen_p2p1 = DEFAULT_BUF_SIZE;
+	ccl->buflen_p1p2 = C2C_BUF_SIZE;
+	ccl->buflen_p2p1 = C2C_BUF_SIZE;
 	return 1;
 }
 
@@ -1729,16 +1957,61 @@ int PICA_node_init()
 
 	event_add(listener_event, /*&tv*/ NULL);
 
+	//The UDP socket clients use to learn the address their NAT gives them, on
+	//the port with the same number as the TCP one. A node works without it.
+	listen_udp_sck = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+	if (listen_udp_sck != -1 && bind(listen_udp_sck, (struct sockaddr*)&sd, sizeof(sd)) == -1)
+	{
+		CLOSE(listen_udp_sck);
+		listen_udp_sck = -1;
+	}
+
+	if (listen_udp_sck != -1)
+	{
+		struct event *udp_event;
+
+		IOCTLSETNONBLOCKINGSOCKET(listen_udp_sck, 1);
+
+		udp_event = event_new(pica_event_base, listen_udp_sck, EV_READ|EV_PERSIST, process_udp_read, NULL);
+
+		if (!udp_event)
+			PICA_fatal("failed to allocate UDP socket event");
+
+		event_add(udp_event, NULL);
+	}
+	else
+		PICA_error("unable to open UDP port %u, clients will not be able to learn their UDP addresses from this node - %s",
+		           (unsigned int)ntohs(sd.sin_port), strerror(errno));
+
 	timeout_event = event_new(pica_event_base, -1, EV_TIMEOUT|EV_PERSIST, process_timeout_event, NULL);
 	event_add(timeout_event, &tv);
 
 
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	ctx = SSL_CTX_new(TLS_method());
+	anon_ctx = SSL_CTX_new(TLS_method());
+#else
 	ctx = SSL_CTX_new(TLSv1_2_method());
 	anon_ctx = SSL_CTX_new(TLSv1_2_method());
+#endif
 
 	if (!ctx || !anon_ctx)
 		PICA_fatal("unable to create SSL_CTX object");
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	/* TLS_method() on its own would negotiate the highest version both ends
+	 * know. Narrowing it back to 1.2 is what keeps this the same protocol
+	 * TLSv1_2_method() used to give - see PICA_TLS_MINVERSION for why the
+	 * ceiling matters as much as the floor.
+	 */
+	if (!SSL_CTX_set_min_proto_version(ctx, PICA_TLS_MINVERSION) ||
+	    !SSL_CTX_set_max_proto_version(ctx, PICA_TLS_MAXVERSION) ||
+	    !SSL_CTX_set_min_proto_version(anon_ctx, PICA_TLS_MINVERSION) ||
+	    !SSL_CTX_set_max_proto_version(anon_ctx, PICA_TLS_MAXVERSION))
+		PICA_fatal("failed to restrict the TLS version range to 1.2");
+#endif
 
 	ret = SSL_CTX_set_cipher_list(ctx, PICA_TLS_CIPHERLIST);
 
@@ -1755,7 +2028,7 @@ int PICA_node_init()
 		fclose(dh_file);
 	}
 	else
-		PICA_fatal("Unable to open DH parameters file %", nodecfg.dh_param_file);
+		PICA_fatal("Unable to open DH parameters file %s", nodecfg.dh_param_file);
 
 	ret = SSL_CTX_set_tmp_dh(anon_ctx, dh);
 
@@ -2021,9 +2294,14 @@ void client_tree_remove(struct client* ci)
 		if (lm != ci->right)
 		{
 			lm->up->left = lm->right;
+			if (lm->right)
+				lm->right->up = lm->up; // FIX 1
 			lm->right = ci->right;
+			ci->right->up = lm; // FIX 2
 		}
 		lm->left = ci->left;
+		if (ci->left)
+			ci->left->up = lm; // FIX 3
 		lm->up = ci->up;
 		*p_link = lm;
 	}
@@ -2036,6 +2314,14 @@ struct client *client_list_addnew(struct newconn *nc)
 	ci = (struct client *)calloc(1, sizeof(struct client));
 
 	if (!ci)	return 0;
+
+	ci->r_buf = calloc(1, DEFAULT_BUF_SIZE);
+	if (!ci->r_buf)
+	{
+		free(ci);
+		return 0;
+	}
+	ci->buflen_r = DEFAULT_BUF_SIZE;
 
 	ci->ssl_comm = SSL_new (ctx);
 
@@ -2063,15 +2349,10 @@ struct client *client_list_addnew(struct newconn *nc)
 
 	SSL_set_fd(ci->ssl_comm, ci->sck_comm);
 
-	ci->r_buf = calloc(1, DEFAULT_BUF_SIZE);
-	if (!ci->r_buf)
-	{
-		free(ci);
-		return 0;
-	}
-	ci->buflen_r = DEFAULT_BUF_SIZE;
-
 	ci->tmst = time(0);
+
+	ci->udpaddr_req_allowance = UDPADDR_REQ_BURST;
+	ci->udpaddr_req_tmst = ci->tmst;
 
 	ci->ev_read = event_new(pica_event_base, ci->sck_comm, EV_READ | EV_PERSIST, process_c2n_read, ci);
 	ci->ev_write = event_new(pica_event_base, ci->sck_comm, EV_WRITE, process_c2n_write, ci);
@@ -2156,6 +2437,8 @@ void client_list_delete(struct client* ci)
 	}
 
 	cclink_list_delete_by_client(ci);
+
+	client_udpaddr_token_drop(ci);
 
 	if (ci->r_buf)
 		free(ci->r_buf);
@@ -2242,6 +2525,14 @@ struct nodelink *nodelink_list_addnew(struct newconn *nc)
 	if (!nl)
 		return 0;
 
+	nl->r_buf = calloc(1, DEFAULT_BUF_SIZE);
+	if (!nl->r_buf)
+	{
+		free(nl);
+		return 0;
+	}
+	nl->buflen_r = DEFAULT_BUF_SIZE;
+
 	if (nodelink_list_end)
 	{
 		nodelink_list_end->next = nl;
@@ -2258,14 +2549,6 @@ struct nodelink *nodelink_list_addnew(struct newconn *nc)
 	nl->addr = nc->addr;
 	nl->anonssl = nc->anonssl;
 	nc->anonssl = NULL;
-
-	nl->r_buf = calloc(1, DEFAULT_BUF_SIZE);
-	if (!nl->r_buf)
-	{
-		free(nl);
-		return 0;
-	}
-	nl->buflen_r = DEFAULT_BUF_SIZE;
 
 	nl->tmst = time(0);
 
@@ -2521,7 +2804,7 @@ void process_timeouts_c2n()
 
 		if (kill_ptr)
 		{
-			PICA_info("Disconnecting user %s due to noreply timeout", PICA_id_to_base64(kill_ptr -> id, NULL));
+			PICA_info("Disconnecting user %s due to noreply timeout", PICA_id_to_base64(kill_ptr->id, NULL));
 			client_list_delete(kill_ptr);
 			kill_ptr = 0;
 		}
@@ -2659,6 +2942,10 @@ void process_listen_read(evutil_socket_t listener, short event, void *arg)
 			nc->state = PICA_NEWCONN_WAITANONTLSACCEPT;
 
 			IOCTLSETNONBLOCKINGSOCKET(s, 1);
+			/* the node relays c2c data, so Nagle delays here are added to
+			 * the delay of every message between the two clients
+			 */
+			SETTCPNODELAY(s);
 
 			PICA_debug1("accepted connection from %.16s, new socket %i", inet_ntoa(addr.sin_addr), s);//IPv6
 
@@ -2683,6 +2970,88 @@ void process_listen_read(evutil_socket_t listener, short event, void *arg)
 	}
 
 //IPv6
+}
+
+//Tells a client the address and port its datagram came from - the address its
+//NAT gave to the socket the datagram was sent from.
+//
+//Anyone can send anything to this socket, with any source address, so:
+// - nothing is ever sent from it. The answer goes over the c2n connection of
+//   the client that asked, which leaves nothing to reflect or amplify;
+// - a datagram is acted upon only if it carries a token this node issued over
+//   an authenticated c2n connection moments ago. The token is random, so it
+//   cannot be guessed, and is good for one datagram, so a client is sent one
+//   answer per request it made itself and duplicates are dropped;
+// - a datagram that is not acted upon costs a table lookup and leaves no
+//   state behind, and it is not logged.
+//The source address itself cannot be verified, and does not need to be: it
+//is only reported back to the client the token belongs to.
+void process_udp_read(evutil_socket_t s, short event, void *arg)
+{
+	//one octet more than a valid datagram has, so that a longer one does not
+	//pass for a valid one after being truncated
+	unsigned char buf[PICA_PROTO_MYUDPADDRPROBE_SIZE + 1];
+	int i;
+
+	for (i = 0; i < UDP_READ_BATCH; i++)
+	{
+		struct sockaddr_in from;
+#ifdef WIN32
+		int fromlen = sizeof(from);
+#else
+		socklen_t fromlen = sizeof(from);
+#endif
+		struct client *c;
+		struct PICA_proto_msg *mp;
+		time_t now;
+		int ret;
+
+		ret = recvfrom(s, (char*)buf, sizeof(buf), 0, (struct sockaddr*)&from, &fromlen);
+
+		if (ret == -1)
+		{
+#ifdef WIN32
+			if (WSAGetLastError() == WSAEWOULDBLOCK)
+				break;
+#else
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break;
+#endif
+			//anything else is about the one datagram, e.g. it did not fit
+			//into the buffer on Windows
+			continue;
+		}
+
+		if (ret != PICA_PROTO_MYUDPADDRPROBE_SIZE || buf[0] != PICA_PROTO_MYUDPADDRPROBE || buf[1] != PICA_PROTO_MYUDPADDRPROBE)
+			continue;
+
+		if (fromlen < sizeof(from) || from.sin_family != AF_INET)
+			continue;
+
+		c = udpaddr_token_search(buf + 2);
+
+		if (!c)
+			continue;
+
+		now = time(0);
+		ret = (now >= c->udpaddr_token_tmst && now - c->udpaddr_token_tmst <= UDPADDR_TOKEN_TIMEOUT);
+
+		client_udpaddr_token_drop(c);
+
+		if (!ret)
+			continue;
+
+		PICA_debug3("MYUDPADDRPROBE for client %p from %.16s:%hu", (void*)c, inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+
+		//IPv6
+		if ((mp = client_wbuf_push(c, PICA_PROTO_MYUDPADDR, 2 + PICA_MSG_VARSIZE_INT8 + PICA_PROTO_MYUDPADDR_IPV4_SIZE)))
+		{
+			mp->tail[0] = PICA_PROTO_MYUDPADDR_IPV4_SIZE;
+			mp->tail[1] = PICA_PROTO_MYUDPADDR_IPV4;
+			memcpy(mp->tail + 2, &from.sin_addr.s_addr, 4);
+			memcpy(mp->tail + 6, &from.sin_port, 2);
+		}
+	}
 }
 
 void process_newconn_write(struct newconn *nc)
@@ -3153,6 +3522,8 @@ void process_c2c_write(evutil_socket_t s, short event, void *arg)
 
 	if (cc->bufpos_p1p2)
 	{
+		int attempted = 1;
+
 		if (cc->state == PICA_CCLINK_N2NCLR_ACTIVE) //receiver is on remote node
 		{
 			int sendlen;
@@ -3171,53 +3542,64 @@ void process_c2c_write(evutil_socket_t s, short event, void *arg)
 			else
 				ret = 0;
 		}
-		else if (s == cc->sck_p2)
+		else if (cc->sck_p2 != -1)
 			ret = send(cc->sck_p2, cc->buf_p1p2, cc->bufpos_p1p2, MSG_NOSIGNAL);
+		else
+			attempted = 0; //no local p2 socket to flush into, leave the buffer untouched
 
-		PICA_debug3("process_c2c_write: send  p1p2: ret=%i", ret);
-		if (ret > 0)
+		//ret is only meaningful when one of the branches above ran - this
+		//callback is shared by ev_write_p1/ev_write_p2 and is also invoked
+		//directly with s == -1, so it is routinely entered for a direction
+		//that cannot be flushed on this pass
+		if (attempted)
 		{
-			if (ret < cc->bufpos_p1p2)
-				memmove(cc->buf_p1p2, cc->buf_p1p2 + ret, cc->bufpos_p1p2 - ret); //may be it's better to implement ring buffer here
-			cc->bufpos_p1p2 -= ret;
+			PICA_debug3("process_c2c_write: send  p1p2: ret=%i", ret);
+			if (ret > 0)
+			{
+				if (ret < cc->bufpos_p1p2)
+					memmove(cc->buf_p1p2, cc->buf_p1p2 + ret, cc->bufpos_p1p2 - ret); //may be it's better to implement ring buffer here
+				cc->bufpos_p1p2 -= ret;
 
-			if (cc->bufpos_p1p2 == 0 && cc->sck_p1 != -1)
-				event_add(cc->ev_read_p1, NULL);
+				if (cc->bufpos_p1p2 == 0 && cc->sck_p1 != -1)
+					event_add(cc->ev_read_p1, NULL);
 
-			cc->jam_p1p2 = 0;
-		}
+				cc->jam_p1p2 = 0;
+			}
 
-		if (ret == 0)
-		{
-			kill_ptr = cc;
-		}
-		if (ret == -1)
-		{
+			if (ret == 0)
+			{
+				kill_ptr = cc;
+			}
+			if (ret == -1)
+			{
 #ifdef WIN32
-			ret = WSAGetLastError();
-			if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
-				cc->jam_p1p2 = 1;
-			else
-			{
-				kill_ptr = cc;
-			}
+				ret = WSAGetLastError();
+				if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
+					cc->jam_p1p2 = 1;
+				else
+				{
+					kill_ptr = cc;
+				}
 #else
-			ret = errno;
-			if (ret == EAGAIN || ret == ENOBUFS)
-				cc->jam_p1p2 = 1;
-			else
-			{
-				kill_ptr = cc;
-			}
+				ret = errno;
+				if (ret == EAGAIN || ret == ENOBUFS)
+					cc->jam_p1p2 = 1;
+				else
+				{
+					kill_ptr = cc;
+				}
 #endif
+			}
 		}
 
-		if (!kill_ptr && cc->bufpos_p1p2 && s != -1)
+		if (!kill_ptr && cc->bufpos_p1p2 && cc->ev_write_p2)
 			event_add(cc->ev_write_p2, NULL);
 
 	}
 	if (cc->bufpos_p2p1 /*&& (cc->state==PICA_CCLINK_LOCAL_ACTIVE || cc->state==PICA_CCLINK_N2NCLR_ACTIVE)*/)
 	{
+		int attempted = 1;
+
 		if (cc->state == PICA_CCLINK_N2NCLE_ACTIVE) //receiver is on remote node
 		{
 			int sendlen;
@@ -3236,49 +3618,54 @@ void process_c2c_write(evutil_socket_t s, short event, void *arg)
 			else
 				ret = 0;
 		}
-		else if (s == cc->sck_p1)
+		else if (cc->sck_p1 != -1)
 			ret = send(cc->sck_p1, cc->buf_p2p1, cc->bufpos_p2p1, MSG_NOSIGNAL);
+		else
+			attempted = 0; //no local p1 socket to flush into, leave the buffer untouched
 
-		PICA_debug3("process_c2c_write: send  p2p1: ret=%i", ret);
-		if (ret > 0)
+		if (attempted)
 		{
-			if (ret < cc->bufpos_p2p1)
-				memmove(cc->buf_p2p1, cc->buf_p2p1 + ret, cc->bufpos_p2p1 - ret); //may be it's better to implement ring buffer here
-			cc->bufpos_p2p1 -= ret;
+			PICA_debug3("process_c2c_write: send  p2p1: ret=%i", ret);
+			if (ret > 0)
+			{
+				if (ret < cc->bufpos_p2p1)
+					memmove(cc->buf_p2p1, cc->buf_p2p1 + ret, cc->bufpos_p2p1 - ret); //may be it's better to implement ring buffer here
+				cc->bufpos_p2p1 -= ret;
 
-			if (cc->bufpos_p2p1 == 0 && cc->sck_p2 != -1)
-				event_add(cc->ev_read_p2, NULL);
+				if (cc->bufpos_p2p1 == 0 && cc->sck_p2 != -1)
+					event_add(cc->ev_read_p2, NULL);
 
-			cc->jam_p2p1 = 0;
-		}
+				cc->jam_p2p1 = 0;
+			}
 
-		if (ret == 0)
-		{
-			kill_ptr = cc;
-		}
-		if (ret == -1)
-		{
+			if (ret == 0)
+			{
+				kill_ptr = cc;
+			}
+			if (ret == -1)
+			{
 #ifdef WIN32
-			ret = WSAGetLastError();
-			if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
-				cc->jam_p2p1 = 1;
-			else
-			{
-				kill_ptr = cc;
-			}
+				ret = WSAGetLastError();
+				if (ret == WSAEWOULDBLOCK || ret == WSAENOBUFS)
+					cc->jam_p2p1 = 1;
+				else
+				{
+					kill_ptr = cc;
+				}
 #else
-			ret = errno;
-			if (ret == EAGAIN || ret == ENOBUFS)
-				cc->jam_p2p1 = 1;
-			else
-			{
-				kill_ptr = cc;
-			}
+				ret = errno;
+				if (ret == EAGAIN || ret == ENOBUFS)
+					cc->jam_p2p1 = 1;
+				else
+				{
+					kill_ptr = cc;
+				}
 #endif
 
+			}
 		}
 
-		if (!kill_ptr && cc->bufpos_p2p1 && s != -1)
+		if (!kill_ptr && cc->bufpos_p2p1 && cc->ev_write_p1)
 			event_add(cc->ev_write_p1, NULL);
 
 	}
@@ -3451,7 +3838,7 @@ Options:\n\
 
 void print_version()
 {
-	puts("Pica Pica Node v"PACKAGE_VERSION" \nCopyright  (c) 2012 - 2018 Anton Sviridenko\n");
+	puts("Pica Pica Node v"PACKAGE_VERSION" \nCopyright  (c) 2012 - 2026 Anton Sviridenko\n");
 	puts("protocol version "PICA_PROTO_VER_STRING"\n");
 	puts("License GPLv3: GNU GPL version 3 <http://gnu.org/licenses/gpl.html>\n\
 This is free software: you are free to change and redistribute it.\n\
@@ -3612,6 +3999,88 @@ void ReportSvcStatus( DWORD dwCurrentState,
 }
 #endif
 
+#ifdef HAVE_LIBMINIUPNPC
+/* The port mapping made for the node's listening port, kept for as long as
+ * the node runs so that its lease can be renewed.
+ */
+static struct PICA_upnp_ctx *upnp_ctx;
+static struct event *upnp_refresh_event;
+
+static void upnp_schedule_refresh(void);
+
+static void upnp_refresh_cb(evutil_socket_t fd, short event, void *arg)
+{
+	int ret;
+
+	/* Blocks the event loop for as long as the IGD takes to answer, normally
+	 * a few milliseconds, once in half a lease.
+	 */
+	ret = PICA_upnp_refresh(upnp_ctx);
+
+	if (ret != PICA_UPNP_OK)
+	{
+		PICA_error("UPnP: failed to renew the port mapping, the node may become unreachable from the Internet - %s",
+		           PICA_upnp_strerror(ret));
+		return;
+	}
+
+	upnp_schedule_refresh();
+}
+
+static void upnp_schedule_refresh(void)
+{
+	struct timeval tv;
+	unsigned int lease = PICA_upnp_lease(upnp_ctx);
+
+	/* a permanent mapping still disappears when the IGD reboots */
+	if (lease == 0)
+		lease = PICA_UPNP_LEASE_DEFAULT;
+
+	tv.tv_sec = lease / 2;
+	tv.tv_usec = 0;
+
+	if (!upnp_refresh_event)
+		upnp_refresh_event = evtimer_new(pica_event_base, upnp_refresh_cb, NULL);
+
+	if (upnp_refresh_event)
+		evtimer_add(upnp_refresh_event, &tv);
+}
+
+/* Forwards the listening port, TCP and UDP - the latter carries the "get my
+ * UDP address" datagrams - and reports the IGD's external address.
+ * \return 1 on success
+ */
+static int upnp_forward_listen_port(int port, char *public_ip, size_t public_ip_size)
+{
+	int ret;
+
+	ret = PICA_upnp_discover(PICA_UPNP_DISCOVER_TIMEOUT, &upnp_ctx);
+
+	if (ret != PICA_UPNP_OK)
+	{
+		PICA_info("UPnP: %s", PICA_upnp_strerror(ret));
+		return 0;
+	}
+
+	ret = PICA_upnp_external_addr(upnp_ctx, public_ip, public_ip_size);
+
+	if (ret == PICA_UPNP_OK)
+		ret = PICA_upnp_map(upnp_ctx, port, PICA_UPNP_LEASE_DEFAULT, "Pica Pica node");
+
+	if (ret != PICA_UPNP_OK)
+	{
+		PICA_info("UPnP: failed to forward port %i - %s", port, PICA_upnp_strerror(ret));
+		PICA_upnp_free(upnp_ctx);
+		upnp_ctx = NULL;
+		return 0;
+	}
+
+	upnp_schedule_refresh();
+
+	return 1;
+}
+#endif
+
 int pica_node_main(int argc, char** argv)
 {
 	uint32_t pid;
@@ -3671,12 +4140,10 @@ int pica_node_main(int argc, char** argv)
 		if (PICA_is_reserved_addr_ipv4(guess) && nodecfg.disable_reserved_addrs)
 		{
 			char public_ip[64];
-			int ret;
 
 			PICA_info("trying to get global IP with UPnP...");
 
-			ret = PICA_upnp_autoconfigure_ipv4(atoi(nodecfg.listen_port), atoi(nodecfg.listen_port), public_ip);
-			if (ret)
+			if (upnp_forward_listen_port(atoi(nodecfg.listen_port), public_ip, sizeof(public_ip)))
 			{
 				free(nodecfg.announced_addr);
 				nodecfg.announced_addr = strdup(public_ip);

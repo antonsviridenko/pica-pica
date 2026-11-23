@@ -26,7 +26,8 @@
 
 MainWindow::MainWindow(QWidget *parent) :
 	QMainWindow(parent),
-	ui(new Ui::MainWindow)
+	ui(new Ui::MainWindow),
+	self_aware_cached(false)
 {
 	ui->setupUi(this);
 
@@ -73,11 +74,13 @@ MainWindow::~MainWindow()
 
 void MainWindow::set_offline()
 {
+	self_aware_cached = false;
 	SetStatus(false);
 }
 
 void MainWindow::set_online()
 {
+	self_aware_cached = true;
 	SetStatus(true);
 }
 
@@ -86,12 +89,11 @@ void MainWindow::status_changed(int index)
 	if (status_change_disable_flag)
 		return;
 
-	if (index == 0 && !skynet->isSelfAware())
+	if (index == 0 && !self_aware_cached)
 	{
-		Accounts::AccountRecord curr_acc = skynet->CurrentAccount();
-		skynet->Join(curr_acc);
+		skynet->Join(Accounts::GetCurrentAccount());
 	}
-	if (1 == index && skynet->isSelfAware())
+	if (1 == index && self_aware_cached)
 		skynet->Exit();
 }
 

@@ -25,7 +25,7 @@ ShowPicaIdDialog::ShowPicaIdDialog(QString name, QByteArray id, QString caption,
 	setWindowTitle(caption);
 	QVBoxLayout *layout = new QVBoxLayout(this);
 
-	lbname_ = new QLabel(tr("Account: <b>%1</b>").arg(name));
+	lbname_ = new QLabel(tr("Account: <b>%1</b>").arg(name.toHtmlEscaped()));
 	lbname_ ->setTextFormat(Qt::RichText);
 
 	picaid_ = new QLineEdit();

@@ -16,8 +16,13 @@ export DH_VERBOSE=1
 # This has to be exported to make some magic below work.
 export DH_OPTIONS=-v
 
+# VAAPI, its X11 rendering path and PulseAudio device enumeration are
+# autodetected by configure, which means a missing build dependency would
+# silently produce a package without them. All three are in Build-Depends,
+# so ask for them explicitly and let the build fail if they are not there.
 override_dh_auto_configure:
-	dh_auto_configure -- --localstatedir=/var/lib
+	dh_auto_configure -- --localstatedir=/var/lib \
+		--enable-vaapi --enable-vaapi-x11 --enable-pulse
 
 %:
 	dh $@ 

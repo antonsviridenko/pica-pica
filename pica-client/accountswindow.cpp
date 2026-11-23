@@ -23,7 +23,7 @@
 #include "dialogs/showpicaiddialog.h"
 #include "../PICA_client.h"
 #include "skynet.h"
-#include "openssltool.h"
+#include "openssllib.h"
 #include <QMessageBox>
 #include <QApplication>
 #include <cstring>
@@ -146,7 +146,7 @@ void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, b
 		return;
 	}
 
-	QString name = OpenSSLTool::NameFromCertFile(CertFilename);
+	QString name = OpenSSLLib::NameFromCertFile(CertFilename);
 
 	Accounts::AccountRecord rec;
 	QString certfilename, pkeyfilename;

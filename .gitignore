@@ -115,7 +115,11 @@ ui_*.h
 *.qmlc
 *.jsc
 Makefile.in*
-*build-*
+# Qt Creator shadow build directories. The trailing slash restricts this to
+# directories and the missing leading * makes it an anchor rather than a
+# substring - as plain *build-* it also swallowed any file with "build-"
+# anywhere in its name, deb_packaging/build-*.sh among them.
+build-*/
 
 # Qt unit tests
 target_wrapper.*

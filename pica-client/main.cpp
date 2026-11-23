@@ -17,6 +17,7 @@
 //#include <QtGui/QApplication>
 #include <QCoreApplication>
 #include <QApplication>
+#include <QThread>
 #include "mainwindow.h"
 #include "accountswindow.h"
 #include "globals.h"
@@ -24,8 +25,10 @@
 #include "skynet.h"
 #include "msguirouter.h"
 #include "filetransfercontroller.h"
+#include "audiovideocallcontroller.h"
 #include "picaactioncenter.h"
 #include "picasystray.h"
+#include "vaapi.h"
 #include <QDir>
 #include <QMessageBox>
 #include <QString>
@@ -34,6 +37,7 @@
 #include "dhparam.h"
 #include "settings.h"
 #include "dialogs/settingsdialog.h"
+#include "audiodevice.h"
 
 
 //globals
@@ -51,6 +55,7 @@ QIcon picapica_ico_fly;
 class PicaActionCenter *action_center;
 class PicaSysTray *systray;
 class FileTransferController *ftctrl;
+class AudioVideoCallController *avctrl;
 class AccountsWindow *accwindow;
 
 QString config_defaultDHParam;
@@ -443,9 +448,25 @@ static bool create_config_dir()
 		update_database();
 
 	QFile::setPermissions(config_dbname, QFile::ReadOwner | QFile::WriteOwner);
+
+	// Publish the audio driver choice and the echo cancellation setting to the
+	// audio threads while we are still the only thread and the settings
+	// database is reachable - see AudioDevice::SetLinuxDriverName() for why
+	// they cannot be read on demand.
+	//
+	// The driver first: on Linux it is what decides whether the platform has
+	// any cancellation to offer, which loadEchoCancellationSetting() needs in
+	// order to work out the default.
+	{
+		Settings audiost(config_dbname);
+		AudioDevice::SetLinuxDriverName(audiost.loadValue("audio.driver", "alsa").toString());
+	}
+
+	AudioDevice::SetEchoCancellation(loadEchoCancellationSetting());
+
 	/*if (!QFile::exists(config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE))
 	{
-	    OpenSSLTool osslt;
+	    OpenSSLLib osslt;
 	    msgBox.setText(QString(QObject::tr("Diffie-Hellman parameters will be generated. Please wait. This process can take several minutes...")));
 	    msgBox.exec();
 
@@ -495,7 +516,23 @@ static bool create_config_dir()
 
 int main(int argc, char *argv[])
 {
+#ifdef HAVE_VAAPI
+	// Before Qt opens its X connection, which is the only time Xlib will
+	// listen - see the comment on the function itself.
+	VaapiContext::initX11Threading();
+#endif
+
 	QApplication a(argc, argv);
+
+#ifdef HAVE_VAAPI
+	// Decoded hardware frames travel from the decoding thread to the widget
+	// drawing them through queued signals, which needs their type registered.
+	VaapiContext::registerMetaTypes();
+
+	// Settles how a decoded surface will be drawn in this session, which has
+	// to be known before the first one is created.
+	VaapiContext::detectX11Display();
+#endif
 
 #ifdef WIN32
 	config_resourceDir = QLatin1String("share\\");
@@ -544,9 +581,59 @@ int main(int argc, char *argv[])
 	FileTransferController ftc;
 	ftctrl = &ftc;
 
+	AudioVideoCallController avc;
+	avctrl = &avc;
+
+	// SkyNet owns all the protocol/network state (PICA_c2n/PICA_c2c
+	// connections, the timer-driven PICA_event_loop() polling, and every
+	// protocol callback dispatch). It's moved off the GUI thread onto its
+	// own network thread so that GUI-thread stalls (blocked X11/graphics
+	// calls, a locked screen suspending the process, etc.) can no longer
+	// starve the network connection and cause disconnects. Its public
+	// methods remain safe to call from any thread - see SkyNet::init() and
+	// the do_*() wrapper pattern in skynet.cpp/h.
+	//
+	// Done last, after every controller above has already connected its
+	// signal/slot listeners to skynet while it was still on the GUI
+	// thread, so there is no window during which a listener could miss a
+	// signal skynet emits from its new thread.
+	QThread networkThread;
+	networkThread.setObjectName("SkyNetThread");
+
+	skynet->moveToThread(&networkThread);
+	QObject::connect(&networkThread, SIGNAL(started()), skynet, SLOT(init()));
+	networkThread.start();
+
 	aw.show();
 
 	a.setQuitOnLastWindowClosed(false);
 
-	return a.exec();
+	int ret = a.exec();
+
+	// skynet's thread affinity needs to move back to the main thread
+	// before it (and everything else declared above) gets destroyed as
+	// main() returns - otherwise QObject's destructor can't clean up its
+	// still-registered timers (event_loop_timer_id, c2c_reconnect_timer_id,
+	// ...) and prints "Timers cannot be stopped from another thread".
+	//
+	// QObject::moveToThread() only succeeds when called from the thread
+	// the object is currently on - it can be pushed out from its own
+	// thread, but not pulled in from a different one. So this can't be a
+	// plain skynet->moveToThread(...) call made from here (the main
+	// thread); it has to run as code executing on the network thread
+	// itself, which is what moveBackToMainThread() is for. Using a
+	// blocking queued call guarantees it has actually completed before
+	// the network thread is stopped below - if it ran after quit()/wait(),
+	// there would be no event loop left on that thread to process it.
+	QMetaObject::invokeMethod(skynet, "moveBackToMainThread", Qt::BlockingQueuedConnection);
+
+	// Now stop and join the network thread before any of the objects
+	// above - skynet in particular - start being destroyed as main()
+	// unwinds. Otherwise the network thread could still be executing
+	// SkyNet code while its destructor (and the destructors of objects it
+	// signals) runs concurrently on this thread.
+	networkThread.quit();
+	networkThread.wait();
+
+	return ret;
 }

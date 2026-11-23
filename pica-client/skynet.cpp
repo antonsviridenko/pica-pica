@@ -17,9 +17,11 @@
 #include "skynet.h"
 #include "globals.h"
 #include <QMutex>
+#include <QMetaType>
+#include <QCoreApplication>
 //#include "dialogs/viewcertdialog.h"
 #include "contacts.h"
-#include "openssltool.h"
+#include "openssllib.h"
 //#include <QMessageBox> //debug
 //#include "dialogs/forgedcertdialog.h"
 #include <QDebug>
@@ -27,13 +29,16 @@
 #include "dhparam.h"
 #include "askpassword.h"
 #include "settings.h"
-#include "../PICA_netconf.h"
+#include "directc2csettings.h"
 #include <time.h>
 
 SkyNet::SkyNet()
-	: nodes(config_dbname), QObject(0), active_filetransfers(0)
+	: nodes(nullptr), QObject(0), active_filetransfers(0)
 {
 	self_aware = false;
+	call_waiting_c2c_connect = false;
+
+	qRegisterMetaType<Accounts::AccountRecord>("Accounts::AccountRecord");
 
 	PICA_client_callbacks cbs =
 	{
@@ -57,7 +62,17 @@ SkyNet::SkyNet()
 		c2n_closed_cb,
 		listener_error_cb,
 		multilogin_cb,
-		direct_c2c_established_cb
+		direct_c2c_established_cb,
+		incoming_call_cb,
+		call_picked_up_cb,
+		call_rejected_cb,
+		call_hangup_cb,
+		call_audio_params_cb,
+		call_video_params_cb,
+		call_audio_packet_cb,
+		call_video_packet_cb,
+		call_media_transport_cb
+
 	};
 
 	PICA_client_init(&cbs);
@@ -65,18 +80,79 @@ SkyNet::SkyNet()
 	this->active_nodelink = NULL;
 	this->acc = NULL;
 	this->listener = NULL;
+	this->direct_listener = NULL;
+	listener_setup_pending = false;
+	listener_failed = false;
+	join_deferred = false;
+
+	qRegisterMetaType<quintptr>("quintptr");
 
 	connect(this, SIGNAL(PeerCertificateReceived(QByteArray, QString, bool*)), this, SLOT(verify_peer_cert(QByteArray, QString, bool*)), Qt::DirectConnection);
 	connect(this, SIGNAL(MultiloginMessageReceived(quint64,QString,quint16)), this, SLOT(multilogin_event(quint64,QString,quint16)), Qt::QueuedConnection);
 
-	event_loop_timer_id = startTimer(100);
-	c2c_reconnect_timer_id = startTimer(1000);
 	file_transfer_timer_id = 0;
+	call_timer_id = 0;
+	call_active = false;
 
 }
 
-void SkyNet::active_filetransfers_up()
+SkyNet::~SkyNet()
 {
+	if (direct_listener)
+	{
+		// the UPnP mapping is deleted rather than left to expire
+		QMetaObject::invokeMethod(direct_listener, "release", Qt::BlockingQueuedConnection);
+		direct_listener_thread.quit();
+		direct_listener_thread.wait();
+		delete direct_listener;
+	}
+
+	delete nodes;
+}
+
+// Name of the QSqlDatabase connection opened for this SkyNet instance's own
+// (network) thread - separate from the GUI thread's default connection,
+// since a QSqlDatabase connection can only be used by the thread that
+// created it.
+static const QString network_sql_connection_name = QStringLiteral("network_thread_connection");
+
+void SkyNet::init()
+{
+	QSqlDatabase netdb = QSqlDatabase::addDatabase("QSQLITE", network_sql_connection_name);
+	netdb.setDatabaseName(config_dbname);
+	netdb.open();
+
+	nodes = new Nodes(config_dbname, network_sql_connection_name);
+
+	direct_listener = new DirectListener();
+	direct_listener->moveToThread(&direct_listener_thread);
+	connect(direct_listener, SIGNAL(ready(quintptr,QString,int)),
+	        this, SLOT(listener_ready(quintptr,QString,int)), Qt::QueuedConnection);
+	connect(direct_listener, SIGNAL(upnpChanged(QString,int)),
+	        this, SLOT(listener_upnp_changed(QString,int)), Qt::QueuedConnection);
+	connect(direct_listener, SIGNAL(statusMsg(QString,bool)),
+	        this, SLOT(listener_status_msg(QString,bool)), Qt::QueuedConnection);
+	direct_listener_thread.start();
+
+	event_loop_timer_id = startTimer(100);
+	c2c_reconnect_timer_id = startTimer(1000);
+}
+
+void SkyNet::moveBackToMainThread()
+{
+	moveToThread(QCoreApplication::instance()->thread());
+}
+
+void SkyNet::active_filetransfers_up(QByteArray peer, bool sending)
+{
+	QSet<QByteArray> &counted = sending ? counted_ft_out : counted_ft_in;
+
+	// Idempotent: a transfer already counted (e.g. a second RESUME) must not
+	// be counted twice.
+	if (counted.contains(peer))
+		return;
+
+	counted.insert(peer);
 	active_filetransfers++;
 
 	if (active_filetransfers > 0 && file_transfer_timer_id == 0)
@@ -85,11 +161,18 @@ void SkyNet::active_filetransfers_up()
 	}
 }
 
-void SkyNet::active_filetransfers_down()
+void SkyNet::active_filetransfers_down(QByteArray peer, bool sending)
 {
-	active_filetransfers--;
+	QSet<QByteArray> &counted = sending ? counted_ft_out : counted_ft_in;
 
-	Q_ASSERT(active_filetransfers >= 0);
+	// Idempotent: only a transfer that was actually counted can be removed. A
+	// cancel/ioerror for one that was never accepted (WAITACCEPT) or already
+	// paused is a no-op, rather than wrapping the unsigned counter past zero.
+	if (!counted.contains(peer))
+		return;
+
+	counted.remove(peer);
+	active_filetransfers--;
 
 	if (active_filetransfers == 0 && file_transfer_timer_id != 0)
 	{
@@ -98,8 +181,47 @@ void SkyNet::active_filetransfers_down()
 	}
 }
 
+void SkyNet::call_active_set(bool active, QByteArray peer)
+{
+	if (active)
+	{
+		call_active_peer = peer;
+	}
+	else
+	{
+		// A c2c connection to some other contact going down says nothing
+		// about the call in progress.
+		if (!peer.isEmpty() && !call_active_peer.isEmpty() && peer != call_active_peer)
+			return;
+
+		call_active_peer.clear();
+	}
+
+	if (active == call_active)
+		return;
+
+	call_active = active;
+
+	// Same trick as active_filetransfers_up(): a zero interval timer is not
+	// a busy loop here, because PICA_event_loop() spends its time blocked
+	// inside select(). Without it the network thread only enters select()
+	// once per event_loop_timer_id tick, and an incoming media packet waits
+	// for the rest of that interval before it is read.
+	if (active && call_timer_id == 0)
+	{
+		call_timer_id = startTimer(0);
+	}
+	else if (!active && call_timer_id != 0)
+	{
+		killTimer(call_timer_id);
+		call_timer_id = 0;
+	}
+}
+
 void SkyNet::active_filetransfers_reset()
 {
+	counted_ft_in.clear();
+	counted_ft_out.clear();
 	active_filetransfers = 0;
 
 	if (file_transfer_timer_id != 0)
@@ -130,14 +252,14 @@ void SkyNet::nodelink_activated(PICA_c2n *c2n)
 		self_aware = true;
 		active_nodelink = c2n;
 
-		nodes.MakeClean();
+		nodes->MakeClean();
 
 		emit BecameSelfAware();
 
 		//load undelivered messages from history
 		if (msgqueues.isEmpty())
 		{
-			History h(config_dbname, Accounts::GetCurrentAccount().id);
+			History h(config_dbname, Accounts::GetCurrentAccount().id, network_sql_connection_name);
 
 			msgqueues = h.GetUndeliveredMessages();
 		}
@@ -192,7 +314,7 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 				emit StatusMsg(QString("Node %1:%2 has older protocol. Disconnected.")
 				               .arg(connecting_nodes[i].second.address)
 				               .arg(connecting_nodes[i].second.port),
-				               false);
+				               true);
 				break;
 			}
 
@@ -224,7 +346,7 @@ void SkyNet::multilogin_event(quint64 timestamp, QString node_addr, quint16 node
 
 void SkyNet::node_status_changed(Nodes::NodeRecord nr, bool alive)
 {
-	nodes.UpdateStatus(nr, alive);
+	nodes->UpdateStatus(nr, alive);
 }
 
 void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified)
@@ -232,7 +354,7 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 //    ViewCertDialog vcd;
 //    vcd.SetCert(cert_pem);
 //    vcd.exec();
-	Contacts cnt(config_dbname, Accounts::GetCurrentAccount().id);
+	Contacts cnt(config_dbname, Accounts::GetCurrentAccount().id, network_sql_connection_name);
 	QString stored_cert;
 
 
@@ -244,7 +366,7 @@ void SkyNet::verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verifi
 	{
 		cnt.SetContactCert(peer_id, cert_pem);
 
-		QString name = OpenSSLTool::NameFromCertString(cert_pem);
+		QString name = OpenSSLLib::NameFromCertString(cert_pem);
 
 		cnt.SetContactName(peer_id, name);
 
@@ -339,7 +461,8 @@ void SkyNet::reconnect_c2c()
 
 void SkyNet::timerEvent(QTimerEvent *e)
 {
-	if (e->timerId() == file_transfer_timer_id || e->timerId() == event_loop_timer_id)
+	if (e->timerId() == file_transfer_timer_id || e->timerId() == event_loop_timer_id
+	        || e->timerId() == call_timer_id)
 	{
 		if (connecting_nodes.size() > 0 || self_aware)
 		{
@@ -356,7 +479,12 @@ void SkyNet::timerEvent(QTimerEvent *e)
 
 			nodelinks.append(NULL);
 
-			ret = PICA_event_loop(nodelinks.data(), 25);
+			// A shorter select() timeout while a call is in progress: the
+			// audio and video threads hand their packets over with a queued
+			// invokeMethod(), and Qt cannot deliver those to this thread
+			// while it sits inside select(). The timeout is therefore the
+			// worst case delay added to every outgoing media packet.
+			ret = PICA_event_loop(nodelinks.data(), call_active ? 5 : 25);
 
 			while(!connected_nodes_to_close.empty())
 			{
@@ -376,8 +504,7 @@ void SkyNet::timerEvent(QTimerEvent *e)
 	if (!self_aware && e->timerId() == nodelink_reconnect_timer_id)
 	{
 		killTimer(nodelink_reconnect_timer_id);
-		Accounts::AccountRecord acc = this->CurrentAccount();
-		Join(acc);
+		Join(skynet_account);
 	}
 }
 
@@ -407,15 +534,21 @@ bool SkyNet::open_account()
 	return true;
 }
 
-void SkyNet::Join(Accounts::AccountRecord &accrec)
+void SkyNet::Join(const Accounts::AccountRecord &accrec)
+{
+	QMetaObject::invokeMethod(this, "do_Join", Qt::AutoConnection,
+	                           Q_ARG(Accounts::AccountRecord, accrec));
+}
+
+void SkyNet::do_Join(const Accounts::AccountRecord &accrec)
 {
 	PICA_directc2c_config directc2c_cfg = PICA_DIRECTC2C_CFG_DISABLED;
 	int multilogin = PICA_MULTILOGIN_PROHIBIT;
-	Settings st(config_dbname);
+	Settings st(config_dbname, network_sql_connection_name);
 
 	skynet_account = accrec;
 
-	QList<Nodes::NodeRecord> noderecords = nodes.GetNodes();
+	QList<Nodes::NodeRecord> noderecords = nodes->GetNodes();
 
 	if (!acc)
 	{
@@ -429,49 +562,21 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 		return;
 	}
 
-	directc2c_cfg = (PICA_directc2c_config)st.loadValue("direct_c2c.state", 1).toInt();
+	DirectC2CSettings dcs;
+
+	dcs.load(st);
+
 	multilogin = st.loadValue("multiple_logins.state", PICA_MULTILOGIN_PROHIBIT).toInt();
 
-	if (!listener && directc2c_cfg == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+	// joined from listener_ready(), once the listener is there
+	if (sync_listener(dcs, true))
 	{
-		int pub_port = st.loadValue("direct_c2c.public_port", 2298).toInt();
-		int loc_port = st.loadValue("direct_c2c.local_port", 2298).toInt();
-		QString public_addr = st.loadValue("direct_c2c.public_addr", "autoconfigure").toString();
-
-		if (public_addr.contains("autoconfigure"))
-		{
-			in_addr_t guess;
-			struct in_addr in;
-
-			guess = PICA_guess_listening_addr_ipv4();
-			in.s_addr = guess;
-			public_addr = QString(inet_ntoa(in));
-#ifdef HAVE_LIBMINIUPNPC
-			if (st.loadValue("direct_c2c.upnp_enabled", 1).toBool() && PICA_is_reserved_addr_ipv4(guess))
-			{
-				int ret;
-				char public_ip[64];
-				ret = PICA_upnp_autoconfigure_ipv4(pub_port, loc_port, public_ip);
-
-				if (ret)
-				{
-					public_addr = QString(public_ip);
-				}
-			}
-#endif
-			emit StatusMsg(QString(tr("Using autoconfigured address %1 port %2 for incoming direct connections")).arg(public_addr).arg(pub_port), false);
-		}
-
-		int ret = PICA_new_listener(acc,
-		                            public_addr.toLatin1().constData(),
-		                            pub_port,
-		                            loc_port, &listener);
-		if (ret != PICA_OK)
-		{
-			emit StatusMsg(QString(tr("Failed to open port %1 for incoming direct connections")).arg(loc_port), true);
-			directc2c_cfg = PICA_DIRECTC2C_CFG_CONNECTONLY;
-		}
+		join_deferred = true;
+		return;
 	}
+
+	join_deferred = false;
+	directc2c_cfg = effective_directc2c_config(dcs.state);
 
 	if (!connecting_nodes.empty())
 	{
@@ -498,20 +603,171 @@ void SkyNet::Join(Accounts::AccountRecord &accrec)
 			node_status_changed(noderecords[i], false);
 		}
 	}
-	/*
-	    for (int i=0;i<nodelist.count() && !self_aware;i++)
-	    {//TODO FIXME сделать запуск потоков порциями, а не все сразу
-	        threads.append(new NodeThread(nodelist[i],&self_aware, acc,&nodelink, &write_mutex));
-	        connect(threads.last(), SIGNAL(finished()),this,SLOT(nodethread_finished()));
-	        connect(threads.last(), SIGNAL(NodeStatusChanged(QString,quint16,bool)), this, SLOT(node_status_changed(QString,quint16,bool)));
-	        connect(threads.last(), SIGNAL(ConnectedToNode(QString,quint16,NodeThread*)), this, SLOT(nodethread_connected(QString,quint16,NodeThread*)));
-	        connect(threads.last(), SIGNAL(ErrorMsg(QString)), this, SIGNAL(ErrMsgFromNode(QString)));
-		}*/
-
 }
 
 void SkyNet::Exit()
 {
+	QMetaObject::invokeMethod(this, "do_Exit", Qt::AutoConnection);
+}
+
+void SkyNet::ApplyDirectC2CSettings()
+{
+	QMetaObject::invokeMethod(this, "do_ApplyDirectC2CSettings", Qt::AutoConnection);
+}
+
+void SkyNet::do_ApplyDirectC2CSettings()
+{
+	Settings st(config_dbname, network_sql_connection_name);
+	DirectC2CSettings dcs;
+
+	dcs.load(st);
+
+	// the user may have just fixed what made it fail
+	listener_failed = false;
+
+	// Offline, do_Join() sets the listener up when it is time to.
+	sync_listener(dcs, online());
+
+	set_nodelinks_directc2c(dcs.state);
+}
+
+bool SkyNet::online() const
+{
+	return self_aware || !connecting_nodes.isEmpty();
+}
+
+bool SkyNet::sync_listener(const DirectC2CSettings &dcs, bool start)
+{
+	bool wanted = dcs.state == PICA_DIRECTC2C_CFG_ALLOWINCOMING;
+
+	if (listener && (!wanted || !dcs.sameListener(listener_cfg)))
+		drop_listener();
+
+	// One being set up for settings that have changed since is dealt with
+	// in listener_ready().
+	if (listener_setup_pending)
+		return true;
+
+	if (!wanted || listener || listener_failed || !start)
+		return false;
+
+	start_listener_setup(dcs);
+
+	return true;
+}
+
+void SkyNet::start_listener_setup(const DirectC2CSettings &dcs)
+{
+	listener_cfg = dcs;
+	listener_setup_pending = true;
+
+	QMetaObject::invokeMethod(direct_listener, "setup", Qt::QueuedConnection,
+	                          Q_ARG(quintptr, (quintptr)acc),
+	                          Q_ARG(int, dcs.addrConfig),
+	                          Q_ARG(bool, dcs.upnp),
+	                          Q_ARG(int, dcs.localPort),
+	                          Q_ARG(QString, DirectC2CSettings::formatAddrs(dcs.addrs)));
+}
+
+void SkyNet::drop_listener()
+{
+	struct PICA_listener *l = listener;
+
+	listener = NULL;
+
+	// no node connection may refer to it once it is closed
+	set_nodelinks_directc2c(listener_cfg.state);
+
+	PICA_close_listener(l);
+
+	// deletes the UPnP port mapping
+	QMetaObject::invokeMethod(direct_listener, "release", Qt::QueuedConnection);
+
+	emit StatusMsg(tr("Stopped listening for incoming direct connections"), false);
+}
+
+PICA_directc2c_config SkyNet::effective_directc2c_config(int state) const
+{
+	if (state == PICA_DIRECTC2C_CFG_ALLOWINCOMING && !listener)
+		return PICA_DIRECTC2C_CFG_CONNECTONLY;
+
+	return (PICA_directc2c_config)state;
+}
+
+void SkyNet::set_nodelinks_directc2c(int state)
+{
+	PICA_directc2c_config cfg = effective_directc2c_config(state);
+
+	if (active_nodelink)
+		PICA_c2n_set_directc2c(active_nodelink, cfg, listener);
+
+	for (int i = 0; i < connecting_nodes.size(); i++)
+		PICA_c2n_set_directc2c(connecting_nodes[i].first, cfg, listener);
+}
+
+void SkyNet::listener_ready(quintptr l, QString upnp_addr, int upnp_port)
+{
+	Settings st(config_dbname, network_sql_connection_name);
+	DirectC2CSettings dcs;
+
+	listener_setup_pending = false;
+
+	dcs.load(st);
+
+	if (dcs.state != PICA_DIRECTC2C_CFG_ALLOWINCOMING || !dcs.sameListener(listener_cfg))
+	{
+		// the settings changed while it was being set up
+		if (l)
+		{
+			PICA_close_listener((struct PICA_listener *)l);
+			QMetaObject::invokeMethod(direct_listener, "release", Qt::QueuedConnection);
+		}
+
+		if (sync_listener(dcs, join_deferred || online()))
+			return;
+	}
+	else if (l)
+	{
+		listener = (struct PICA_listener *)l;
+
+		// also when there is no mapping: a change reported for the mapping
+		// of a listener closed before may have arrived in between
+		PICA_listener_set_upnp_addr(listener, upnp_addr.isEmpty() ? NULL : upnp_addr.toLatin1().constData(),
+		                            upnp_port);
+	}
+	else
+	{
+		// connect-only until the settings are changed or the client is
+		// restarted, rather than failing again on every reconnection
+		listener_failed = true;
+	}
+
+	if (join_deferred)
+		do_Join(skynet_account);
+	else
+		set_nodelinks_directc2c(dcs.state);
+}
+
+void SkyNet::listener_upnp_changed(QString upnp_addr, int upnp_port)
+{
+	if (!listener)
+		return;
+
+	if (upnp_addr.isEmpty())
+		PICA_listener_set_upnp_addr(listener, NULL, 0);
+	else
+		PICA_listener_set_upnp_addr(listener, upnp_addr.toLatin1().constData(), upnp_port);
+}
+
+void SkyNet::listener_status_msg(QString msg, bool is_critical)
+{
+	emit StatusMsg(msg, is_critical);
+}
+
+void SkyNet::do_Exit()
+{
+	join_deferred = false;
+
 	if (self_aware && active_nodelink)
 	{
 		PICA_close_c2n(active_nodelink);
@@ -521,6 +777,7 @@ void SkyNet::Exit()
 	self_aware = false;
 
 	active_filetransfers_reset();
+	call_active_set(false, QByteArray());
 
 	msgqueues.clear();
 
@@ -532,12 +789,13 @@ void SkyNet::Exit()
 	emit LostSelfAwareness();
 }
 
-bool SkyNet::isSelfAware()
+void SkyNet::SendFile(QByteArray to, QString filepath)
 {
-	return self_aware;
+	QMetaObject::invokeMethod(this, "do_SendFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(QString, filepath));
 }
 
-void SkyNet::SendFile(QByteArray to, QString filepath)
+void SkyNet::do_SendFile(QByteArray to, QString filepath)
 {
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
@@ -582,6 +840,12 @@ void SkyNet::SendFile(QByteArray to, QString filepath)
 
 void SkyNet::AcceptFile(QByteArray from, QString filepath)
 {
+	QMetaObject::invokeMethod(this, "do_AcceptFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, from), Q_ARG(QString, filepath));
+}
+
+void SkyNet::do_AcceptFile(QByteArray from, QString filepath)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -596,12 +860,18 @@ void SkyNet::AcceptFile(QByteArray from, QString filepath)
 			//show error somewhere somehow
 		}
 		else
-			active_filetransfers_up();
+			active_filetransfers_up(from, false);
 	}
 
 }
 
 void SkyNet::DenyFile(QByteArray from)
+{
+	QMetaObject::invokeMethod(this, "do_DenyFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, from));
+}
+
+void SkyNet::do_DenyFile(QByteArray from)
 {
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
@@ -622,6 +892,12 @@ void SkyNet::DenyFile(QByteArray from)
 
 void SkyNet::PauseFile(QByteArray peer_id, bool pause_sending)
 {
+	QMetaObject::invokeMethod(this, "do_PauseFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, peer_id), Q_ARG(bool, pause_sending));
+}
+
+void SkyNet::do_PauseFile(QByteArray peer_id, bool pause_sending)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -641,6 +917,12 @@ void SkyNet::PauseFile(QByteArray peer_id, bool pause_sending)
 
 void SkyNet::ResumeFile(QByteArray peer_id, bool resume_sending)
 {
+	QMetaObject::invokeMethod(this, "do_ResumeFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, peer_id), Q_ARG(bool, resume_sending));
+}
+
+void SkyNet::do_ResumeFile(QByteArray peer_id, bool resume_sending)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -659,6 +941,12 @@ void SkyNet::ResumeFile(QByteArray peer_id, bool resume_sending)
 
 void SkyNet::CancelFile(QByteArray peer_id, bool cancel_sending)
 {
+	QMetaObject::invokeMethod(this, "do_CancelFile", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, peer_id), Q_ARG(bool, cancel_sending));
+}
+
+void SkyNet::do_CancelFile(QByteArray peer_id, bool cancel_sending)
+{
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
 
@@ -676,6 +964,12 @@ void SkyNet::CancelFile(QByteArray peer_id, bool cancel_sending)
 }
 
 void SkyNet::SendMessage(QByteArray to, QString msg)
+{
+	QMetaObject::invokeMethod(this, "do_SendMessage", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(QString, msg));
+}
+
+void SkyNet::do_SendMessage(QByteArray to, QString msg)
 {
 	int ret = PICA_OK;
 	struct PICA_c2c *iptr;
@@ -716,6 +1010,221 @@ void SkyNet::SendMessage(QByteArray to, QString msg)
 	if (ret != PICA_OK)
 		emit UnableToDeliver(to, msg);
 
+}
+
+void SkyNet::AcceptCall(QByteArray from)
+{
+	QMetaObject::invokeMethod(this, "do_AcceptCall", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, from));
+}
+
+void SkyNet::do_AcceptCall(QByteArray from)
+{
+	int ret = PICA_OK;
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(from)))
+	{
+		ret = PICA_pickup_call(iptr);
+
+		if (ret != PICA_OK)
+			emit CallFailed(from, QString(tr("Failed to pickup the call: %1")).arg(ret));
+		else
+			call_active_set(true, from);
+
+		return;
+	}
+
+	/* the connection the call came in on is gone */
+	emit CallFailed(from, QString(tr("Failed to pickup the call: not connected")));
+}
+
+void SkyNet::RejectCall(QByteArray from)
+{
+	QMetaObject::invokeMethod(this, "do_RejectCall", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, from));
+}
+
+void SkyNet::do_RejectCall(QByteArray from)
+{
+	int ret = PICA_OK;
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(from)))
+	{
+		ret = PICA_reject_call(iptr);
+
+		/* the caller gave up first - nothing left to reject */
+		if (ret != PICA_OK && ret != PICA_ERRCALLNOTINPROGRESS)
+			emit CallFailed(from, QString(tr("Failed to reject the call: %1")).arg(ret));
+
+		call_active_set(false, from);
+
+		return;
+	}
+
+}
+
+void SkyNet::HangupCall(QByteArray with)
+{
+	QMetaObject::invokeMethod(this, "do_HangupCall", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, with));
+}
+
+void SkyNet::do_HangupCall(QByteArray with)
+{
+	int ret = PICA_OK;
+	struct PICA_c2c *iptr;
+
+	/* hung up while still connecting to the peer - do not start the call
+	   once the connection is there */
+	if (is_call_waiting_for(with))
+		call_waiting_c2c_connect = false;
+
+	if ((iptr = find_active_chan(with)))
+	{
+		ret = PICA_hangup_call(iptr);
+
+		/* the other side ended the call first - nothing left to hang up */
+		if (ret != PICA_OK && ret != PICA_ERRCALLNOTINPROGRESS)
+			emit CallFailed(with, QString(tr("Failed to hang up the call: %1")).arg(ret));
+
+		call_active_set(false, with);
+
+		return;
+	}
+
+}
+
+void SkyNet::SendAudioParams(QByteArray to, QString codec, quint16 sample_rate)
+{
+	QMetaObject::invokeMethod(this, "do_SendAudioParams", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(QString, codec), Q_ARG(quint16, sample_rate));
+}
+
+void SkyNet::do_SendAudioParams(QByteArray to, QString codec, quint16 sample_rate)
+{
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		PICA_set_call_audio_params(iptr, codec.toLatin1().constData(), sample_rate);
+	}
+}
+
+void SkyNet::SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	QMetaObject::invokeMethod(this, "do_SendAudioPacket", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(quint16, seq_num), Q_ARG(quint32, timestamp), Q_ARG(QByteArray, data));
+}
+
+void SkyNet::do_SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		PICA_send_audio_packet(iptr, seq_num, timestamp, data.constData(), data.size());
+	}
+}
+
+void SkyNet::SendVideoParams(QByteArray to, QString codec, quint16 width, quint16 height)
+{
+	QMetaObject::invokeMethod(this, "do_SendVideoParams", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(QString, codec), Q_ARG(quint16, width), Q_ARG(quint16, height));
+}
+
+void SkyNet::do_SendVideoParams(QByteArray to, QString codec, quint16 width, quint16 height)
+{
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		PICA_set_call_video_params(iptr, codec.toLatin1().constData(), width, height);
+	}
+}
+
+void SkyNet::SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	QMetaObject::invokeMethod(this, "do_SendVideoPacket", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to), Q_ARG(quint16, seq_num), Q_ARG(quint32, timestamp), Q_ARG(QByteArray, data));
+}
+
+void SkyNet::do_SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		PICA_send_video_packet(iptr, seq_num, timestamp, data.constData(), data.size());
+	}
+}
+
+void SkyNet::StartCall(QByteArray to)
+{
+	QMetaObject::invokeMethod(this, "do_StartCall", Qt::AutoConnection,
+	                           Q_ARG(QByteArray, to));
+}
+
+void SkyNet::do_StartCall(QByteArray to)
+{
+	if (!self_aware)
+	{
+		emit CallFailed(to, QString(tr("Pica Pica client is not online")));
+		return;
+	}
+
+	int ret = PICA_OK;
+	struct PICA_c2c *iptr;
+
+	if ((iptr = find_active_chan(to)))
+	{
+		ret = PICA_start_call(iptr);
+
+		if (ret != PICA_OK)
+			emit CallFailed(to, QString(tr("Failed to initiate the call: %1")).arg(ret));
+
+		return;
+	}
+
+	call_waiting_c2c_connect = true;
+	call_waiting_to = to;
+
+	struct PICA_c2c *chan = NULL;
+
+	ret = PICA_new_c2c(active_nodelink, (const unsigned char*)to.constData(), NULL, &chan);
+
+	if (ret != PICA_OK)
+	{
+		call_waiting_c2c_connect = false;
+		emit CallFailed(to, QString(tr("Failed to create the C2C connection for the call: %1")).arg(ret));
+	}
+}
+
+bool SkyNet::is_call_waiting_for(const QByteArray &peer_id)
+{
+	if (call_waiting_c2c_connect && call_waiting_to == peer_id)
+		return true;
+
+	return false;
+}
+
+void SkyNet::continue_start_call()
+{
+	int ret = PICA_ERRCALLNOTINPROGRESS;
+	struct PICA_c2c *iptr;
+
+	/* The wait is over whichever way this goes. Left set, it would start a
+	   call again every time a connection to this peer is established. */
+	call_waiting_c2c_connect = false;
+
+	if ((iptr = find_active_chan(call_waiting_to)))
+	{
+		ret = PICA_start_call(iptr);
+	}
+
+	if (ret != PICA_OK)
+		emit CallFailed(call_waiting_to, QString(tr("Failed to initiate the call: %1")).arg(ret));
 }
 
 void SkyNet::flush_queues(QByteArray to)
@@ -911,6 +1420,56 @@ void SkyNet::emit_ConnectionStatusUpdated(QByteArray peer_id, QString status)
 	emit ConnectionStatusUpdated(peer_id, status);
 }
 
+void SkyNet::emit_CallFailed(QByteArray peer_id, QString reason)
+{
+	emit CallFailed(peer_id, reason);
+}
+
+void SkyNet::emit_IncomingCall(QByteArray from)
+{
+	emit IncomingCall(from);
+}
+
+void SkyNet::emit_CallAccepted(QByteArray by)
+{
+	emit CallAccepted(by);
+}
+
+void SkyNet::emit_CallRejected(QByteArray by)
+{
+	emit CallRejected(by);
+}
+
+void SkyNet::emit_CallHungup(QByteArray by)
+{
+	emit CallHungup(by);
+}
+
+void SkyNet::emit_IncomingAudioParams(QByteArray peer_id, QString codec, quint16 sample_rate)
+{
+	emit IncomingAudioParams(peer_id, codec, sample_rate);
+}
+
+void SkyNet::emit_IncomingAudioPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	emit IncomingAudioPacket(peer_id, seq_num, timestamp, data);
+}
+
+void SkyNet::emit_IncomingVideoParams(QByteArray peer_id, QString codec, quint16 width, quint16 height)
+{
+	emit IncomingVideoParams(peer_id, codec, width, height);
+}
+
+void SkyNet::emit_IncomingVideoPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	emit IncomingVideoPacket(peer_id, seq_num, timestamp, data);
+}
+
+void SkyNet::emit_CallMediaTransportChanged(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload)
+{
+	emit CallMediaTransportChanged(peer_id, direct_udp, ciphersuitename, max_payload);
+}
+
 //callbacks
 
 void SkyNet::newmsg_cb(const unsigned char *peer_id, const char *msgbuf, unsigned int nb, int type)
@@ -927,16 +1486,30 @@ void SkyNet::msgok_cb(const unsigned char *peer_id)
 
 void SkyNet::c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
 {
-	skynet->reset_c2c_reconnect_timeout(QByteArray((const char*)peer_id, PICA_ID_SIZE));
-	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString("🔐: %1 c2c").arg(ciphersuitename));
-	skynet->flush_queues(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+	skynet->reset_c2c_reconnect_timeout(peer);
+	skynet->emit_ConnectionStatusUpdated(peer, QString("🔐: %1 c2c").arg(ciphersuitename));
+	skynet->flush_queues(peer);
+
+	if (skynet->is_call_waiting_for(peer))
+	{
+		skynet->continue_start_call();
+	}
 }
 
 void SkyNet::c2c_failed(const unsigned char *peer_id)
 {
-	skynet->update_c2c_reconnect_timeout(QByteArray((const char*)peer_id, PICA_ID_SIZE));
-	qDebug() << "c2c failed (" << QByteArray((const char*)peer_id, PICA_ID_SIZE).toBase64() << ")\n";
-	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString(tr("Failed to connect")));
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+
+	skynet->update_c2c_reconnect_timeout(peer);
+	qDebug() << "c2c failed (" << peer.toBase64() << ")\n";
+	skynet->emit_ConnectionStatusUpdated(peer, QString(tr("Failed to connect")));
+
+	if (skynet->is_call_waiting_for(peer))
+	{
+		skynet->emit_CallFailed(peer, QString(tr("Failed to establish the C2C connection to %1")).arg(QString(peer.toBase64())));
+		skynet->call_waiting_c2c_connect = false;
+	}
 }
 
 int SkyNet::accept_cb(const unsigned char *caller_id)
@@ -946,20 +1519,16 @@ int SkyNet::accept_cb(const unsigned char *caller_id)
 
 void SkyNet::notfound_cb(const unsigned char *callee_id)
 {
-	skynet->update_c2c_reconnect_timeout(QByteArray((const char*)callee_id, PICA_ID_SIZE));
-	qDebug() << "not found (" << QByteArray((const char*)callee_id, PICA_ID_SIZE).toBase64() << ")\n";
+	QByteArray peer((const char*)callee_id, PICA_ID_SIZE);
 
-	/*
-	if (skynet->msgqueues.contains(callee_id))
+	skynet->update_c2c_reconnect_timeout(peer);
+	qDebug() << "not found (" << peer.toBase64() << ")\n";
+
+	if (skynet->is_call_waiting_for(peer))
 	{
-	  while ( ! skynet->msgqueues[callee_id].empty())
-	  {
-	    skynet->emit_UnableToDeliver(callee_id, skynet->msgqueues[callee_id].last());
-	    skynet->msgqueues[callee_id].removeLast();
-	  }
-	  // msgqueues.remove(callee_id) was forgotten
+		skynet->emit_CallFailed(peer, QString(tr("Requested peer was not found online in the Pica Pica network")));
+		skynet->call_waiting_c2c_connect = false;
 	}
-	*/
 }
 
 void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
@@ -969,12 +1538,14 @@ void SkyNet::c2c_closed_cb(const unsigned char *peer_id, int reason)
 
 	skynet->emit_c2cClosed(QByteArray((const char*)peer_id, PICA_ID_SIZE));
 	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString(tr("Disconnected")));
+	/* a call carried by this connection cannot continue */
+	skynet->call_active_set(false, QByteArray((const char*)peer_id, PICA_ID_SIZE));
 }
 
 void SkyNet::nodelist_cb(int type, void *addr_bin, const char *addr_str, unsigned int port)
 {
 	Nodes::NodeRecord nr = {addr_str, static_cast<quint16>(port)};
-	skynet->nodes.Add(nr);
+	skynet->nodes->Add(nr);
 }
 
 int SkyNet::peer_cert_verify_cb(const unsigned char *peer_id, const char *cert_pem, unsigned int nb)
@@ -1001,7 +1572,7 @@ void SkyNet::accepted_file_cb(const unsigned char *peer_id)
 {
 	qDebug() << "FILE: file was accepted by remote side\n";
 
-	skynet->active_filetransfers_up();
+	skynet->active_filetransfers_up(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 	skynet->emit_OutgoingFileRequestAccepted(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 }
 
@@ -1026,22 +1597,22 @@ void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd,
 		switch(sender_cmd)
 		{
 		case PICA_PROTO_FILECONTROL_PAUSE:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), false);
 			skynet->emit_IncomingFilePaused(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_RESUME:
-			skynet->active_filetransfers_up();
+			skynet->active_filetransfers_up(QByteArray((const char *)peer_id, PICA_ID_SIZE), false);
 			skynet->emit_IncomingFileResumed(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_CANCEL:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), false);
 			skynet->emit_IncomingFileCancelled(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_IOERROR:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), false);
 			skynet->emit_IncomingFileIoError(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 		}
@@ -1051,22 +1622,22 @@ void SkyNet::file_control(const unsigned char *peer_id, unsigned int sender_cmd,
 		switch(receiver_cmd)
 		{
 		case PICA_PROTO_FILECONTROL_PAUSE:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 			skynet->emit_OutgoingFilePaused(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_RESUME:
-			skynet->active_filetransfers_up();
+			skynet->active_filetransfers_up(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 			skynet->emit_OutgoingFileResumed(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_CANCEL:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 			skynet->emit_OutgoingFileCancelled(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 
 		case PICA_PROTO_FILECONTROL_IOERROR:
-			skynet->active_filetransfers_down();
+			skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), true);
 			skynet->emit_OutgoingFileIoError(QByteArray((const char *)peer_id, PICA_ID_SIZE));
 			break;
 		}
@@ -1077,7 +1648,7 @@ void SkyNet::file_finished(const unsigned char *peer_id, int sending)
 {
 	qDebug() << "file_finished callback\n";
 
-	skynet->active_filetransfers_down();
+	skynet->active_filetransfers_down(QByteArray((const char *)peer_id, PICA_ID_SIZE), sending);
 
 	if (sending)
 		skynet->emit_OutgoingFileFinished(QByteArray((const char *)peer_id, PICA_ID_SIZE));
@@ -1113,4 +1684,67 @@ void SkyNet::multilogin_cb(uint64_t timestamp, void *addr_bin, const char *addr_
 void SkyNet::direct_c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
 {
 	skynet->emit_ConnectionStatusUpdated(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString("🔐: %1 direct c2c").arg(ciphersuitename));
+}
+
+void SkyNet::incoming_call_cb(const unsigned char *peer_id)
+{
+	skynet->emit_IncomingCall(QByteArray((const char*)peer_id, PICA_ID_SIZE));
+}
+
+void SkyNet::call_picked_up_cb(const unsigned char *peer_id)
+{
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+
+	skynet->call_active_set(true, peer);
+	skynet->emit_CallAccepted(peer);
+}
+
+void SkyNet::call_rejected_cb(const unsigned char *peer_id)
+{
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+
+	skynet->call_active_set(false, peer);
+	skynet->emit_CallRejected(peer);
+}
+
+void SkyNet::call_hangup_cb(const unsigned char *peer_id)
+{
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+
+	skynet->call_active_set(false, peer);
+	skynet->emit_CallHungup(peer);
+}
+
+void SkyNet::call_audio_params_cb(const unsigned char *peer_id, const char *codec, uint16_t sample_rate)
+{
+	skynet->emit_IncomingAudioParams(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString::fromLatin1(codec), sample_rate);
+}
+
+void SkyNet::call_video_params_cb(const unsigned char *peer_id, const char *codec, uint16_t width, uint16_t height)
+{
+	skynet->emit_IncomingVideoParams(QByteArray((const char*)peer_id, PICA_ID_SIZE), QString::fromLatin1(codec), width, height);
+}
+
+void SkyNet::call_audio_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data)
+{
+	skynet->emit_IncomingAudioPacket(QByteArray((const char*)peer_id, PICA_ID_SIZE), seq_num, timestamp, QByteArray(pkt_data, size));
+}
+
+void SkyNet::call_video_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data)
+{
+	skynet->emit_IncomingVideoPacket(QByteArray((const char*)peer_id, PICA_ID_SIZE), seq_num, timestamp, QByteArray(pkt_data, size));
+}
+
+void SkyNet::call_media_transport_cb(const unsigned char *peer_id, int transport, const char *ciphersuitename, unsigned int max_payload)
+{
+	QByteArray peer((const char*)peer_id, PICA_ID_SIZE);
+	bool direct_udp = (transport == PICA_CALL_TRANSPORT_MEDIAC2C);
+
+	skynet->emit_ConnectionStatusUpdated(peer, direct_udp
+	                                     ? QString("🔐: %1 media").arg(ciphersuitename)
+	                                     : QString(tr("call media over the c2c connection")));
+
+	skynet->emit_CallMediaTransportChanged(peer, direct_udp,
+	                                       ciphersuitename ? QString::fromLatin1(ciphersuitename) : QString(),
+	                                       max_payload);
 }

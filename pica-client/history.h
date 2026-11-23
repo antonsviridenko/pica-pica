@@ -35,7 +35,8 @@ public:
 		QString message;
 	};
 
-	History(QString storage, QByteArray my_id);
+	// See Nodes::Nodes() for what connectionName selects and why.
+	History(QString storage, QByteArray my_id, QString connectionName = QString());
 	void Add(QByteArray peer_id, QString message, bool is_me);//is_me - true - message from me to peer, false - from peer to me
 	void SetDelivered(QByteArray peer_id); //mark first undelivered message from me to peer as delivered
 	QList<HistoryRecord> GetMessages(QByteArray peer_id, quint32 start_timestamp, quint32 end_timestamp);

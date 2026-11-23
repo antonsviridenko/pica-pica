@@ -33,6 +33,7 @@ public:
 	QAction *addcontactAct;
 	QAction *delcontactAct;
 	QAction *startchatAct;
+	QAction *startcallAct;
 	QAction *viewcertAct;
 	QAction *showidAct;
 	QAction *sendfileAct;
@@ -59,6 +60,7 @@ private slots:
 	void add_contact();
 	void del_contact();
 	void start_chat();
+	void start_call();
 	void view_cert();
 	void show_id();
 	void send_file();

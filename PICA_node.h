@@ -27,6 +27,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/select.h>
@@ -51,6 +52,7 @@
 #include <time.h>
 #include "PICA_nodeaddrlist.h"
 #include "PICA_id.h"
+#include "PICA_proto.h"
 
 #include <event2/event.h>
 
@@ -102,6 +104,15 @@
 
 #define DEFAULT_BUF_SIZE 4096
 
+//Relay buffers of a c2c link. procmsg_N2NMSG() drops the whole link when an
+//incoming N2NMSG does not fit into the free space left in these, and the
+//announced payload length of an N2NMSG is a 16 bit field less the two peer ids
+//(65535 - 2 * PICA_ID_SIZE), so anything below 64K makes that a routine event
+//instead of an exceptional one - a link carrying a call has a backlog in both
+//directions most of the time. Deliberately not DEFAULT_BUF_SIZE: that one is
+//also the r_buf/w_buf granularity paid for by every connected client.
+#define C2C_BUF_SIZE 65536
+
 struct nodelink;
 
 struct client
@@ -132,6 +143,16 @@ struct client
 	int disconnect_ticking;//on sending message TO client this var is set to 1, on receiving some message FROM client this var is reset to 0
 	struct event *ev_read;
 	struct event *ev_write;
+
+	//Pending "get my UDP address" request. The token is what ties a datagram
+	//arriving at the UDP socket to this connection, see process_udp_read()
+	unsigned char udpaddr_token[PICA_PROTO_MYUDPADDR_TOKENSIZE];
+	int udpaddr_token_issued;
+	time_t udpaddr_token_tmst;
+	struct client *udpaddr_token_next;//next client in the same bucket of udpaddr_tokens[]
+	//how many more MYUDPADDRREQ messages are served right now, see client_udpaddr_req_allowed()
+	unsigned int udpaddr_req_allowance;
+	time_t udpaddr_req_tmst;
 };
 
 struct cclink //структура, описывающая соединение двух клиентов между собой через сервер

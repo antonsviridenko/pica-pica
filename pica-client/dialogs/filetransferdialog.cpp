@@ -44,6 +44,10 @@ FileTransferDialog::FileTransferDialog(QByteArray peer_id, QString filename, qui
 
 	lbFilename = new QLabel(this);
 	lbPeer = new QLabel(this);
+	// Both carry peer-supplied text (file name, certificate-derived name),
+	// so keep them literal rather than letting Qt render them as rich text.
+	lbFilename->setTextFormat(Qt::PlainText);
+	lbPeer->setTextFormat(Qt::PlainText);
 	lbProgressStatus = new QLabel(this);
 	lbTransferSpeed = new QLabel(this);
 	lbRemainingTime = new QLabel(this);

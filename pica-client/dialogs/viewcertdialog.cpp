@@ -15,7 +15,7 @@
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "viewcertdialog.h"
-#include "../openssltool.h"
+#include "../openssllib.h"
 #include <QVBoxLayout>
 #include <QMessageBox>
 #include <QFile>
@@ -53,7 +53,7 @@ ViewCertDialog::ViewCertDialog(QWidget *parent) :
 
 void ViewCertDialog::SetCert(QString cert_pem)
 {
-	cert_text->setPlainText(OpenSSLTool::CertTextFromString(cert_pem));
+	cert_text->setPlainText(OpenSSLLib::CertTextFromString(cert_pem));
 }
 
 void ViewCertDialog::OK()

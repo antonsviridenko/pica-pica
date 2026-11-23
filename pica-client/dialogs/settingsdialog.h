@@ -24,12 +24,36 @@
 #include <QRadioButton>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QLabel>
+#include <QTableWidget>
+#include <QThread>
+#include <QImage>
+#include <QList>
+#include <QTimer>
+#include <QElapsedTimer>
+#include "../mediadevice.h"
+#include "../audiodevice.h"
+#include "../videodevice.h"
+#include "../videoscaler.h"
+#include "../toneplayer/toneplayer.h"
+#ifdef HAVE_VAAPI
+#include "../vaapi.h"
+#endif
 
 class SettingsDialog : public QDialog
 {
 	Q_OBJECT
 public:
 	explicit SettingsDialog(QWidget *parent = 0);
+	~SettingsDialog();
+
+	// Watches videoPreview for its own resizes, which is where the size the
+	// test's frames should be decoded to is decided. Doing this from the
+	// dialog's resizeEvent() instead would read the label's geometry before
+	// the layout has updated it, and would miss the resizes the layout causes
+	// on its own - the tab's other rows changing height moves the preview
+	// without the dialog changing size at all.
+	bool eventFilter(QObject *watched, QEvent *event) override;
 
 signals:
 
@@ -40,17 +64,248 @@ private:
 	QRadioButton *rbDisableDirectConns;
 	QRadioButton *rbEnableOutgoingConns;
 	QRadioButton *rbEnableIncomingConns;
-#ifdef HAVE_LIBMINIUPNPC
+	// Everything below "Enable incoming direct connections", disabled
+	// together with it.
+	QWidget *incomingBox;
+	// Null in a build without UPnP support, where offering it would only
+	// lead to an error message later on.
 	QCheckBox *cbEnableUPnP;
-#endif
 
-	QComboBox *addr;
-	QSpinBox *publicPort;
+	// direct_c2c.addr_config - which addresses go into the 0x0B message
+	QRadioButton *rbAddrAuto;
+	QRadioButton *rbAddrManual;
+	// what the automatic configuration would announce right now
+	QLabel *lbAutoAddrs;
+
+	// The manual configuration: the port listened on, and the announced
+	// addresses in the order peers try them. A row of the table can also
+	// stand for the UPnP router's external address, which is only known
+	// once the client runs - see addUpnpAddrRow().
+	QWidget *manualBox;
 	QSpinBox *localPort;
+	QTableWidget *addrTable;
+	QPushButton *btAddrUpnp;
+	QPushButton *btUpnpQuery;
+	QLabel *lbUpnpInfo;
+
+	void updateDirectConnWidgets();
+	void updateAutoAddrsLabel();
+	void addAddrRow(const QString &host, int port, bool upnp);
+	bool addrRowIsUpnp(int row) const;
+	// Checks the manual address list before it is stored; false, having
+	// told the user why, if it cannot be.
+	bool validateAddrTable();
 
 	QRadioButton *rbMLPProhibit;
 	QRadioButton *rbMLPReplace;
 	QRadioButton *rbMLPAllowMultiple;
+
+	QComboBox *audioCaptureDev;
+	QComboBox *audioPlaybackDev;
+	QComboBox *audioRingDev;
+
+	// Which audio API to go through. Only Linux has a choice worth offering
+	// (ALSA or PulseAudio, the latter covering PipeWire's PulseAudio
+	// interface too), so elsewhere this stays null and no widget is built.
+	// The member and its slot are declared unconditionally all the same:
+	// moc runs its own preprocessor and would not see a platform #ifdef, so
+	// a slot hidden behind one ends up declared but never generated.
+	QComboBox *audioDriver;
+
+	// Who takes the echo of the other person back out of the microphone
+	// signal: EchoCanceller, the platform, or nobody. See
+	// EchoCancellationMode - one of the three, never two at once.
+	//
+	// The platform option is only offered where there is something to offer;
+	// on Linux that depends on the audio system chosen above it, so it is
+	// enabled and disabled as that combo box changes rather than once at
+	// startup.
+	QRadioButton *rbEchoCancelOwn;
+	QRadioButton *rbEchoCancelPlatform;
+	QRadioButton *rbEchoCancelNone;
+	void updateEchoCancellationChoices();
+
+	QComboBox *videoDev;
+	QPushButton *videoDevRefresh;
+
+	// Picture size and frame rate to ask the selected camera for. Both are
+	// filled from what the camera says it can do - the sizes from the camera,
+	// the rates from the size selected next to them - so they are refilled
+	// whenever the selection above them changes.
+	QComboBox *videoRes;
+	QComboBox *videoFps;
+
+	// What the selected camera reported, kept so that changing the resolution
+	// can refill the frame rates without asking the camera again. Enumerating
+	// is not free - on Windows it means instantiating the capture filter.
+	QList<VideoCaptureFormat> videoFormats;
+
+	// Encoding parameters for a call, on the "Call Settings" tab. The codec
+	// combo boxes carry the FFmpeg codec name as item data, which is what gets
+	// stored and what goes into the 0x74/0x75 messages.
+	QComboBox *callVideoCodec;
+	QComboBox *callAudioCodec;
+	QSpinBox *callVideoBitrate;
+	QSpinBox *callAudioBitrate;
+
+	// The audio bitrate the user chose, which is not always what
+	// callAudioBitrate shows: selecting a fixed rate codec puts that codec's
+	// rate in the box and disables it, and the chosen value has to survive
+	// that to come back when an adjustable codec is selected again.
+	int audioBitrateKbps;
+
+	// Local audio pipeline test: a few seconds of the selected microphone are
+	// captured and encoded, then decoded again and played back through the
+	// selected playback device - the same path a call takes, minus the
+	// network. Recording and playback are deliberately kept apart in time
+	// rather than looped back live, which would howl with acoustic feedback
+	// when the test runs on speakers.
+	QPushButton *btAudioTest;
+	QLabel *audioTestStatus;
+	AudioDevice *testMic;
+	AudioDevice *testSpeaker;
+	QThread testMicThread;
+	QThread testSpeakerThread;
+
+	enum AudioTestState
+	{
+		AudioTestIdle,
+		AudioTestRecording,
+		AudioTestPlaying
+	};
+
+	AudioTestState audioTestState;
+	// What the microphone and playback devices reported negotiating, shown
+	// with the result. Same idea as videoTestPathReport.
+	QString audioTestPathReport;
+	// The recording, as encoded packets, and how far playback has fed it.
+	QList<QByteArray> audioTestPackets;
+	int audioTestPlaybackPos;
+	// Members rather than QTimer::singleShot() calls so that stopping a test
+	// cancels them - otherwise a timer left over from an aborted run would
+	// fire into the next one.
+	QTimer *audioTestRecordTimer;
+	QTimer *audioTestPlaybackTimer;
+	// Playback is paced against this rather than against the number of times
+	// the timer has fired - see audioTestFeedPacket().
+	QElapsedTimer audioTestPlaybackClock;
+	QTimer *audioTestDrainTimer;
+
+	void stopAudioTest();
+	void startAudioTestPlayback();
+
+	// Ring device test: plays the incoming call bell through the selected
+	// ring device, using the same TonePlayer an actual incoming call uses.
+	// TonePlayer::play() blocks its thread for the length of the tone
+	// sequence, hence the dedicated thread.
+	QPushButton *btRingTest;
+	QLabel *ringTestStatus;
+	TonePlayer *ringTestPlayer;
+	QThread ringTestPlayerThread;
+	bool ringTestRunning;
+
+	// Local video pipeline test: frames from the selected camera are
+	// encoded, split into protocol sized fragments, reassembled and decoded
+	// again, then shown in videoPreview - the same path a call takes, minus
+	// the network, so the whole chain can be checked from this dialog.
+	QPushButton *btVideoTest;
+	QLabel *videoPreview;
+	// Shown under the preview: the format the camera settled on, and whether
+	// the GPU or the CPU ended up doing the encoding and decoding.
+	QLabel *videoTestStatus;
+	QString videoTestFormat;
+	QString videoTestPathReport;
+	QCheckBox *cbPreferCompressed;
+#ifdef HAVE_VAAPI
+	QCheckBox *cbVaapiEncoding;
+	QCheckBox *cbVaapiDecoding;
+	QCheckBox *cbVaapiRendering;
+	// Shown in place of videoPreview while frames are being drawn straight
+	// from GPU memory; only one of the two is ever visible.
+	VaapiRenderWidget *videoPreviewGpu;
+#endif
+	// One checkbox per Windows GPU path, encoding and decoding separately,
+	// since which of them works depends on the GPU and its driver and is only
+	// found out by trying - see VideoAcceleration. When several are ticked
+	// VideoDevice tries them in a fixed order, so each one can also be tested
+	// on its own by unticking the others.
+#ifdef HAVE_D3D12VA
+	QCheckBox *cbD3d12vaEncoding;
+	QCheckBox *cbD3d12vaDecoding;
+#endif
+#ifdef Q_OS_WIN
+	QCheckBox *cbMediaFoundationEncoding;
+	QCheckBox *cbD3d11vaDecoding;
+	QCheckBox *cbDxva2Decoding;
+#endif
+	// Greys out a checkbox for a path the FFmpeg the client runs with was
+	// built without, saying so in its tooltip, rather than letting it be
+	// ticked and then quietly fall back to software.
+	void offerAcceleration(QCheckBox *cb, VideoAcceleration acceleration, bool encoding);
+
+	// VideoAcceleration flags out of the checkboxes as they stand, for the
+	// local pipeline test - which runs on what the dialog shows rather than
+	// on what was last stored.
+	int selectedVideoEncodingAcceleration() const;
+	int selectedVideoDecodingAcceleration() const;
+
+	VideoDevice *testCam;
+	VideoDevice *testDecoder;
+	QThread testCamThread;
+	QThread testDecoderThread;
+	VideoFrameAssembler testAssembler;
+	// Counter part of the sequence number handed to testAssembler, kept the
+	// same way AudioVideoCallController keeps it for a real call.
+	quint16 testVideoSeq;
+	bool videoTestRunning;
+
+	// The last frame the preview drew, kept so that it can follow a resize of
+	// the dialog rather than staying as it was until the next frame. Cleared
+	// when the test stops, since the preview goes back to showing status text
+	// and must not have a stale picture put back over it.
+	QImage lastTestFrame;
+
+	// Resizes a frame that does not already match the preview. Normally does
+	// nothing: testDecoder is told what size to produce - see
+	// reportVideoPreviewArea() - and only the frames in flight across a resize
+	// arrive at another size. Same arrangement as CallWindow's; the reasoning
+	// is in videoscaler.h.
+	VideoScaler videoTestScaler;
+
+	// Measured frame rates for the status line. Two of them, because they
+	// answer different questions: whether the camera is actually delivering
+	// the rate it was asked for, and whether the rest of the pipeline keeps up
+	// with what it delivers. A camera asked for more than it can manage is not
+	// told so - it quietly delivers fewer frames instead - so the only way to
+	// know is to count them.
+	QTimer *videoFpsTimer;
+	QElapsedTimer videoFpsElapsed;
+	int videoCapturedFrames;
+	int videoDisplayedFrames;
+	double videoCaptureFps;
+	double videoDisplayFps;
+	// Whether the preview is being drawn straight from GPU memory, which the
+	// status line says and which only the frames themselves reveal.
+	bool videoTestGpuRendering;
+
+	void stopVideoTest();
+
+	// Builds the line under the preview out of everything known about the
+	// running test - format, which end did the encoding and decoding, whether
+	// the preview is drawn on the GPU, and the measured frame rates. One place
+	// for it, since the frame rates change it once a second while frames
+	// arriving change the rest of it.
+	void updateVideoTestStatus();
+
+	// Draws lastTestFrame at the size the preview is now.
+	void updateVideoPreview();
+
+	// Tells testDecoder what size to decode frames to, so that the resize
+	// happens inside the colour conversion it already runs instead of in a
+	// second pass here. The preview is smaller than the camera's picture, so
+	// this is the case that gains most - nothing gets converted only to be
+	// thrown away.
+	void reportVideoPreviewArea();
 
 	QPushButton *btOk;
 	QPushButton *btCancel;
@@ -58,11 +313,73 @@ private:
 	void loadSettings();
 	void storeSettings();
 
+	void fillDevicesComboBox(QComboBox *cb, MediaDevice *dev, enum MediaDeviceStreamDirection dir);
+
+	// The picture size and frame rate the video tab currently has selected,
+	// used both by the local pipeline test and when the settings are stored.
+	int selectedVideoWidth() const;
+	int selectedVideoHeight() const;
+	int selectedVideoFrameRate() const;
+
 private slots:
 	void OK();
 	void Cancel();
 	void toggleIncomingConnections(bool checked);
+	// The manual address list's buttons. Declared unconditionally, see
+	// the note at audioDriver for why slots must not depend on a define.
+	void addAddr();
+	void removeAddr();
+	void moveAddrUp();
+	void moveAddrDown();
+	void addInterfaceAddrs();
+	void addUpnpAddrRow();
+	// Asks the UPnP router for its external address on a thread of its own -
+	// discovery alone takes two seconds - and adds it to the list.
+	void queryUpnpAddr();
+	void upnpQueryFinished(int status, QString addr);
 	void toggleMultipleLogins(bool checked);
+	void fillVideoDevices();
+	// Asks the newly selected camera what it can do and refills the two lists
+	// below it. fillVideoFrameRates() alone when only the size changed.
+	void fillVideoResolutions();
+	void fillVideoFrameRates();
+	// Greys out the audio bitrate box for a codec whose bitrate is not ours to
+	// choose - see audioBitrateKbps.
+	void callAudioCodecChanged();
+	// Device names are driver specific, so all three lists have to be filled
+	// again when the driver changes. Only ever connected on Linux.
+	void audioDriverChanged(int index);
+	void fillAudioCaptureDevices();
+	void fillAudioPlaybackDevices();
+	void fillAudioRingDevices();
+
+	void toggleRingTest();
+	void ringTestFinished();
+	void ringTestError(QString message);
+
+	void toggleAudioTest();
+	void audioTestPacket(QByteArray data);
+	void audioTestRecordingFinished();
+	void audioTestFeedPacket();
+	void audioTestPlaybackFinished();
+	void audioTestError(QString message);
+	void audioTestPath(QString description);
+
+	void toggleVideoTest();
+	void videoTestCaptureStarted(QString codec, int width, int height, double frameRate);
+	void videoTestPath(QString description);
+	void videoTestFragment(QByteArray data, bool is_last_fragment);
+	void videoTestFrame(QImage frame);
+	// Turns the frames counted since the last tick into the rates the status
+	// line shows. On a timer rather than computed as frames arrive, so that a
+	// pipeline that has stalled reads as 0 fps instead of staying at whatever
+	// it managed last.
+	void videoFpsTick();
+#ifdef HAVE_VAAPI
+	void videoTestHwFrame(AVFramePtr frame);
+	void videoTestRenderFailed(QString message);
+#endif
+	void videoTestError(QString message);
 
 };
 

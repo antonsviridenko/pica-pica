@@ -76,7 +76,7 @@ bool DHParam::StartNewDHParamGeneration(QString *errormsg)
 		QFile::remove(tempdhfile);
 
 	return dhparamgenerator -> osslt.GenDHParamSignal(PICA_CLIENT_DHPARAMBITS,
-	        tempdhfile, dhparamgenerator, SLOT(DHParamGenFinished(int, QProcess::ExitStatus)));
+	        tempdhfile, dhparamgenerator, SLOT(DHParamGenFinished(int)));
 }
 
 QString DHParam::GetDHParamFilename()
@@ -92,7 +92,7 @@ QString DHParam::GetDHParamFilename()
 	return current_dhparam_file;
 }
 
-void DHParam::DHParamGenFinished(int retval, QProcess::ExitStatus)
+void DHParam::DHParamGenFinished(int retval)
 {
 	if (retval == 0)
 	{
@@ -104,7 +104,12 @@ void DHParam::DHParamGenFinished(int retval, QProcess::ExitStatus)
 
 		current_dhparam_file = config_dir + QDir::separator() + PICA_CLIENT_DHPARAMFILE;
 
-		delete dhparamgenerator;
+		/*
+		 * deleteLater, not delete: we are inside a slot the generator's own
+		 * OpenSSLLib member is emitting to, and it still has to return
+		 * through it.
+		 */
+		dhparamgenerator->deleteLater();
 
 		dhparamgenerator = NULL;
 	}

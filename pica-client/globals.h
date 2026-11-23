@@ -42,6 +42,7 @@ extern class QIcon picapica_ico_fly;
 extern class PicaActionCenter *action_center;
 extern class PicaSysTray *systray;
 extern class FileTransferController *ftctrl;
+extern class AudioVideoCallController *avctrl;
 extern class QString snd_newmessage;
 extern class AccountsWindow *accwindow;
 #endif // GLOBALS_H

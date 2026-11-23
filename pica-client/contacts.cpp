@@ -19,10 +19,10 @@
 
 //#include <QMessageBox>
 
-Contacts::Contacts(QString storage, QByteArray user_account_id)
+Contacts::Contacts(QString storage, QByteArray user_account_id, QString connectionName)
 	: account_id_(user_account_id)
 {
-	dbconn = QSqlDatabase::database();
+	dbconn = connectionName.isEmpty() ? QSqlDatabase::database() : QSqlDatabase::database(connectionName);
 	dbconn.setDatabaseName(storage);
 
 	if (!dbconn.open())
@@ -34,7 +34,7 @@ Contacts::Contacts(QString storage, QByteArray user_account_id)
 //check if table contacts exists
 //...
 
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.exec("PRAGMA foreign_keys=ON;");
 
@@ -53,7 +53,7 @@ QString Contacts::GetLastError()
 
 bool Contacts::Exists(QByteArray id)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.setForwardOnly(true);
 	query.prepare("select count(*) from contacts where account_id=:account_id and id=:id");
@@ -71,7 +71,7 @@ bool Contacts::Exists(QByteArray id)
 
 void Contacts::Add(QByteArray id, ContactType type)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	if (!Exists(id))
 	{
@@ -95,7 +95,7 @@ void Contacts::Add(QByteArray id, ContactType type)
 
 void Contacts::Delete(QByteArray id)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("delete from contacts where id=:id and account_id=:account_id");
 	query.bindValue(":id", id);
@@ -109,7 +109,7 @@ QList<Contacts::ContactRecord> Contacts::GetContacts(ContactType type)
 {
 	QList<ContactRecord> L;
 	ContactRecord r;
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.setForwardOnly(true);
 	query.prepare("select id, name from contacts where account_id=:account_id and type=:type");
@@ -135,7 +135,7 @@ QList<Contacts::ContactRecord> Contacts::GetContacts(ContactType type)
 
 QString Contacts::GetContactCert(QByteArray id)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("select cert_pem from contacts where id=:id and account_id=:account_id");
 	query.bindValue(":id", id);
@@ -154,7 +154,7 @@ QString Contacts::GetContactCert(QByteArray id)
 
 QString Contacts::GetContactName(QByteArray id)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("select name from contacts where id=:id and account_id=:account_id");
 	query.bindValue(":id", id);
@@ -173,7 +173,7 @@ QString Contacts::GetContactName(QByteArray id)
 
 void Contacts::SetContactCert(QByteArray id, QString &cert_pem)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("update contacts set cert_pem=:cert_pem where id=:id and account_id=:account_id");
 	query.bindValue(":cert_pem", cert_pem);
@@ -187,7 +187,7 @@ void Contacts::SetContactCert(QByteArray id, QString &cert_pem)
 
 void Contacts::SetContactName(QByteArray id, QString name)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("update contacts set name=:name where id=:id and account_id=:account_id");
 	query.bindValue(":name", name);
@@ -200,7 +200,7 @@ void Contacts::SetContactName(QByteArray id, QString name)
 
 void Contacts::SetContactType(QByteArray id, ContactType type)
 {
-	QSqlQuery query;
+	QSqlQuery query(dbconn);
 
 	query.prepare("update contacts set type=:type where id=:id and account_id=:account_id");
 	query.bindValue(":type", type);

@@ -20,7 +20,7 @@
 #include <QObject>
 #include <QString>
 #include "globals.h"
-#include "openssltool.h"
+#include "openssllib.h"
 
 class DHParam : public QObject
 {
@@ -42,10 +42,10 @@ private:
 	static DHParam *dhparamgenerator;
 	static QString current_dhparam_file;
 
-	OpenSSLTool osslt;
+	OpenSSLLib osslt;
 
 private slots:
-	void DHParamGenFinished(int retval, QProcess::ExitStatus);
+	void DHParamGenFinished(int retval);
 };
 
 #endif // DHPARAM_H

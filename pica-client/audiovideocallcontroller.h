@@ -1,0 +1,177 @@
+/*
+	(c) Copyright  2012 - 2021 Anton Sviridenko
+	https://picapica.im
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, version 3.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+#ifndef AUDIOVIDEOCALLCONTROLLER_H
+#define AUDIOVIDEOCALLCONTROLLER_H
+
+#include <QObject>
+#include <QThread>
+#include <QElapsedTimer>
+#include "callwindow.h"
+#include "audiodevice.h"
+#include "videodevice.h"
+#include "toneplayer/toneplayer.h"
+
+class AudioVideoCallController : public QObject
+{
+	Q_OBJECT
+public:
+	explicit AudioVideoCallController(QObject *parent = nullptr);
+	~AudioVideoCallController();
+	// is call active (i.e. are voice/video packets exchanged now)
+	bool const isActive() {return m_state == CallActive;}
+	void processCall();
+public slots:
+	void start_call(QByteArray peer_id);
+	void call_from(QByteArray peer_id);
+	void call_failed(QByteArray peer_id, QString reason);
+	void call_accepted(QByteArray peer_id);
+	void call_rejected(QByteArray peer_id);
+	void call_hungup(QByteArray peer_id);
+	// the connection to the peer is gone, and whatever call it carried with it
+	void peer_disconnected(QByteArray peer_id);
+signals:
+private:
+	// There is one call at a time. While it is anything but CallIdle, calls
+	// coming in from other peers are rejected and the user cannot start
+	// another one.
+	enum CallState
+	{
+		// No call. The window may still be open: before "Call" is pressed, and
+		// after a call that failed, was rejected or was ended by the peer.
+		CallIdle,
+		// We are calling, the peer has not answered yet.
+		CallDialing,
+		// The peer is calling, we have not answered yet.
+		CallRinging,
+		// Answered - audio/video packets are being exchanged.
+		CallActive
+	};
+
+	CallWindow *callwindow;
+	AudioDevice *ringdevice;
+	AudioDevice *microphone;
+	AudioDevice *output;
+	// Local camera capture+encode.
+	VideoDevice *cam;
+	// Decoding of the video stream received from the peer.
+	VideoDevice *remotevideo;
+	CallState m_state;
+	QByteArray m_peer_id;
+	// What identifies the call: who started it and who was called, one of them
+	// being m_peer_id and the other this account. The media devices only run
+	// for the call they were started for - see MediaCallSession.
+	QByteArray m_caller_id;
+	QByteArray m_callee_id;
+
+	// Whether output/remotevideo have been started for the peer's first
+	// 0x74/0x75 of this call. The ones after it change the parameters of a
+	// decoder that is already running.
+	bool m_audioPlaybackStarted;
+	bool m_videoPlaybackStarted;
+
+	// Earpiece tones (ringback, busy, special information/unreachable),
+	// played through the "audio.playback_device" setting.
+	TonePlayer *toneplayer;
+	QThread toneplayer_thread;
+
+	// Incoming call bell, played through the "audio.ring_device" setting.
+	TonePlayer *ringtoneplayer;
+	QThread ringtoneplayer_thread;
+
+	// Mic capture+encode and remote-audio decode+playback, each blocking
+	// its own thread for the duration of the call (see AudioDevice).
+	QThread microphone_thread;
+	QThread output_thread;
+
+	// Camera capture+encode and remote-video decode, same arrangement as
+	// the audio devices above (see VideoDevice).
+	QThread cam_thread;
+	QThread remotevideo_thread;
+
+	// Acoustic echo cancellation for the current call, shared by microphone
+	// and output. Null unless the "audio.echo_cancellation" setting is
+	// EchoCancellationOwn, and between calls.
+	EchoCancellerPtr m_echoCanceller;
+
+	// Sequence number / capture-clock timestamp stamped onto outgoing
+	// 0x76 audio packets (see PICA_PROTO_CALL_PACKET_HDRSIZE).
+	quint16 m_audioSeq;
+	QElapsedTimer m_callClock;
+
+	// Outgoing 0x77 video packets. The counter occupies the low 15 bits of
+	// the wire sequence number, the top bit being the last fragment marker.
+	// All fragments of one encoded frame share m_videoFrameTimestamp, which
+	// is re-read from m_callClock only when a new frame starts - tracked by
+	// m_videoFrameStarted, set false again after emitting a last fragment.
+	quint16 m_videoSeq;
+	quint32 m_videoFrameTimestamp;
+	bool m_videoFrameStarted;
+
+	// Reassembly of incoming 0x77 fragments into whole encoded frames.
+	VideoFrameAssembler m_videoAssembler;
+
+	// The capture frame rate this call asked the camera for, so that
+	// video_capture_started() can say when the camera delivered less. Zero
+	// before the video pipeline has been started.
+	int m_requestedFrameRate;
+
+	void playEarpieceTone(void (TonePlayer::*tone)());
+	void playRingTone();
+	void stopTones();
+
+	void startAudioPipeline();
+	void stopAudioPipeline();
+
+	void startVideoPipeline();
+	void stopVideoPipeline();
+
+	// The one way out of a call, whichever state it is in and whoever ends it:
+	// stops the tones and the media devices and leaves the state CallIdle.
+	// With notify_peer the peer is told as well, in the way the state calls
+	// for - a hangup for a call we started or answered, a reject for one that
+	// is still ringing here.
+	void finishCall(bool notify_peer);
+
+private slots:
+	// button handlers
+	void initiate_call();
+	void accept_call();
+	void end_call();
+	void callwindow_closed(CallWindow *sender_window);
+
+	void send_audio_packet(QByteArray data);
+	void incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate);
+	void capture_clipping(double pinnedPercent, double peakDb);
+	void incoming_audio_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void video_capture_started(QString codec, int width, int height, double frameRate);
+	void send_video_packet(QByteArray data, bool is_last_fragment);
+	void incoming_video_params(QByteArray peer_id, QString codec, quint16 width, quint16 height);
+	void incoming_video_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void media_transport_changed(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload);
+
+	// Passes the window's video area on to the decoder, which produces frames
+	// at that size rather than leaving the window to resize each one.
+	void video_area_changed(QSize area);
+#ifdef HAVE_VAAPI
+	void video_rendering_failed();
+#endif
+
+};
+
+#endif // AUDIOVIDEOCALLCONTROLLER_H

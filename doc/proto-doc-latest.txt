@@ -1,0 +1,822 @@
+Protocol Specification.
+
+Terminology.
+
+Client - a software instance that interacts with human users and lets them send
+and receive encrypted messages over Pica Pica.
+
+Node - a software instance that coordinates the Pica Pica network, maintains a
+list of all active nodes and provides connectivity to clients.
+
+UH - user hash - the SHA224 hash of a user certificate in DER format, 28
+octets. It is used as a user identifier.
+
+Connections.
+There are 5 types of connections between Pica Pica nodes and clients.
+Apart from them, a node accepts single UDP datagrams from clients, see the "Get
+my UDP address" messages.
+
+-client to node (c2n) - a control connection from client to node
+
+-client to client (c2c) - a data connection between clients through a node
+acting as a proxy
+
+-node to node (n2n) - a control & data connection between nodes
+
+-direct client to client (directc2c) - a direct connection between clients,
+using the IPv4/IPv6/DNS address of the accepting client previously
+communicated over a c2c connection.
+
+-media client to client (mediac2c) - a direct connection between clients
+carrying the real time media of an audio/video call. It uses UDP transport
+and DTLS 1.2 with mutual certificate authentication.
+
+A mediac2c connection is established only while a call is in progress. It is
+made in one of two ways, see "Establishing the media connection" in the Audio
+and Video Calls section:
+
+-over the address of an established directc2c connection, with UDP instead
+of TCP: the client that made the outgoing directc2c connection acts as the
+DTLS client and connects to the address and port number that connection was
+made to, the client that accepted it acts as the DTLS server and listens on
+the UDP port with the same number as its directc2c listening port;
+
+-by UDP hole punching, between the media sockets the two clients opened for
+the call, over the addresses exchanged in the 0x70 and 0x71 messages: the
+caller acts as the DTLS client, the callee as the DTLS server. No directc2c
+connection is needed for this.
+
+Either way, each side verifies that the certificate presented by the peer
+hashes to the UH of the peer of the c2c connection the call belongs to,
+exactly as it does on a directc2c connection.
+
+Media packets are carried over the mediac2c connection whenever it is
+established, and over the c2c or directc2c connection otherwise. There is
+no message announcing the change: the receiving side accepts media packets
+over either transport for the whole duration of a call.
+
+The first 4 connection types use TCP transport. The first 3 connection types start
+with a TLS 1.2 handshake using an anonymous Diffie-Hellman ciphersuite; the
+connecting host acts as the TLS client, the accepting host as the TLS server.
+After the connection type is identified by the accepting node, the anonymous
+TLS session is gracefully closed in the case of c2n and c2c connections. In the
+case of c2n the node starts a new TLS session with the client, where the node
+acts as the TLS client and the client acts as the TLS server, using the
+client's RSA certificate. In the case of a c2c connection the node acts as a
+transparent proxy, sending chunks of data received from the first client to the
+second one and vice versa. The clients establish a mutually authenticated TLS
+session over the proxied connection; the initiator client is the TLS client,
+the accepting client has the TLS server role.
+An n2n connection continues to operate in the ADH TLS session, as by design
+nodes do not store any state that identifies them other than their network
+address.
+
+
+Packet Format.
+
+A Pica Pica protocol message packet contains a header and a tail.
+
+[Header][Tail]
+
+The header is a 2-octet sequence that identifies the packet. The first and
+second octets are always equal to each other.
+The tail is the remaining part of the packet and can be empty. The tail can
+have a fixed predefined length or, in the case of a variable length packet, it
+begins with a 1- or 2-octet sequence containing an unsigned integer that
+defines the length in octets of the remaining part of the tail, not including
+the length octets. The length field is stored in little-endian format, least
+significant octet first.
+The whole packet length is limited to 65536 octets, so the length field value
+is within the 0..65532 range.
+
+Example:
+
+0x55 0x55 0x03 0x00 0xAA 0xBB 0xCC
+[0x55 0x55] - header
+[0x03 0x00] - tail length, 2 octets
+[0xAA 0xBB 0xCC] - payload, 3 octets
+
+
+C2N Messages.
+====================================================
+C2N connection initialization request.
+Sent by the client.
+ANON TLS
+
+[0xCA 0xCA][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+VER_MAJOR, VER_MINOR - the Pica Pica protocol version supported by the client
+
+====================================================
+C2N connection initialization success.
+Sent by the node.
+ANON TLS
+
+[0x01 0x01]['O']['K']
+
+4 octets
+
+After this message the client and the node initiate an ANON TLS session
+shutdown, and after a successful shutdown they initiate a new authenticated TLS
+session over the same TCP connection. The client acts as the TLS server and
+presents the client certificate; the node acts as the TLS client and does not
+present a certificate.
+====================================================
+Protocol version mismatch.
+Sent by the node.
+ANON TLS
+
+[0x02 0x02][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+VER_MAJOR, VER_MINOR - the Pica Pica protocol version supported by the node
+
+This message is sent if the node's and the client's protocol versions do not
+match. After this message is sent and received, the TCP connection is closed by
+both hosts.
+====================================================
+
+	The messages below are transmitted over the secure c2n control
+	connection between a client and a node.
+
+====================================================
+Request to establish a connection with a peer.
+Sent by the client.
+
+[0x03 0x03][UH of the called user]
+
+30 octets
+====================================================
+Incoming connection permission request.
+Sent by the node.
+
+[0x04 0x04][UH of the initiator]
+
+30 octets
+====================================================
+The user with the given UH was not found (offline, or refused to talk).
+Sent by the node.
+
+[0x05 0x05][UH of the called user]
+
+30 octets
+====================================================
+Connection allowed by the called user.
+Sent by the called client.
+
+[0x06 0x06][UH of the calling user]
+
+30 octets
+
+After sending this message, the called client connects to the node's data
+exchange port (_DATA_PORT) and sends message 0x20 - new connection
+identification - over that connection.
+====================================================
+The user with the given UH was found and is ready to talk.
+Sent by the node to the calling client.
+
+[0x07 0x07][UH of the called user]
+
+30 octets
+====================================================
+Connection denied.
+Sent by the called client.
+
+[0x08 0x08][UH of the calling user]
+
+30 octets
+====================================================
+Node list request.
+Sent by the client.
+
+[0x09 0x09][2 pseudo-random octets]
+
+4 octets
+====================================================
+Node list.
+Sent by the node.
+
+[0x0A 0x0A] - see the 0xA4 message format
+====================================================
+Multilogin notification.
+Sent by a client that has logged in. Relayed to other nodes.
+Delivered to the existing connected client instance.
+
+[0x0E 0x0E][length 2 octets][timestamp][node address][signature from UH, timestamp, node
+address]
+
+timestamp - the time when the client logged in, a 64-bit Unix timestamp in the
+UTC timezone
+
+node address - one of the 0xA0, 0xA1, 0xA2 messages; the announced address of
+the node the sending client is connected to.
+
+signature - a digital signature using the SHA224 hash and the private RSA key
+of the sending client. The signature is calculated from the sender's
+concatenated UH, timestamp and node address = Sign(UH|timestamp|node address)
+
+====================================================
+Get my TCP address.
+
+Sent by a client. Requests the node to respond with the client
+address and TCP port as seen by the node. The response should
+be one packet of the type A0 or A1 corresponding to protocol used for this
+TCP connection - IPv4 or IPv6
+
+[0x0F 0x0F][2 pseudo-random octets]
+
+4 octets
+====================================================
+My TCP address.
+Sent by the node in reply to 0x0F.
+
+[0xA0 0xA0][IP address - 4 octets, network byte order][port number - 2 octets, network byte order]
+
+8 octets
+
+or
+
+[0xA1 0xA1][IPv6 address - 16 octets, network byte order][port number - 2 octets, network byte order]
+
+20 octets
+
+A client must ignore this message unless it is waiting for it.
+====================================================
+Get my UDP address.
+Sent by a client.
+
+[0x10 0x10][2 pseudo-random octets]
+
+4 octets
+
+Requests a token that lets the client learn the address and port its UDP
+datagrams arrive at the node from, i.e. what the NAT in front of the client
+maps one of its UDP sockets to. The exchange is:
+
+  c2n  client -> node  0x10  request
+  c2n  node -> client  0x11  token
+  UDP  client -> node  0x10  the token, from the socket in question
+  c2n  node -> client  0x12  source address and port of that datagram
+
+A node serves only a limited number of these requests in a row from one
+client, and may not serve them at all (e.g. it has no UDP port open); a request
+that is not served is not answered. The client gives up by timeout.
+====================================================
+UDP address token.
+Sent by the node in reply to 0x10.
+
+[0x11 0x11][token, 16 octets]
+
+18 octets
+
+token - random octets from a cryptographically secure generator, chosen by the
+node. It is valid for a short time (10 seconds) and for one datagram. A client
+has at most one valid token: a new 0x10 request invalidates the token issued
+for the previous one.
+====================================================
+UDP address probe.
+Sent by a client to the node as a UDP datagram, not over a connection.
+
+[0x10 0x10][token, 16 octets]
+
+18 octets, the whole datagram
+
+Sent to the UDP port with the same number as the TCP port the c2n connection
+was made to, from the socket whose external address the client wants to learn.
+Datagrams can be lost, so the client sends it a few times, about a second
+apart, until 0x12 arrives.
+
+The node never answers over UDP, whatever it receives. A datagram that is not
+exactly 18 octets long, or does not carry a currently valid token, is silently
+dropped. When a valid token arrives, the node invalidates it and sends 0x12
+over the c2n connection the token was issued on. Copies of the datagram that
+arrive afterwards are therefore dropped as well.
+====================================================
+My UDP address.
+Sent by the node over the c2n connection.
+
+[0x12 0x12][length, 1 octet][address]
+
+address - the source address and port of the datagram that carried the token,
+in network byte order:
+[0xA0][IP address - 4 octets][port number - 2 octets], length 7, or
+[0xA1][IPv6 address - 16 octets][port number - 2 octets], length 19.
+
+A client must ignore this message unless it is waiting for it.
+
+Security considerations.
+The token only ties a datagram to an authenticated c2n connection. The source
+address the node reports cannot be authenticated - it is not known to the
+client, and is rewritten on the way by design - so somebody able to observe the
+datagram can send a copy of it from another address, and have that address
+reported if the copy arrives first. The reported address must therefore be
+treated only as a place where the client might be reachable, never as proof of
+who is reachable there: a connection made to it has to authenticate the peer
+on its own, as directc2c and mediac2c connections do.
+====================================================
+
+	The message below is transmitted over the connection between a node
+	and a client which is used for data transfer.
+
+====================================================
+New connection identification.
+Sent by the client.
+
+[0x20 0x20][UH of the calling user][UH of the called user]
+
+58 octets
+
+Upon receiving this message the node checks the UHs. If they do not match, the
+connection is closed. After the check the node switches into data relaying mode
+between the two clients. The calling client initiates TLS connection
+establishment.
+====================================================
+
+
+C2C Messages.
+The messaging protocol between clients through node(s).
+====================================================
+C2C connection initialization request.
+Sent by a client to another client.
+
+[0xCC 0xCC][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+VER_MAJOR, VER_MINOR - the c2c protocol version supported by the client
+
+Possible responses - 0x01, 0x02
+====================================================
+Client direct address list.
+
+[0x0B 0x0B] - see the 0xA4 message format
+0xA0, 0xA1, 0xA2 - the same as in n2n messages
+
+If a client is configured to accept incoming direct client to client
+connections (bypassing the node), it can send a list of its own addresses.
+The list can contain any number of addresses, e.g. one for every network
+interface of the client and the external address of a port forwarded to it.
+Local network addresses (if there are any) from the 192.168.0.0/16,
+172.16.0.0/12 and 10.0.0.0/8 subnets must be placed first in the list, so that
+clients residing in the same local network are able to connect directly. Public
+internet addresses follow them.
+If the client is behind NAT and forwards an open port to its local address, the
+external port number must be specified in the address.
+The connecting client tries the addresses one at a time, in the order of the
+list. It skips the elements of a type it does not connect to (e.g. 0xA1 without
+IPv6 connectivity), stepping over them by their size as given in the 0xA4
+description; such elements are not an error.
+A private address (the subnets above, and 100.64.0.0/10) is only tried if it
+is on the network of a private address of one of the connecting client's own
+network interfaces, as given by that interface's netmask; any other private
+address belongs to some other network and is skipped without a connection
+attempt. Since such an address is on the local network, the TCP connection to
+it is given up after 200 milliseconds, while the TLS handshake that follows
+has as long as for any other address.
+Having received the announcement, the other client can create a connection to
+that address and close the connection through the node.
+The announced port numbers are used both for TCP directc2c connections and for
+UDP mediac2c connections, so a client behind NAT has to forward the port for
+both protocols.
+====================================================
+Direct connection attempts failed.
+
+[0x0C 0x0C][2 pseudo-random octets]
+
+4 octets
+
+Sent by the initiator if it has received a direct address list from the called
+client and all connection attempts to the received addresses were unsuccessful.
+After receiving this message, the called client starts connection attempts to
+the direct addresses of the initiator, if an address list was received from the
+initiator and direct connections are allowed by the called client's settings.
+====================================================
+Switch to direct connection.
+
+[0x0D 0x0D][2 pseudo-random octets]
+
+4 octets
+
+Sent by each side over the connection through the node after a successful TLS
+handshake on the direct connection. After sending this message, all subsequent
+messages are sent over the direct connection; the receiver of the message
+correspondingly expects subsequent messages over the direct connection.
+====================================================
+Message - UTF-8 encoded text.
+
+[0x30 0x30][length 2 octets][UTF-8 encoded message]
+====================================================
+Delivery report for the previous message.
+
+[0x40 0x40][2 pseudo-random octets]
+
+4 octets
+====================================================
+File sending request.
+
+[0x50 0x50][length 2 octets, 9..263][file size, 8 octets][file name in UTF-8, 1 - 255 octets]
+====================================================
+File accepted.
+
+[0x51 0x51][2 pseudo-random octets]
+
+4 octets
+
+After receiving this message, the sender starts sending the file.
+====================================================
+File rejected.
+
+[0x52 0x52][2 pseudo-random octets]
+
+4 octets
+====================================================
+File fragment.
+
+[0x53 0x53][fragment length, 2 octets, 0 - 65532][file fragment]
+====================================================
+File transfer control.
+
+[0x54 0x54][sender command][receiver command]
+
+4 octets
+
+Commands:
+00 - void command (no action)
+01 - pause
+02 - resume
+03 - cancel
+04 - cancel because of a file read/write error
+====================================================
+
+
+Audio and Video Calls.
+The call control messages (0x70 - 0x75) are sent between clients over a c2c or
+directc2c connection.
+The media packets (0x76, 0x77) are sent over a mediac2c connection when one is
+established, and over the c2c or directc2c connection otherwise. Over a
+mediac2c connection every datagram contains exactly one message, and messages
+can be lost, reordered or duplicated; the receiving side must be prepared for
+that and must not treat a malformed or unexpected packet as a protocol error
+breaking the connection. In particular, a media packet can arrive before the
+0x74 or 0x75 message describing the stream it belongs to, because those travel
+over a different connection; such a packet is discarded.
+The media connection probe is not a message of any connection: it is a UDP
+datagram sent while the media connection is being established, see below.
+====================================================
+Call request (ring)
+
+[0x70 0x70][length, 2 octets][probe token, 8 octets][address list]
+
+length - covers everything following it: 8 + the size of the address list.
+
+probe token - random octets from a cryptographically secure generator, chosen
+anew for every call. The peer puts it into the media connection probes it sends
+to the sender of this message.
+
+address list - the addresses where the sender's media socket for this call may
+be reachable, as elements of the 0xA4 format, of types 0xA0 and 0xA1 only:
+first the socket's port number with each of the sender's own interface
+addresses, then the address and port the node reported for that socket in a
+0x12 message, if the sender got one. The list is empty if the sender does not
+take part in hole punching, e.g. because direct connections are disabled in its
+settings.
+
+Before sending this message the caller opens its media socket and asks the node
+for the socket's address (0x10 - 0x12), waiting for the answer at most 2
+seconds; when it does not come in time, the message is sent without that
+address.
+
+The receiver skips elements of other types and uses at most the first 8
+addresses of the list.
+====================================================
+Call answer (pick up)
+
+[0x71 0x71][length, 2 octets][probe token, 8 octets][address list]
+
+The same format and meaning as in 0x70, for the callee's media socket.
+
+The callee opens its media socket and asks the node for its address when the
+0x70 message arrives, while the call is ringing, so that sending 0x71 is not
+delayed by it when the user answers; if the address has still not arrived by
+then, 0x71 waits for it at most 2 seconds. The callee's addresses are revealed
+only by this message, i.e. only if the call is answered. The list can be empty
+when the caller's list was.
+====================================================
+Call reject
+
+[0x72 0x72]
+[2 pseudo-random octets]
+
+4 octets
+====================================================
+Call hang up (finished)
+
+[0x73 0x73]
+[2 pseudo-random octets]
+
+4 octets
+====================================================
+Audio stream parameters
+
+[0x74 0x74]
+[codec - a 20 octet string, left-aligned, padded with zeroes;
+"opus", "adpcm_g722", "pcm_alaw", named as in ffmpeg]
+[sample rate, uint16_t, little-endian]
+
+24 octets
+====================================================
+Video stream parameters
+
+[0x75 0x75]
+[codec - a 20 octet string, left-aligned, padded with zeroes, e.g.
+"hevc", "h264", "mjpeg", "vp9", named as in ffmpeg]
+[width, uint16_t, little-endian]
+[height, uint16_t, little-endian]
+
+26 octets
+====================================================
+Voice (audio) packet
+
+[0x76 0x76][length 2 octets][sequence number, uint16_t, little-endian][timestamp, uint32_t, little-endian, milliseconds since the start of the call][data]
+
+length - covers everything following it: the 2-octet sequence number, the
+4-octet timestamp and the data, i.e. data length + 6.
+
+sequence number - incremented by one for every audio packet sent over this
+call, wraps around at 65536. It lets the receiving side detect encoder-side
+gaps (e.g. a dropped capture buffer) and, over a mediac2c connection, put
+the received packets back in order, detect losses and discard duplicates.
+
+timestamp - the capture timestamp of the packet's first sample, in
+milliseconds, relative to the moment the call became active (the 0x71
+message was processed). Used by the receiver for playout-buffer timing and
+audio/video synchronization.
+====================================================
+Video packet
+
+[0x77 0x77][length 2 octets][sequence number, uint16_t, little-endian][timestamp, uint32_t, little-endian, milliseconds since the start of the call][data]
+
+length - covers everything following it: the 2-octet sequence number, the
+4-octet timestamp and the data, i.e. data length + 6.
+
+sequence number - the most significant bit (0x8000) is the last fragment
+marker, see the fragmentation description below. The remaining 15 bits are a
+counter incremented by one for every video packet sent over this call,
+wrapping around at 32768. The counter serves the same purpose as in the 0x76
+message: gap detection and future unordered/lossy transport support.
+
+timestamp - the capture timestamp of the encoded video frame, in
+milliseconds, relative to the moment the call became active. Used by the
+receiver for playout timing and audio/video synchronization. All fragments
+of one encoded frame carry the same timestamp, see below.
+
+Fragmentation.
+
+The length field limits the data carried by a single 0x77 message to 65526
+octets, while an encoded video frame - an intra-coded (key) frame in
+particular - can be larger than that. Such a frame is split into several
+consecutive 0x77 messages.
+
+All fragments of one encoded frame carry the same timestamp; the 15-bit
+counter part of the sequence number is incremented for every fragment, as it
+is for every other video packet. The last fragment of a frame has the last
+fragment marker bit (0x8000) set in its sequence number; every preceding
+fragment of the same frame has that bit cleared. A frame that fits into a
+single message is sent as one message with the marker bit set.
+
+Over a c2c or directc2c connection a single 0x77 message can carry up to
+65526 octets of data. Over a mediac2c connection the whole message has to
+fit into one datagram, so the amount of data a fragment carries is limited
+by the path MTU instead, and an encoded frame is normally split into many
+more fragments.
+
+The receiving side concatenates the data of the received fragments and
+passes the result to the video decoder once a message with the marker bit
+set has been received.
+
+Since fragments can be lost over a mediac2c connection, the receiving side
+must also check that the fragments it concatenates are consecutive: a
+fragment may only start a new frame if the previously accepted message had
+the last fragment marker bit set and the counter part of the sequence
+number of the new one follows it without a gap. If a gap is detected, the
+partially assembled frame is discarded and the receiving side skips
+fragments until a message with the last fragment marker bit set is
+received, resuming assembly with the message following it. Without this
+rule, losing the first fragment of a frame would make the receiving side
+treat the second one as the beginning of a frame and pass a truncated frame
+to the decoder.
+====================================================
+Establishing the media connection.
+
+When a call becomes active - for the callee when it sends 0x71, for the
+caller when 0x71 arrives - each side makes up to two attempts to establish a
+mediac2c connection, one after another. Until one succeeds, and for the rest
+of the call if neither does, the media packets travel over the c2c or
+directc2c connection. Once established, the mediac2c connection carries the
+media until the call ends: lost datagrams, a time without any arriving, or
+errors the system reports for datagrams sent (e.g. ICMP port unreachable) do
+not end it. Only the DTLS session ending - a close_notify or a fatal alert
+from the peer - does.
+
+Attempt 1, over the directc2c address. Made only if the c2c connection the
+call belongs to has an established directc2c connection, as described in the
+Connections section. Given up when the DTLS handshake fails, or when the
+connection is not established 5 seconds after the call became active.
+
+Attempt 2, by UDP hole punching. Made when attempt 1 is not made or is given
+up, and only if both the 0x70 and the 0x71 message carried a non-empty address
+list. Each side uses its media socket for the call - the one its address list
+was made for - and the caller acts as the DTLS client.
+
+1. Each side sends a media connection probe to every address of the peer's
+list, repeating every 200 milliseconds. A private address in the list is
+handled as in the 0x0B message: it is skipped unless it is on the network of
+a private address of one of the side's own network interfaces. One that is
+not skipped is local, and is sent probes only during the first 200
+milliseconds, every 50 milliseconds. A probe that arrives before the
+receiving side has started sending its own waits on that side's media
+socket, so a side starting later than the other still selects the address in
+step 2 and answers from it.
+2. When a side receives a probe carrying its own probe token, it selects the
+address the probe came from. That address need not be in the peer's list: a
+NAT can map the peer's socket to another port for this destination than for
+the node. From then on the side sends probes to the selected address only and
+accepts datagrams only from it.
+3. The caller starts the DTLS handshake as soon as it has selected an address,
+and keeps sending probes to it until the first datagram of the handshake
+arrives from the callee. The callee keeps sending probes until the first
+datagram of the handshake arrives from the caller. DTLS datagrams that arrive
+before the receiving side has selected an address are discarded; the DTLS
+retransmission takes care of them.
+4. The attempt is given up if no address has been selected 10 seconds after
+the side started sending probes, or if the handshake fails or is not complete
+10 seconds after that.
+
+A side starting attempt 2 late - having given up attempt 1, or having become
+active later than the peer - is still within the 10 seconds the peer keeps
+sending probes for.
+
+Security considerations.
+The probe token, sent over the authenticated c2c connection, keeps a host
+that does not see the probes from steering the choice of the address. One that
+does see them can send copies from another address, the same as with the 0x10
+datagram; the DTLS handshake authenticates the peer regardless, and a failed
+handshake only leaves the media on the c2c connection.
+The addresses in a peer's list are not checked, so a peer can make a client
+send probes to any host. This is bounded by the limits above: 8 addresses,
+5 probes a second each, 10 seconds - at most 400 datagrams of 10 octets per
+call.
+====================================================
+Media connection probe.
+Sent as a UDP datagram from the media socket of a call, outside of DTLS.
+
+[0x78 0x78][probe token, 8 octets]
+
+10 octets, the whole datagram
+
+probe token - the token the receiver of the probe sent in its 0x70 or 0x71
+message.
+
+A probe carries nothing but the token and is discarded after it has been
+looked at. One that is exactly 10 octets long, carries the receiver's token
+and arrives before the receiver has selected an address makes the receiver
+select the address it came from, see step 2 above; all others have no effect.
+A DTLS record never starts with the octet 0x78, so probes are told apart from
+DTLS records by their first octet at any stage of the connection.
+====================================================
+
+
+Ping.
+Can be sent by either side, both over the c2n control connection and over a
+connection between clients.
+Over a mediac2c connection it is also used as a keepalive, to hold open the
+NAT and firewall state the connection depends on while neither side is
+sending media, and to detect that the connection has stopped working.
+====================================================
+Ping request.
+
+[0x68 0x68][2 pseudo-random octets]
+
+4 octets
+====================================================
+Ping reply.
+
+[0x69 0x69][2 pseudo-random octets]
+
+4 octets
+====================================================
+
+
+N2N Messages.
+The inter-node interaction protocol.
+====================================================
+Node connection request.
+Sent by one node to another.
+
+[0xCB 0xCB][VER_MAJOR][VER_MINOR]
+
+4 octets
+
+VER_MAJOR, VER_MINOR - the Pica Pica protocol version supported by the node
+
+Possible responses - 0x01, 0x02 - the same as for a client
+====================================================
+New node announcement - IPv4 address.
+
+[0xA0 0xA0][IP address of the new node - 4 octets, network byte order][port number - 2 octets, network byte order]
+
+8 octets
+====================================================
+New node announcement - IPv6 address.
+
+[0xA1 0xA1][IPv6 address of the new node - 16 octets, network byte order][port number - 2 octets, network byte order]
+
+20 octets
+====================================================
+New node announcement - DNS address.
+
+[0xA2 0xA2][address length - 1 octet][DNS address of the new node][port number - 2 octets, network byte order]
+====================================================
+
+The address declared in the announcement must match the address from which the
+connection was made. The node that receives the announcement must verify this.
+
+====================================================
+Node list.
+
+[0xA4 0xA4][address list size in octets, 2 octets - 0..65532][address list]
+
+The address list is a sequence of elements of 3 possible types
+[0xA0][IP address - 4 octets][port number - 2 octets] - 7 octets
+[0xA1][IPv6 address][port number - 2 octets] - 19 octets
+[0xA2][address length - 1 octet][DNS address][port number - 2 octets] - 4 ... 259 octets
+
+The sending node's own address (in the given address space) always goes first
+in the list.
+A message can contain only a part of the node list instead of the whole list;
+in that case the whole list is sent in parts. Addresses and port numbers are in
+"network" byte order.
+The whole packet size does not exceed 64kb.
+====================================================
+Node list request.
+
+[0x90 0x90][2 pseudo-random octets]
+
+4 octets
+====================================================
+Client search.
+Sent to all nodes. The receiving node replies to this message only if the
+requested UH is found among its local clients or in its cache.
+
+[0xA5 0xA5][UH of the called user]
+
+30 octets
+====================================================
+Client search result - client found.
+Sent by a node that received 0xA5, if the requested UH is found among its local
+connected clients.
+
+[0xA8 0xA8][UH of the called user]
+
+30 octets
+====================================================
+Client search result - client found in cache.
+Sent by a node that received 0xA5, if the requested UH is found in its cache
+(i.e. there is information that the client being searched for is connected to
+another node).
+
+[0xA9 0xA9][size, 2 octets, 32..287][UH of the called user][address of the node where the requested UH may be located, in A0|A1|A2 format, see the 0xA4 description]
+====================================================
+Request to allow a connection with a client of the receiving node.
+
+[0xAA 0xAA][UH of the initiator][UH of the called user]
+
+58 octets
+====================================================
+Connection allowed by the called user.
+Sent after the called local client has replied with a 0x06 message and created
+a new connection for message exchange.
+
+[0xAB 0xAB][UH of the initiator][UH of the called user]
+
+58 octets
+====================================================
+Client not found (offline, or refused to talk).
+
+[0xB8 0xB8][UH of the initiator][UH of the called user]
+
+58 octets
+
+Sent by a node in reply to a 0xD0 message addressed to this UH, if that user
+has already disconnected or is not in the list of local clients, or in reply to
+0xAA, if the called client denied the connection.
+====================================================
+Message transmitted between nodes on behalf of clients.
+
+[0xD0 0xD0][embedded message length in octets, 56..65532, 2 octets little-endian][UH of the local sending user][UH of the user on another node][embedded data]
+
+embedded data - data transmitted over the CLIENT-CLIENT connection
+====================================================

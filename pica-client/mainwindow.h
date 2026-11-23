@@ -62,6 +62,12 @@ private:
 	void SetStatus(bool connected);
 	bool status_notifications_hidden;
 
+	// Mirrors SkyNet's online/offline state, kept in sync via the
+	// BecameSelfAware()/LostSelfAwareness() signals instead of querying
+	// skynet->isSelfAware() synchronously (that accessor was removed since
+	// SkyNet's state must only ever be read on the thread that owns it).
+	bool self_aware_cached;
+
 private slots:
 	void set_online();
 	void set_offline();

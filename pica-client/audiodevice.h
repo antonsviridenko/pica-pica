@@ -1,0 +1,319 @@
+/*
+	(c) Copyright  2012 - 2026 Anton Sviridenko
+	https://picapica.im
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, version 3.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+#ifndef AUDIODEVICE_H
+#define AUDIODEVICE_H
+
+#include "mediadevice.h"
+#include "echocanceller.h"
+#include <QObject>
+#include <QString>
+#include <QByteArray>
+#include <QQueue>
+#include <QMutex>
+#include <QWaitCondition>
+#include <QAtomicInt>
+
+class NativeAudioBackend;
+
+// A single AudioDevice instance is dedicated to one direction - either
+// capture+encode (via Capture(), fed from a local hardware input device) or
+// decode+playback (via Play(), fed from the network via enqueuePacket()).
+// Each instance is meant to live on its own QThread (see
+// AudioVideoCallController), since both Capture() and Play() block the
+// calling thread in a device I/O loop until Close() is called - the same
+// pattern TonePlayer already uses for tone playback.
+class AudioDevice : public QObject, public MediaDevice
+{
+	Q_OBJECT
+public:
+	AudioDevice(QObject *parent = nullptr);
+	~AudioDevice();
+
+	// Configure before invoking Capture()/Play(). deviceName is a platform
+	// device identifier as accepted by the driver named by
+	// PlatformDriverName() (e.g. an ALSA PCM name, a PulseAudio source name,
+	// a WASAPI endpoint id, a CoreAudio device UID), or "default".
+	//
+	// codec is the FFmpeg name of the codec, which is also the name the 0x74
+	// message carries - "opus", "adpcm_g722" or "pcm_alaw". bitrate is in bits
+	// per second and only reaches an encoder with a rate to control: G.722 and
+	// A-law code a fixed number of bits per sample and simply ignore it.
+	//
+	// caller_id and callee_id name the call the loop is going to run for, and
+	// have to be the pair openSession() was given - see there.
+	Q_INVOKABLE void configureCapture(QString deviceName, QString codec, int sampleRate, int bitrate,
+	                                  QByteArray caller_id, QByteArray callee_id);
+	Q_INVOKABLE void configurePlayback(QString deviceName, QString codec, int sampleRate,
+	                                   QByteArray caller_id, QByteArray callee_id);
+
+	// Allows Capture()/Play() to run for this call, until Close(). To be
+	// called directly, before the calls that configure and start the device
+	// are queued: a Capture()/Play() configured for a call that is no longer
+	// the open one returns at once, so a Close() that lands before a queued
+	// start has begun is not lost. Safe to call from any thread.
+	void openSession(QByteArray caller_id, QByteArray callee_id);
+
+	// New playback parameters for a Play() that is already running: the peer
+	// may change what it sends in the middle of a call, by sending another
+	// 0x74. The loop closes its decoder and output device and opens them
+	// again for these. Safe to call from any thread, and has to be called
+	// directly - the device's own thread is busy inside Play().
+	//
+	// Whatever is still waiting in the jitter buffer is dropped, since it was
+	// encoded with the previous parameters.
+	void changePlayback(QString deviceName, QString codec, int sampleRate);
+
+	// Give this device the call's echo canceller. The capture direction runs
+	// the microphone signal through it, the playback direction feeds it the
+	// far end signal; both directions of one call must be given the same
+	// object or there is nothing to cancel against.
+	//
+	// Null unless EchoCancellation() is EchoCancellationOwn - see
+	// AudioVideoCallController::startAudioPipeline(), which is where that is
+	// decided.
+	//
+	// To be invoked through the device's own thread, like configureCapture():
+	// the loop of the previous call may still be on its way out and reading
+	// the canceller it was given.
+	Q_INVOKABLE void setEchoCanceller(EchoCancellerPtr ec);
+
+	// Push a codec packet received from the network into the playback
+	// jitter buffer. Safe to call from any thread. Drops the oldest queued
+	// packet if the buffer is full, favoring low latency over completeness.
+	//
+	// seq_num is the packet's 0x76 sequence number. Over a mediac2c
+	// connection packets can arrive out of order or twice, so the buffer is
+	// ordered by it, and a packet that arrives after one further along the
+	// stream has already been played is dropped rather than played out of
+	// place.
+	Q_INVOKABLE void enqueuePacket(quint16 seq_num, QByteArray data);
+
+public slots:
+	// Blocking capture+encode loop: opens the configured local input
+	// device, encodes captured audio with the configured codec, and emits
+	// packetReady() for each encoded packet. Returns once Close() is
+	// called.
+	virtual void Capture() override;
+
+	// Blocking decode+playback loop: opens the configured local output
+	// device, decodes packets pulled from the internal queue (see
+	// enqueuePacket()) and writes the resulting audio to the device.
+	// Returns once Close() is called.
+	virtual void Play() override;
+
+	// Signals a running Capture()/Play() loop to stop and return. Safe to
+	// call from any thread, and safe to call even if nothing is running.
+	virtual void Close() override;
+
+signals:
+	// One encoded packet produced by Capture(), ready to be sent over the
+	// network.
+	void packetReady(QByteArray data);
+
+	void errorOccurred(QString message);
+
+	// Emitted once a device is open, describing the format it settled on.
+	// Counterpart of VideoDevice::accelerationInUse().
+	void deviceFormatInUse(QString description);
+
+	// The capture device is delivering samples pinned at full scale, with the
+	// share of them in the last window and the peak that was seen. Not an
+	// error in the errorOccurred() sense - the call carries on - but it wants
+	// acting on, because nothing downstream can undo it. Numbers rather than
+	// a message because the receiver drives the gain control with them; see
+	// AudioVideoCallController::capture_clipping().
+	void captureClipping(double pinnedPercent, double peakDb);
+
+public:
+	virtual QList<MediaDeviceInfo> Enumerate(enum MediaDeviceStreamDirection dir);
+
+	// Name of the driver to use for one direction of audio.
+	//
+	// Two kinds of name come back. A bare name - "alsa", "pulse", "oss" - is
+	// an FFmpeg libavdevice muxer/demuxer, opened through libavformat the way
+	// the rest of this codebase opens things. A name starting with
+	// "platform-" is not an FFmpeg driver at all: what follows the prefix
+	// names a platform audio API that the caller has to drive itself through
+	// NativeAudioBackend, because libavdevice cannot express what we need
+	// from it.
+	//
+	// That is how Windows and macOS are handled. Both provide acoustic echo
+	// cancellation, but only to streams that declare themselves part of a
+	// voice call - AudioCategory_Communications on WASAPI, the
+	// VoiceProcessingIO audio unit on CoreAudio - and libavdevice's
+	// and "audiotoolbox" wrappers have no way to ask for either. Rather than
+	// open the sound card the plain way and then cancel the echo ourselves on
+	// platforms that would have done a better job of it below us, we talk to
+	// those APIs directly.
+	//
+	// The direction matters because the answer can differ between them: it is
+	// the capture side that Windows attaches its processing to, and on Linux
+	// the two directions can sit on different servers.
+	static QString PlatformDriverName(enum MediaDeviceStreamDirection dir);
+
+	// True if the driver name is a "platform-<api>" one rather than an FFmpeg
+	// driver, and the API name out of such a string.
+	static bool IsPlatformDriver(const QString &driver);
+	static QString PlatformApiName(const QString &driver);
+
+	// The FFmpeg driver Linux should use, "alsa" or "pulse", from the
+	// "audio.driver" setting. Meaningless on the other platforms, which have
+	// exactly one audio API worth using.
+	//
+	// The value is cached in a process wide variable rather than read from
+	// the settings database on demand, because Capture() and Play() run on
+	// their own threads and a QSqlDatabase connection belongs to the thread
+	// that opened it. Call the setter from the GUI thread at startup and
+	// whenever the setting changes.
+	static void SetLinuxDriverName(const QString &driver);
+	static QString LinuxDriverName();
+
+	// Whether anything below us would cancel the acoustic echo, so that
+	// EchoCancellationPlatform is worth offering at all.
+	//
+	// The overload taking a driver answers for that driver rather than the
+	// configured one, which is what the settings dialog needs: on Linux the
+	// answer depends on the audio system, and the radio button has to follow
+	// the combo box before either has been applied.
+	static bool PlatformEchoCancellationAvailable(const QString &driver);
+	static bool PlatformEchoCancellationAvailable();
+
+	// Which of the three cancellers a call should use. Cached in a process
+	// wide variable for the same reason LinuxDriverName() is - the capture
+	// and playback loops run on their own threads and cannot reach the
+	// settings database. Set it from the GUI thread at startup and whenever
+	// the setting changes.
+	static void SetEchoCancellation(EchoCancellationMode mode);
+	static EchoCancellationMode EchoCancellation();
+
+private:
+	QString m_deviceName;
+	QString m_codec;
+	int m_sampleRate;
+	// Capture direction only; see configureCapture().
+	int m_bitrate;
+
+	// The call that is allowed to run, set by openSession() and Close(), and
+	// the one this thread's loop was configured for.
+	MediaCallSession m_openSession;
+	QByteArray m_caller_id;
+	QByteArray m_callee_id;
+
+	// Set by changePlayback(), with the parameters it was given kept under
+	// m_queueMutex until Play() picks them up.
+	QAtomicInt m_reconfigure;
+	QString m_pendingDeviceName;
+	QString m_pendingCodec;
+	int m_pendingSampleRate;
+
+	// The call this loop belongs to is over.
+	bool sessionClosed() const { return !m_openSession.isOpenFor(m_caller_id, m_callee_id); }
+	// What the loops check: either that, or Play() has to start over with new
+	// parameters.
+	bool stopRequested() const { return m_reconfigure.loadRelaxed() || sessionClosed(); }
+
+	// Shared with the other direction of the same call, and held by shared
+	// pointer because AudioVideoCallController tears a call down without
+	// joining either thread.
+	EchoCancellerPtr m_echoCanceller;
+
+	// Watches the microphone for samples pinned at the rail and warns once
+	// every kLevelReportSec of audio if too many of them are.
+	//
+	// Detection only - there is deliberately no gain applied here. Clipping
+	// happens in the converter, before we see anything, and scaling a clipped
+	// buffer down just produces a quieter clipped buffer: the flattened peaks,
+	// the harmonics they generate and the non-linearity that stops the echo
+	// canceller converging are all still in it. The only fix is less gain
+	// ahead of the ADC, which means the capture device's own mixer control.
+	void resetCaptureLevel();
+	void checkCaptureLevel(const qint16 *pcm, int nsamples);
+
+	qint64 m_clipCount;
+	qint64 m_levelCount;
+	int m_levelPeak;
+
+	// |sample| at or above this counts as pinned. 32512 is -0.13 dBFS: low
+	// enough to catch a converter that rails slightly short of 0x7fff, high
+	// enough that ordinary loud speech does not trip it.
+	static const int kClipThreshold = 32512;
+
+	// Fraction of pinned samples in a window that is worth complaining about,
+	// in percent. A stray sample at full scale is normal; a twentieth of a
+	// percent of them is not.
+	static constexpr double kClipWarnPercent = 0.05;
+
+	static const int kLevelReportSec = 2;
+
+	// The FFmpeg and the native halves of each direction. Which one runs is
+	// decided by PlatformDriverName().
+	void captureFFmpeg(const QString &driver);
+	void captureNative(const QString &api);
+	void playFFmpeg(const QString &driver);
+	void playNative(const QString &api);
+
+	// Jitter buffer for the playback direction: Play() blocks pulling from
+	// here, enqueuePacket() (called from the controller on delivery of an
+	// incoming network packet) pushes into it.
+	QMutex m_queueMutex;
+	QWaitCondition m_queueCond;
+
+	struct PlaybackPacket
+	{
+		quint16 seq;
+		QByteArray data;
+	};
+
+	// Kept ordered by sequence number, oldest first.
+	QList<PlaybackPacket> m_playQueue;
+	// Sequence number of the last packet handed to the decoder, once one has
+	// been; anything not newer than it has missed its turn.
+	quint16 m_lastPlayedSeq;
+	bool m_havePlayedSeq;
+
+	// Shared by both playback paths. waitForPreroll() blocks until the jitter
+	// buffer has a cushion or the call ends; nextPacket() pops the next
+	// packet, returning false once the loop has to stop. A true return with an
+	// empty *out is a spurious wakeup - carry on.
+	void waitForPreroll();
+	bool nextPacket(QByteArray *out);
+
+	// Ceiling on the queue, in packets of 20ms each - one second. This is a
+	// runaway guard, not a latency control: Play() pops as fast as it can and
+	// the standing latency ends up in the sound card's buffer, not here, so
+	// the queue only grows when the peer sends a burst or our playback thread
+	// is not being scheduled. It has to be well clear of kPrerollDepth,
+	// because overflow is handled by dropping the OLDEST packet
+	// (enqueuePacket()) - that is, by throwing away audio that was about to
+	// be played. At the previous value of 8 that was only 160ms, close enough
+	// to the preroll that ordinary reordering over the direct UDP transport
+	// could reach it and punch holes in the speech.
+	static const int kMaxQueueDepth = 50;
+
+	// Number of packets Play() waits to have buffered before writing the
+	// first one, to build up a cushion against arrival jitter (packets
+	// this call apart arrive roughly every 20ms - see
+	// AudioVideoCallController::startAudioPipeline()).
+	//
+	// This is standing latency: whatever is prerolled here is audio the
+	// listener hears that much later, for the whole call. 100ms buys a
+	// useful margin over the 60ms this used to be while staying inside the
+	// range where a conversation still feels immediate.
+	static const int kPrerollDepth = 5;
+};
+
+#endif // AUDIODEVICE_H

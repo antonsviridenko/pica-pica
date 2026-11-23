@@ -17,82 +17,241 @@
 #include "settingsdialog.h"
 #include "../settings.h"
 #include "../globals.h"
+#include "../audiodevice.h"
+#include "../videodevice.h"
+#include "../callsettings.h"
+#include "../directc2csettings.h"
 #include "../../PICA_netconf.h"
 #include "../../PICA_proto.h"
 
 #include <QGroupBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QFormLayout>
 #include <QLabel>
+#include <QDebug>
 #include <QVariant>
 #include <QListWidget>
 #include <QNetworkInterface>
 #include <QHostAddress>
+#include <QSize>
+#include <QEvent>
 #include <QTabWidget>
+#include <QTimer>
+#include <QHeaderView>
+#include <QMessageBox>
+#include <QHostAddress>
+#include <memory>
+
+// The device tests are not part of any call, but the devices only run for an
+// open call session (see MediaCallSession) - so each test is one, under a name
+// no account id can take, with the dialog on both ends of it.
+static QByteArray testSessionId()
+{
+	return QByteArrayLiteral("settings dialog device test");
+}
+
+// Audio pipeline test: how long the microphone is recorded for. The codec and
+// the rate come from the "Call Settings" tab, so the test runs the same path a
+// call would - see toggleAudioTest().
+static const int kAudioTestRecordMs = 5000;
+
+// One encoded packet covers this much audio (the Opus encoder produces
+// 20 ms frames at 48 kHz), so feeding one packet per this many milliseconds
+// replays the recording at its natural rate.
+static const int kAudioTestPacketMs = 20;
+
+// How long to wait for the microphone to produce its first packet before
+// giving up on it. Opening a capture device is not instant - on Windows,
+// COM plus WASAPI endpoint activation can take the better part of a second -
+// so the recording window below is only started once audio is actually
+// arriving, and this is the separate limit on getting that far at all.
+static const int kAudioTestStartTimeoutMs = 4000;
+
+// Grace period after the last packet has been handed over, for the jitter
+// buffer and the sound card's own buffer to drain before closing the device.
+static const int kAudioTestDrainMs = 500;
+
+// Sizes and frame rates offered when the camera will not say what it supports
+// - a platform where they cannot be queried, or a camera that will not answer.
+// The camera is free to refuse any of them, the same way it may refuse
+// anything else it was asked for; VideoDevice::Capture() loosens the request
+// rather than failing.
+static const struct
+{
+	int width;
+	int height;
+} kFallbackResolutions[] =
+{
+	{ 1920, 1080 }, { 1280, 720 }, { 800, 600 }, { 640, 480 },
+	{ 640, 360 }, { 352, 288 }, { 320, 240 }, { 160, 120 }
+};
+
+static const int kFallbackFrameRates[] = { 30, 25, 24, 20, 15, 10, 5 };
+
+// Range the bitrate spin boxes accept, in kbit/s. Wide enough not to argue
+// with anyone: the low end is where a codec still produces something, the high
+// end well past what a call over a home connection can carry.
+static const int kMinVideoBitrateKbps = 50;
+static const int kMaxVideoBitrateKbps = 20000;
+static const int kMinAudioBitrateKbps = 6;
+static const int kMaxAudioBitrateKbps = 510;
 
 SettingsDialog::SettingsDialog(QWidget *parent) :
 	QDialog(parent)
 {
+	// The video tab's format lists follow the camera selection, and
+	// fillVideoDevices() below changes that before they have been built - so
+	// they have to be readable as "not there yet" from the moment anything can
+	// reach them.
+	videoRes = nullptr;
+	videoFps = nullptr;
+
+	// Same problem, one step further along: videoPreview is watched for its own
+	// resizes and answers them by telling testDecoder what size to decode to,
+	// but the preview is built - and the layout that can resize it applied -
+	// before the decoder exists.
+	testDecoder = nullptr;
+	videoTestRunning = false;
+	videoTestGpuRendering = false;
+	videoCapturedFrames = 0;
+	videoDisplayedFrames = 0;
+	videoCaptureFps = 0.0;
+	videoDisplayFps = 0.0;
+
 	QVBoxLayout *settingsLayout = new QVBoxLayout();
 
 	QTabWidget *tabW = new QTabWidget(this);
 	QWidget* directc2ctab = new QWidget(0);
 	QWidget* soundstab = new QWidget(0);
 	QWidget* multilogintab = new QWidget(0);
+	QWidget* audiodevtab = new QWidget(0);
+	QWidget* videodevtab = new QWidget(0);
+	QWidget* calltab = new QWidget(0);
 
 	QVBoxLayout *directc2cLayout = new QVBoxLayout();
 	QVBoxLayout *multiloginlayout = new QVBoxLayout();
+	QVBoxLayout *audiodevlayout = new QVBoxLayout();
+	QVBoxLayout *videodevLayout = new QVBoxLayout();
+	QVBoxLayout *callLayout = new QVBoxLayout();
 
 //Direct connections
 	rbDisableDirectConns = new QRadioButton(tr("Disable direct connections"), this);
 	rbEnableOutgoingConns = new QRadioButton(tr("Connect to the remote peer directly if possible"), this);
 	rbEnableIncomingConns = new QRadioButton(tr("Enable incoming direct connections"), this);
 
+	rbEnableIncomingConns->setChecked(true);
+
+	// Indented under "Enable incoming direct connections", which it all
+	// depends on. A widget of its own also keeps its radio buttons out of the
+	// exclusive group of the three above, QRadioButton grouping by parent.
+	incomingBox = new QWidget();
+	QVBoxLayout *incomingLayout = new QVBoxLayout();
+	incomingLayout->setContentsMargins(20, 0, 0, 0);
+
+	cbEnableUPnP = nullptr;
 #ifdef HAVE_LIBMINIUPNPC
 	cbEnableUPnP = new QCheckBox(tr("Enable UPnP"));
+	cbEnableUPnP->setToolTip(tr("Ask the router to forward the port for incoming direct connections, TCP and UDP, "
+	                            "and announce the router's external address to peers"));
 	cbEnableUPnP->setChecked(true);
+	incomingLayout->addWidget(cbEnableUPnP);
 #endif
 
-	rbEnableIncomingConns->setChecked(true);
-	connect(rbEnableIncomingConns, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
+	rbAddrAuto = new QRadioButton(tr("Automatic address configuration"));
+	rbAddrManual = new QRadioButton(tr("Manual"));
+	rbAddrAuto->setChecked(true);
 
-	QLabel *lbAddr = new QLabel(tr("Public address for incoming connections"), this);
-	addr = new QComboBox(this);
-	QLabel *lbPubPort = new QLabel(tr("External TCP port for incoming connections"), this);
-	publicPort = new QSpinBox(this);
-	QLabel *lbLocPort = new QLabel(tr("Local TCP port for incoming connections"), this);
-	localPort = new QSpinBox(this);
+	lbAutoAddrs = new QLabel();
+	lbAutoAddrs->setWordWrap(true);
+	lbAutoAddrs->setContentsMargins(20, 0, 0, 0);
 
-	addr->setEditable(true);
+	incomingLayout->addWidget(rbAddrAuto);
+	incomingLayout->addWidget(lbAutoAddrs);
+	incomingLayout->addWidget(rbAddrManual);
 
-	publicPort->setRange(1, 65535);
+	manualBox = new QWidget();
+	QVBoxLayout *manualLayout = new QVBoxLayout();
+	manualLayout->setContentsMargins(20, 0, 0, 0);
+
+	QHBoxLayout *portRow = new QHBoxLayout();
+	localPort = new QSpinBox();
 	localPort->setRange(1, 65535);
+	localPort->setValue(DirectC2CSettings::DefaultPort);
+	portRow->addWidget(new QLabel(tr("Local TCP and UDP port")));
+	portRow->addWidget(localPort);
+	portRow->addStretch(1);
+	manualLayout->addLayout(portRow);
 
-	publicPort->setValue(2298);
-	localPort->setValue(2298);
+	manualLayout->addWidget(new QLabel(tr("Addresses announced to peers, tried by them in this order. "
+	                                      "Put the external address and port of a port forwarded "
+	                                      "on your router here.")));
 
-	QList<QHostAddress> hostIfAddrs = QNetworkInterface::allAddresses();
-	QHostAddress ifAddr;
+	addrTable = new QTableWidget(0, 2);
+	addrTable->setHorizontalHeaderLabels(QStringList() << tr("Address") << tr("Port"));
+	addrTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+	addrTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+	addrTable->verticalHeader()->setVisible(false);
+	addrTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+	addrTable->setSelectionMode(QAbstractItemView::SingleSelection);
+	manualLayout->addWidget(addrTable);
 
-	addr->addItem(QString("autoconfigure"));
+	QHBoxLayout *addrButtons = new QHBoxLayout();
+	QPushButton *btAddrAdd = new QPushButton(tr("Add"));
+	QPushButton *btAddrRemove = new QPushButton(tr("Remove"));
+	QPushButton *btAddrUp = new QPushButton(tr("Move up"));
+	QPushButton *btAddrDown = new QPushButton(tr("Move down"));
+	addrButtons->addWidget(btAddrAdd);
+	addrButtons->addWidget(btAddrRemove);
+	addrButtons->addWidget(btAddrUp);
+	addrButtons->addWidget(btAddrDown);
+	addrButtons->addStretch(1);
+	manualLayout->addLayout(addrButtons);
 
-	foreach (ifAddr, hostIfAddrs)
-		if (ifAddr.protocol() == QAbstractSocket::IPv4Protocol)
-			addr->addItem(ifAddr.toString());
+	QHBoxLayout *addrButtons2 = new QHBoxLayout();
+	QPushButton *btAddrIfaces = new QPushButton(tr("Add interface addresses"));
+	btAddrIfaces->setToolTip(tr("Add the addresses of this computer's network interfaces, with the local port"));
+	btAddrUpnp = new QPushButton(tr("Add UPnP address"));
+	btAddrUpnp->setToolTip(tr("Add an entry for the external address of the UPnP router, "
+	                          "filled in with the forwarded port when Pica Pica runs"));
+	btUpnpQuery = new QPushButton(tr("Ask router for external address"));
+	btUpnpQuery->setToolTip(tr("Get the router's external address through UPnP now and add it with the local port"));
+	addrButtons2->addWidget(btAddrIfaces);
+	addrButtons2->addWidget(btAddrUpnp);
+	addrButtons2->addWidget(btUpnpQuery);
+	addrButtons2->addStretch(1);
+	manualLayout->addLayout(addrButtons2);
 
+	lbUpnpInfo = new QLabel();
+	lbUpnpInfo->setWordWrap(true);
+	manualLayout->addWidget(lbUpnpInfo);
+
+#ifndef HAVE_LIBMINIUPNPC
+	btAddrUpnp->hide();
+	btUpnpQuery->hide();
+#endif
+
+	manualBox->setLayout(manualLayout);
+	incomingLayout->addWidget(manualBox);
+	incomingBox->setLayout(incomingLayout);
+
+	connect(rbEnableIncomingConns, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
+	connect(rbAddrManual, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
+	if (cbEnableUPnP)
+		connect(cbEnableUPnP, SIGNAL(toggled(bool)), this, SLOT(toggleIncomingConnections(bool)));
+	connect(btAddrAdd, SIGNAL(clicked()), this, SLOT(addAddr()));
+	connect(btAddrRemove, SIGNAL(clicked()), this, SLOT(removeAddr()));
+	connect(btAddrUp, SIGNAL(clicked()), this, SLOT(moveAddrUp()));
+	connect(btAddrDown, SIGNAL(clicked()), this, SLOT(moveAddrDown()));
+	connect(btAddrIfaces, SIGNAL(clicked()), this, SLOT(addInterfaceAddrs()));
+	connect(btAddrUpnp, SIGNAL(clicked()), this, SLOT(addUpnpAddrRow()));
+	connect(btUpnpQuery, SIGNAL(clicked()), this, SLOT(queryUpnpAddr()));
 
 	directc2cLayout->addWidget(rbDisableDirectConns);
 	directc2cLayout->addWidget(rbEnableOutgoingConns);
 	directc2cLayout->addWidget(rbEnableIncomingConns);
-#ifdef HAVE_LIBMINIUPNPC
-	directc2cLayout->addWidget(cbEnableUPnP);
-#endif
-	directc2cLayout->addWidget(lbAddr);
-	directc2cLayout->addWidget(addr);
-	directc2cLayout->addWidget(lbPubPort);
-	directc2cLayout->addWidget(publicPort);
-	directc2cLayout->addWidget(lbLocPort);
-	directc2cLayout->addWidget(localPort);
+	directc2cLayout->addWidget(incomingBox);
 	directc2cLayout->addStretch(1);
 
 	directc2ctab->setLayout(directc2cLayout);
@@ -113,8 +272,408 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 
 	multilogintab->setLayout(multiloginlayout);
 
+// Audio Devices
+	audioDriver = nullptr;
+#ifdef Q_OS_LINUX
+	QLabel *lbAudioDriver = new QLabel(tr("Audio system"));
+
+	// ALSA is always there; PulseAudio is what a desktop session normally
+	// runs (PipeWire included, through its PulseAudio interface) and is the
+	// one that can hand us a device with the echo already cancelled.
+	audioDriver = new QComboBox(this);
+	audioDriver->addItem(tr("ALSA"), QStringLiteral("alsa"));
+	audioDriver->addItem(tr("PulseAudio / PipeWire"), QStringLiteral("pulse"));
+
+	// Set before the device lists are filled, since Enumerate() asks it which
+	// driver's names to go looking for.
+	{
+		Settings drvst(config_dbname);
+		QString drv = drvst.loadValue("audio.driver", "alsa").toString();
+		AudioDevice::SetLinuxDriverName(drv);
+		int drvItem = audioDriver->findData(drv);
+		if (drvItem >= 0)
+			audioDriver->setCurrentIndex(drvItem);
+	}
+
+	connect(audioDriver, SIGNAL(currentIndexChanged(int)), this, SLOT(audioDriverChanged(int)));
+#endif
+
+	QLabel *lbAudioCaptureDev = new QLabel(tr("Microphone Device 🎙️"));
+	QLabel *lbAudioPlaybackDev = new QLabel(tr("Playback device 🎧"));
+	QLabel *lbAudioRingDev = new QLabel(tr("Ring device 🔔☎️"));
+
+	audioCaptureDev = new QComboBox(this);
+	audioCaptureDev->setMinimumHeight(audioCaptureDev->height() * 2);
+	fillAudioCaptureDevices();
+
+	audioPlaybackDev = new QComboBox(this);
+	audioPlaybackDev->setMinimumHeight(audioPlaybackDev->height() * 2);
+	fillAudioPlaybackDevices();
+
+	audioRingDev = new QComboBox(this);
+	audioRingDev->setMinimumHeight(audioRingDev->height() * 2);
+	fillAudioRingDevices();
+
+	btAudioTest = new QPushButton(tr("Test 🎙️"), this);
+	connect(btAudioTest, SIGNAL(clicked()), this, SLOT(toggleAudioTest()));
+
+	audioTestStatus = new QLabel(this);
+	audioTestStatus->setAlignment(Qt::AlignCenter);
+
+	// Echo cancellation: removing the sound of the other person coming back
+	// out of the microphone, which is what makes them hear themselves when
+	// the call is on speakers. Exactly one of the three - two cancellers in
+	// series is worse than either alone, since the second one is left
+	// chasing a reference that is no longer in the signal.
+	QGroupBox *gbEchoCancel = new QGroupBox(tr("Audio echo cancellation"), this);
+	QVBoxLayout *echoCancelLayout = new QVBoxLayout();
+
+	// Parented to the group box, not the dialog: QRadioButton's automatic
+	// exclusivity groups by parent widget, and these three must not join the
+	// direct connection or multiple login buttons.
+	rbEchoCancelOwn = new QRadioButton(tr("Use own echo cancellation"), gbEchoCancel);
+	rbEchoCancelOwn->setToolTip(tr("Cancels the echo inside Pica Pica, using WebRTC's AEC3. "
+	                               "Works with any microphone and any sound system, and is the "
+	                               "only option where the platform provides nothing."));
+
+	rbEchoCancelPlatform = new QRadioButton(tr("Use platform provided echo cancellation"), gbEchoCancel);
+
+	rbEchoCancelNone = new QRadioButton(tr("Disable echo cancellation"), gbEchoCancel);
+	rbEchoCancelNone->setToolTip(tr("Nothing is removed from the microphone signal. Right with a "
+	                                "headset, where there is no echo to cancel, and worth trying "
+	                                "if cancellation is cutting into your speech."));
+
+	echoCancelLayout->addWidget(rbEchoCancelOwn);
+	echoCancelLayout->addWidget(rbEchoCancelPlatform);
+	echoCancelLayout->addWidget(rbEchoCancelNone);
+	gbEchoCancel->setLayout(echoCancelLayout);
+
+	// Fills in the platform option's tooltip and greys it out where there is
+	// no such thing. loadSettings() runs afterwards and is what actually
+	// picks one of the three.
+	updateEchoCancellationChoices();
+
+	btRingTest = new QPushButton(tr("Test ring 🔔"), this);
+	connect(btRingTest, SIGNAL(clicked()), this, SLOT(toggleRingTest()));
+
+	ringTestStatus = new QLabel(this);
+	ringTestStatus->setAlignment(Qt::AlignCenter);
+
+	// The microphone test covers the capture and playback devices, so it sits
+	// with them, above the unrelated ring device below.
+#ifdef Q_OS_LINUX
+	audiodevlayout->addWidget(lbAudioDriver);
+	audiodevlayout->addWidget(audioDriver);
+#endif
+	audiodevlayout->addWidget(lbAudioCaptureDev);
+	audiodevlayout->addWidget(audioCaptureDev);
+	audiodevlayout->addWidget(lbAudioPlaybackDev);
+	audiodevlayout->addWidget(audioPlaybackDev);
+	audiodevlayout->addWidget(gbEchoCancel);
+	audiodevlayout->addWidget(btAudioTest);
+	audiodevlayout->addWidget(audioTestStatus);
+	audiodevlayout->addWidget(lbAudioRingDev);
+	audiodevlayout->addWidget(audioRingDev);
+	audiodevlayout->addWidget(btRingTest);
+	audiodevlayout->addWidget(ringTestStatus);
+	audiodevlayout->addStretch(1);
+
+	audiodevtab->setLayout(audiodevlayout);
+
+	// Capture+encode and decode+playback ends of the test, each blocking its
+	// own thread while running, exactly as they do during a call. They stay
+	// idle until the Test button is pressed.
+	audioTestState = AudioTestIdle;
+	audioTestPlaybackPos = 0;
+
+	audioTestRecordTimer = new QTimer(this);
+	audioTestRecordTimer->setSingleShot(true);
+	connect(audioTestRecordTimer, SIGNAL(timeout()), this, SLOT(audioTestRecordingFinished()));
+
+	audioTestPlaybackTimer = new QTimer(this);
+	// A coarse timer is no use at this interval. Windows' default system
+	// timer granularity is 15.6 ms, so a coarse 20 ms timer really fires
+	// about every 31 ms; PreciseTimer asks for a multimedia timer instead.
+	// audioTestFeedPacket() does not rely on this being exact, but the closer
+	// it is the smoother the playback.
+	audioTestPlaybackTimer->setTimerType(Qt::PreciseTimer);
+	connect(audioTestPlaybackTimer, SIGNAL(timeout()), this, SLOT(audioTestFeedPacket()));
+
+	audioTestDrainTimer = new QTimer(this);
+	audioTestDrainTimer->setSingleShot(true);
+	connect(audioTestDrainTimer, SIGNAL(timeout()), this, SLOT(audioTestPlaybackFinished()));
+
+	testMic = new AudioDevice();
+	testMic->moveToThread(&testMicThread);
+	connect(testMic, SIGNAL(packetReady(QByteArray)), this, SLOT(audioTestPacket(QByteArray)));
+	connect(testMic, SIGNAL(errorOccurred(QString)), this, SLOT(audioTestError(QString)));
+	connect(testMic, SIGNAL(deviceFormatInUse(QString)), this, SLOT(audioTestPath(QString)));
+	testMicThread.start();
+
+	testSpeaker = new AudioDevice();
+	testSpeaker->moveToThread(&testSpeakerThread);
+	connect(testSpeaker, SIGNAL(errorOccurred(QString)), this, SLOT(audioTestError(QString)));
+	connect(testSpeaker, SIGNAL(deviceFormatInUse(QString)), this, SLOT(audioTestPath(QString)));
+	testSpeakerThread.start();
+
+	ringTestRunning = false;
+	ringTestPlayer = new TonePlayer();
+	ringTestPlayer->moveToThread(&ringTestPlayerThread);
+	connect(ringTestPlayer, SIGNAL(finishedPlaying()), this, SLOT(ringTestFinished()));
+	connect(ringTestPlayer, SIGNAL(errorOccured(QString)), this, SLOT(ringTestError(QString)));
+	ringTestPlayerThread.start();
+
+//Video Devices
+	videoDev = new QComboBox(this);
+	videoDev->setMinimumHeight(videoDev->height() * 2);
+	fillVideoDevices();
+	videoDevRefresh = new QPushButton(tr("Refresh 🔄"), this);
+	connect(videoDevRefresh, SIGNAL(clicked()), this, SLOT(fillVideoDevices()));
+
+	QLabel *lbVideoRes = new QLabel(tr("Resolution"), this);
+	videoRes = new QComboBox(this);
+	videoRes->setToolTip(tr("Picture sizes the selected camera offers. A size the camera can "
+	                        "deliver already compressed lists the formats in brackets; those "
+	                        "are the ones the \"prefer compressed formats\" setting below can "
+	                        "forward untouched, without decoding and re-encoding them here."));
+
+	QLabel *lbVideoFps = new QLabel(tr("Frame rate"), this);
+	videoFps = new QComboBox(this);
+	videoFps->setToolTip(tr("Frame rates the camera offers at the selected size."));
+
+	// Filled from the camera the device list above has selected, so the two
+	// have to follow it - and each other.
+	fillVideoResolutions();
+	connect(videoDev, SIGNAL(currentIndexChanged(int)), this, SLOT(fillVideoResolutions()));
+	connect(videoRes, SIGNAL(currentIndexChanged(int)), this, SLOT(fillVideoFrameRates()));
+
+	QHBoxLayout *videoFormatLayout = new QHBoxLayout();
+	videoFormatLayout->addWidget(lbVideoRes);
+	videoFormatLayout->addWidget(videoRes, 1);
+	videoFormatLayout->addWidget(lbVideoFps);
+	videoFormatLayout->addWidget(videoFps);
+
+	cbPreferCompressed = new QCheckBox(tr("Prefer compressed formats if provided by the camera"), this);
+
+#ifdef HAVE_VAAPI
+	cbVaapiEncoding = new QCheckBox(tr("enable VAAPI-accelerated hardware encoding"), this);
+	cbVaapiDecoding = new QCheckBox(tr("enable VAAPI-accelerated hardware decoding"), this);
+	cbVaapiRendering = new QCheckBox(tr("enable VAAPI accelerated hardware rendering"), this);
+	// Drawing a VA surface means having decoded into one first, so rendering
+	// brings decoding along with it whether or not it was asked for.
+	cbVaapiRendering->setToolTip(tr("Requires hardware decoding, which is enabled along with it"));
+	offerAcceleration(cbVaapiEncoding, VideoAccelerationVaapi, true);
+	offerAcceleration(cbVaapiDecoding, VideoAccelerationVaapi, false);
+#endif
+
+#ifdef Q_OS_WIN
+	// Encoding and decoding side by side rather than one checkbox per line:
+	// five lines of them would push the preview below off a small screen.
+	QGroupBox *gbHwAccel = new QGroupBox(tr("GPU acceleration"), this);
+	QGridLayout *hwAccelLayout = new QGridLayout();
+	int encodingRow = 1;
+	int decodingRow = 1;
+
+	hwAccelLayout->addWidget(new QLabel(tr("Encoding:"), this), 0, 0);
+	hwAccelLayout->addWidget(new QLabel(tr("Decoding:"), this), 0, 1);
+
+	// Listed in the order VideoDevice tries them, which is what decides the
+	// one used when several are ticked.
+#ifdef HAVE_D3D12VA
+	cbD3d12vaEncoding = new QCheckBox(tr("Direct3D 12"), this);
+	cbD3d12vaEncoding->setToolTip(tr("Encodes on the GPU through Direct3D 12 Video. Needs a "
+	                                 "recent Windows and a GPU driver that implements Direct3D "
+	                                 "12 video encoding.\n"
+	                                 "Tried before Media Foundation when both are ticked."));
+	offerAcceleration(cbD3d12vaEncoding, VideoAccelerationD3d12va, true);
+	hwAccelLayout->addWidget(cbD3d12vaEncoding, encodingRow++, 0);
+#endif
+
+	cbMediaFoundationEncoding = new QCheckBox(tr("Media Foundation"), this);
+	cbMediaFoundationEncoding->setToolTip(tr("Encodes on the GPU through the hardware encoder "
+	                                         "the GPU driver registers with Windows. Works with "
+	                                         "older GPUs and drivers too. Microsoft's software "
+	                                         "encoder is never used through this - without a "
+	                                         "hardware one, encoding falls back to libx264."));
+	offerAcceleration(cbMediaFoundationEncoding, VideoAccelerationMediaFoundation, true);
+	hwAccelLayout->addWidget(cbMediaFoundationEncoding, encodingRow++, 0);
+
+	cbD3d11vaDecoding = new QCheckBox(tr("Direct3D 11"), this);
+	cbD3d11vaDecoding->setToolTip(tr("Decodes on the GPU through Direct3D 11 Video, the most "
+	                                 "widely supported way on Windows 8 and later.\n"
+	                                 "Tried first when several are ticked."));
+	offerAcceleration(cbD3d11vaDecoding, VideoAccelerationD3d11va, false);
+	hwAccelLayout->addWidget(cbD3d11vaDecoding, decodingRow++, 1);
+
+#ifdef HAVE_D3D12VA
+	cbD3d12vaDecoding = new QCheckBox(tr("Direct3D 12"), this);
+	cbD3d12vaDecoding->setToolTip(tr("Decodes on the GPU through Direct3D 12 Video.\n"
+	                                 "Tried after Direct3D 11 when both are ticked."));
+	offerAcceleration(cbD3d12vaDecoding, VideoAccelerationD3d12va, false);
+	hwAccelLayout->addWidget(cbD3d12vaDecoding, decodingRow++, 1);
+#endif
+
+	cbDxva2Decoding = new QCheckBox(tr("DXVA2"), this);
+	cbDxva2Decoding->setToolTip(tr("Decodes on the GPU through DirectX Video Acceleration 2, "
+	                               "on top of Direct3D 9 - for GPUs and drivers too old for "
+	                               "the others.\nTried last when several are ticked."));
+	offerAcceleration(cbDxva2Decoding, VideoAccelerationDxva2, false);
+	hwAccelLayout->addWidget(cbDxva2Decoding, decodingRow++, 1);
+
+	gbHwAccel->setLayout(hwAccelLayout);
+#endif
+
+	btVideoTest = new QPushButton(tr("Test 📷"), this);
+	connect(btVideoTest, SIGNAL(clicked()), this, SLOT(toggleVideoTest()));
+
+	videoPreview = new QLabel(this);
+	videoPreview->setAlignment(Qt::AlignCenter);
+	videoPreview->setMinimumSize(320, 240);
+	videoPreview->setFrameShape(QFrame::StyledPanel);
+	// A label holding a pixmap reports that pixmap's size as its minimum, which
+	// would stop the dialog being made smaller than the last frame drawn - and
+	// since each frame is drawn at the size of this label, the label could then
+	// never shrink either. Ignored breaks that: the label takes the space the
+	// layout gives it and asks for none. The status text it shows between tests
+	// has the 320x240 minimum above to sit in.
+	videoPreview->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+	videoPreview->installEventFilter(this);
+
+	videoTestStatus = new QLabel(this);
+	// Left aligned, not centred: this line grows and shrinks as the frame
+	// rate is measured and re-measured, and centring it makes the whole text
+	// jump sideways every time it changes length.
+	videoTestStatus->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+#ifdef HAVE_VAAPI
+	videoPreviewGpu = VaapiRenderWidget::create(this);
+	// Letterboxes the surface itself, so it only needs to be given the room.
+	videoPreviewGpu->widget()->setMinimumSize(320, 240);
+	videoPreviewGpu->widget()->hide();
+	connect(videoPreviewGpu->widget(), SIGNAL(renderingFailed(QString)), this, SLOT(videoTestRenderFailed(QString)));
+#endif
+
+	videodevLayout->addWidget(videoDev);
+	videodevLayout->addWidget(videoDevRefresh);
+	videodevLayout->addLayout(videoFormatLayout);
+	videodevLayout->addWidget(cbPreferCompressed);
+#ifdef HAVE_VAAPI
+	videodevLayout->addWidget(cbVaapiEncoding);
+	videodevLayout->addWidget(cbVaapiDecoding);
+	videodevLayout->addWidget(cbVaapiRendering);
+#endif
+#ifdef Q_OS_WIN
+	videodevLayout->addWidget(gbHwAccel);
+#endif
+	videodevLayout->addWidget(btVideoTest);
+	// The preview takes the tab's spare height, where it used to go to a spacer
+	// at the bottom. Only one of the two preview widgets is ever visible and a
+	// hidden widget is given no space, so both can be stretched.
+	videodevLayout->addWidget(videoPreview, 1);
+#ifdef HAVE_VAAPI
+	videodevLayout->addWidget(videoPreviewGpu->widget(), 1);
+#endif
+	videodevLayout->addWidget(videoTestStatus);
+
+	videodevtab->setLayout(videodevLayout);
+
+	// Recomputes the frame rates in the status line once a second, which is
+	// long enough for the number to sit still and be read.
+	videoFpsTimer = new QTimer(this);
+	videoFpsTimer->setInterval(1000);
+	connect(videoFpsTimer, SIGNAL(timeout()), this, SLOT(videoFpsTick()));
+
+	// Capture+encode and decode ends of the test pipeline, each blocking its
+	// own thread while running, exactly as they do during a call. They stay
+	// idle until the Test button is pressed. videoTestRunning is already false
+	// from the top of this constructor, where the preview needed it.
+	testVideoSeq = 0;
+
+	testCam = new VideoDevice();
+	testCam->moveToThread(&testCamThread);
+	connect(testCam, SIGNAL(captureStarted(QString,int,int,double)), this, SLOT(videoTestCaptureStarted(QString,int,int,double)));
+	connect(testCam, SIGNAL(packetReady(QByteArray,bool)), this, SLOT(videoTestFragment(QByteArray,bool)));
+	connect(testCam, SIGNAL(errorOccurred(QString)), this, SLOT(videoTestError(QString)));
+	connect(testCam, SIGNAL(accelerationInUse(QString)), this, SLOT(videoTestPath(QString)));
+	testCamThread.start();
+
+	testDecoder = new VideoDevice();
+	testDecoder->moveToThread(&testDecoderThread);
+	connect(testDecoder, SIGNAL(frameReady(QImage)), this, SLOT(videoTestFrame(QImage)));
+	connect(testDecoder, SIGNAL(errorOccurred(QString)), this, SLOT(videoTestError(QString)));
+	connect(testDecoder, SIGNAL(accelerationInUse(QString)), this, SLOT(videoTestPath(QString)));
+#ifdef HAVE_VAAPI
+	connect(testDecoder, SIGNAL(hwFrameReady(AVFramePtr)), this, SLOT(videoTestHwFrame(AVFramePtr)));
+#endif
+	testDecoderThread.start();
+
+//Call Settings
+	// What a call encodes with. The codec names stored here are FFmpeg names,
+	// which is also how the 0x74 and 0x75 messages name them - see
+	// callsettings.h.
+	callVideoCodec = new QComboBox(this);
+
+	for (int i = 0; i < kCallVideoCodecCount; i++)
+		callVideoCodec->addItem(QLatin1String(kCallVideoCodecs[i].displayName),
+		                        QLatin1String(kCallVideoCodecs[i].name));
+
+	callVideoCodec->setToolTip(tr("What outgoing video is encoded with. The peer is told which "
+	                              "codec is in use, so it does not have to be one it was "
+	                              "configured for.\n\n"
+	                              "This applies to video encoded here. With \"prefer compressed "
+	                              "formats\" switched on and a camera that delivers a compressed "
+	                              "stream itself, that stream is forwarded as it comes and the "
+	                              "camera's format is what the peer receives - this setting then "
+	                              "only decides which of the camera's formats is preferred."));
+
+	callAudioCodec = new QComboBox(this);
+
+	for (int i = 0; i < kCallAudioCodecCount; i++)
+		callAudioCodec->addItem(QLatin1String(kCallAudioCodecs[i].displayName),
+		                        QLatin1String(kCallAudioCodecs[i].name));
+
+	callAudioCodec->setToolTip(tr("What outgoing audio is encoded with. Opus is the one to want "
+	                              "for a voice call; G.722 and G.711 A-law are the telephony "
+	                              "codecs, fixed at 64 kbit/s and there for compatibility."));
+
+	callVideoBitrate = new QSpinBox(this);
+	callVideoBitrate->setRange(kMinVideoBitrateKbps, kMaxVideoBitrateKbps);
+	callVideoBitrate->setSuffix(tr(" kbps"));
+	callVideoBitrate->setValue(kDefaultVideoBitrateKbps);
+
+	callAudioBitrate = new QSpinBox(this);
+	callAudioBitrate->setRange(kMinAudioBitrateKbps, kMaxAudioBitrateKbps);
+	callAudioBitrate->setSuffix(tr(" kbps"));
+	callAudioBitrate->setValue(kDefaultAudioBitrateKbps);
+	audioBitrateKbps = kDefaultAudioBitrateKbps;
+
+	connect(callAudioCodec, SIGNAL(currentIndexChanged(int)), this, SLOT(callAudioCodecChanged()));
+
+	QFormLayout *callFormLayout = new QFormLayout();
+	callFormLayout->addRow(tr("Video Codec"), callVideoCodec);
+	callFormLayout->addRow(tr("Video Bitrate"), callVideoBitrate);
+	callFormLayout->addRow(tr("Audio Codec"), callAudioCodec);
+	callFormLayout->addRow(tr("Audio Bitrate"), callAudioBitrate);
+
+	// The other half of what a call is started with lives on the video tab,
+	// next to the camera that has to deliver it; say so rather than leaving
+	// this tab looking like the whole story.
+	QLabel *lbCallHint = new QLabel(tr("The picture size and frame rate a call is started with are "
+	                                   "on the Video Devices tab, next to the camera that has to "
+	                                   "deliver them."), this);
+	lbCallHint->setWordWrap(true);
+
+	callLayout->addLayout(callFormLayout);
+	callLayout->addWidget(lbCallHint);
+	callLayout->addStretch(1);
+
+	calltab->setLayout(callLayout);
+
 	tabW->addTab(directc2ctab, tr("Direct Connections"));
 	tabW->addTab(multilogintab, tr("Multiple logins"));
+	tabW->addTab(audiodevtab, tr("Audio Devices"));
+	tabW->addTab(videodevtab, tr("Video Devices"));
+	tabW->addTab(calltab, tr("Call Settings"));
 	tabW->addTab(soundstab, tr("Sounds"));
 	settingsLayout->addWidget(tabW);
 
@@ -139,14 +698,1295 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	setWindowTitle(tr("Pica Pica Messenger Settings"));
 }
 
+SettingsDialog::~SettingsDialog()
+{
+	// Stops the loops first - the threads cannot finish while Capture()/Play()
+	// are still running inside them.
+	testCam->Close();
+	testDecoder->Close();
+	testMic->Close();
+	testSpeaker->Close();
+
+	testCamThread.quit();
+	testCamThread.wait();
+	delete testCam;
+
+	testDecoderThread.quit();
+	testDecoderThread.wait();
+	delete testDecoder;
+
+	testMicThread.quit();
+	testMicThread.wait();
+	delete testMic;
+
+	testSpeakerThread.quit();
+	testSpeakerThread.wait();
+	delete testSpeaker;
+
+	// Same reasoning: stop() first, since the thread cannot finish while
+	// TonePlayer::play() is still running inside it.
+	ringTestPlayer->stop();
+	ringTestPlayerThread.quit();
+	ringTestPlayerThread.wait();
+	delete ringTestPlayer;
+}
+
+void SettingsDialog::toggleRingTest()
+{
+	if (ringTestRunning)
+	{
+		// stop() only sets an atomic flag, so it is safe to call directly on
+		// a TonePlayer whose thread is blocked inside play().
+		ringTestPlayer->stop();
+		ringTestRunning = false;
+		btRingTest->setText(tr("Test ring 🔔"));
+		ringTestStatus->clear();
+		return;
+	}
+
+	QString dev = audioRingDev->itemData(audioRingDev->currentIndex()).toString();
+
+	if (dev.isEmpty())
+	{
+		ringTestStatus->setText(tr("No ring device selected"));
+		return;
+	}
+
+	ringTestRunning = true;
+	btRingTest->setText(tr("Stop ⏹"));
+	ringTestStatus->setText(tr("Ringing..."));
+
+	// Same sequence AudioVideoCallController::playRingTone() uses for a real
+	// incoming call: clear any tone still playing, point the player at the
+	// configured device, then start the bell.
+	ringTestPlayer->stop();
+	QMetaObject::invokeMethod(ringTestPlayer, "setDeviceName", Qt::QueuedConnection, Q_ARG(QString, dev));
+	QMetaObject::invokeMethod(ringTestPlayer, "playClassicRingtone", Qt::QueuedConnection);
+}
+
+void SettingsDialog::ringTestFinished()
+{
+	if (!ringTestRunning)
+		return;
+
+	ringTestRunning = false;
+	btRingTest->setText(tr("Test ring 🔔"));
+	ringTestStatus->clear();
+}
+
+void SettingsDialog::ringTestError(QString message)
+{
+	ringTestRunning = false;
+	btRingTest->setText(tr("Test ring 🔔"));
+	ringTestStatus->setText(message);
+}
+
+void SettingsDialog::toggleAudioTest()
+{
+	if (audioTestState != AudioTestIdle)
+	{
+		stopAudioTest();
+		audioTestStatus->setText(tr("Stopped"));
+		return;
+	}
+
+	QString dev = audioCaptureDev->itemData(audioCaptureDev->currentIndex()).toString();
+
+	if (dev.isEmpty())
+	{
+		audioTestStatus->setText(tr("No microphone selected"));
+		return;
+	}
+
+	audioTestPackets.clear();
+	audioTestPlaybackPos = 0;
+	audioTestPathReport.clear();
+	audioTestState = AudioTestRecording;
+	btAudioTest->setText(tr("Stop ⏹"));
+	audioTestStatus->setText(tr("Recording, say something..."));
+
+	// The codec selected on the "Call Settings" tab, at the rate a call with
+	// it would run at - same as the video test, this exercises what the
+	// current selections do rather than a fixed pipeline of its own.
+	const QString codec = callAudioCodec->itemData(callAudioCodec->currentIndex()).toString();
+	const int rate = callAudioSampleRate(codec);
+	const int bitrate = callAudioBitrateAdjustable(codec) ? callAudioBitrate->value() * 1000 : 0;
+
+	testMic->openSession(testSessionId(), testSessionId());
+	QMetaObject::invokeMethod(testMic, "configureCapture", Qt::QueuedConnection,
+	                           Q_ARG(QString, dev), Q_ARG(QString, codec),
+	                           Q_ARG(int, rate), Q_ARG(int, bitrate),
+	                           Q_ARG(QByteArray, testSessionId()), Q_ARG(QByteArray, testSessionId()));
+	QMetaObject::invokeMethod(testMic, "Capture", Qt::QueuedConnection);
+
+	// Only a watchdog for the device failing to open at all. The recording
+	// window proper starts in audioTestPacket(), when the first packet shows
+	// up - otherwise the device's startup time comes out of the five seconds
+	// and the user gets a noticeably short recording.
+	audioTestRecordTimer->start(kAudioTestStartTimeoutMs);
+}
+
+void SettingsDialog::audioTestPacket(QByteArray data)
+{
+	// Packets still in flight from the microphone thread after the recording
+	// phase ended are not part of the recording.
+	if (audioTestState != AudioTestRecording)
+		return;
+
+	// First packet: the microphone is live, so start the recording window now
+	// rather than when the device was merely asked to open.
+	if (audioTestPackets.isEmpty())
+		audioTestRecordTimer->start(kAudioTestRecordMs);
+
+	audioTestPackets.append(data);
+}
+
+void SettingsDialog::audioTestRecordingFinished()
+{
+	// The test may have been stopped, or have failed, while the timer ran.
+	if (audioTestState != AudioTestRecording)
+		return;
+
+	// Direct call: the microphone thread is blocked inside Capture(), so a
+	// queued call would never reach it (see the comments in
+	// AudioVideoCallController::stopAudioPipeline()).
+	testMic->Close();
+
+	if (audioTestPackets.isEmpty())
+	{
+		stopAudioTest();
+		audioTestStatus->setText(tr("Nothing was captured"));
+		return;
+	}
+
+	startAudioTestPlayback();
+}
+
+void SettingsDialog::startAudioTestPlayback()
+{
+	QString dev = audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString();
+
+	if (dev.isEmpty())
+	{
+		stopAudioTest();
+		audioTestStatus->setText(tr("No playback device selected"));
+		return;
+	}
+
+	audioTestState = AudioTestPlaying;
+	audioTestPlaybackPos = 0;
+
+	// The packet count is worth showing, not just decoration. Capture emits
+	// one packet per kAudioTestPacketMs of audio it actually received, so a
+	// count well under kAudioTestRecordMs/kAudioTestPacketMs means the
+	// recording lost samples on the way in, and anything wrong with the sound
+	// is a capture problem. A full count with bad sound means the samples all
+	// arrived and something downstream is mangling them.
+	QString summary = tr("Playing back %1 of %2 packets (%3 s)...")
+	                  .arg(audioTestPackets.size())
+	                  .arg(kAudioTestRecordMs / kAudioTestPacketMs)
+	                  .arg(audioTestPackets.size() * kAudioTestPacketMs / 1000.0, 0, 'f', 1);
+
+	if (!audioTestPathReport.isEmpty())
+		summary += QLatin1String("\n") + audioTestPathReport;
+
+	audioTestStatus->setText(summary);
+
+	// Decoded with what it was encoded with, exactly as the receiving end of a
+	// call decodes with whatever the peer announced.
+	const QString codec = callAudioCodec->itemData(callAudioCodec->currentIndex()).toString();
+
+	testSpeaker->openSession(testSessionId(), testSessionId());
+	QMetaObject::invokeMethod(testSpeaker, "configurePlayback", Qt::QueuedConnection,
+	                           Q_ARG(QString, dev), Q_ARG(QString, codec),
+	                           Q_ARG(int, callAudioSampleRate(codec)),
+	                           Q_ARG(QByteArray, testSessionId()), Q_ARG(QByteArray, testSessionId()));
+	QMetaObject::invokeMethod(testSpeaker, "Play", Qt::QueuedConnection);
+
+	// The recording has to be handed over at the rate it plays at, not all at
+	// once: AudioDevice's jitter buffer holds only a few packets and drops
+	// the oldest when full, so dumping the whole recording into it would
+	// discard everything but the tail.
+	audioTestPlaybackClock.start();
+	audioTestPlaybackTimer->start(kAudioTestPacketMs);
+}
+
+void SettingsDialog::audioTestFeedPacket()
+{
+	if (audioTestState != AudioTestPlaying)
+		return;
+
+	// Pace against the clock, not against the number of times this has been
+	// called. A QTimer asked for 20 ms does not necessarily deliver every
+	// 20 ms - on Windows the system timer granularity is 15.6 ms, so even a
+	// precise timer can run late - and handing over one packet per tick
+	// regardless would play the recording back at whatever rate the timer
+	// happened to run at. Late ticks stretched it out and left the sound card
+	// with nothing to play in between, which sounded like the recording was
+	// both slowed down and chopped up.
+	//
+	// The real call path has no equivalent problem: there the packets are
+	// paced by the peer sending them, not by a timer here.
+	const qint64 due = audioTestPlaybackClock.elapsed() / kAudioTestPacketMs + 1;
+
+	while (audioTestPlaybackPos < audioTestPackets.size() &&
+	       (qint64)audioTestPlaybackPos < due)
+	{
+		// Direct call, for the same reason as in the call controller. Nothing
+		// here loses or reorders packets, so the sequence numbers are simply
+		// the order they were recorded in.
+		testSpeaker->enqueuePacket((quint16)audioTestPlaybackPos,
+		                           audioTestPackets.at(audioTestPlaybackPos));
+		audioTestPlaybackPos++;
+	}
+
+	if (audioTestPlaybackPos >= audioTestPackets.size())
+	{
+		audioTestPlaybackTimer->stop();
+		// Let what is already queued, plus the sound card's own buffer, play
+		// out before tearing the playback device down.
+		audioTestDrainTimer->start(kAudioTestDrainMs);
+	}
+}
+
+void SettingsDialog::audioTestPlaybackFinished()
+{
+	if (audioTestState != AudioTestPlaying)
+		return;
+
+	stopAudioTest();
+	audioTestStatus->setText(tr("Done"));
+}
+
+void SettingsDialog::stopAudioTest()
+{
+	audioTestRecordTimer->stop();
+	audioTestPlaybackTimer->stop();
+	audioTestDrainTimer->stop();
+
+	// Direct calls: both devices may be blocked inside their capture/playback
+	// loops, where a queued call would never reach them.
+	testMic->Close();
+	testSpeaker->Close();
+
+	audioTestPackets.clear();
+	audioTestPlaybackPos = 0;
+	audioTestState = AudioTestIdle;
+	btAudioTest->setText(tr("Test 🎙️"));
+	audioTestStatus->clear();
+}
+
+void SettingsDialog::audioTestPath(QString description)
+{
+	if (description.isEmpty())
+		return;
+
+	if (!audioTestPathReport.isEmpty())
+		audioTestPathReport += QLatin1String("\n");
+	audioTestPathReport += description;
+}
+
+void SettingsDialog::audioTestError(QString message)
+{
+	if (audioTestState == AudioTestIdle)
+		return;
+
+	stopAudioTest();
+	audioTestStatus->setText(message);
+}
+
+void SettingsDialog::toggleVideoTest()
+{
+	if (videoTestRunning)
+	{
+		stopVideoTest();
+		return;
+	}
+
+	QString dev = videoDev->itemData(videoDev->currentIndex()).toString();
+
+	if (dev.isEmpty())
+	{
+		videoPreview->setText(tr("No camera selected"));
+		return;
+	}
+
+	testAssembler.reset();
+	testVideoSeq = 0;
+	videoTestRunning = true;
+	btVideoTest->setText(tr("Stop ⏹"));
+	videoPreview->setText(tr("Starting..."));
+
+	// Before the decoder is started, so that its very first frame comes back
+	// at the size the preview wants rather than the camera's own.
+	reportVideoPreviewArea();
+
+	videoTestGpuRendering = false;
+	videoCapturedFrames = 0;
+	videoDisplayedFrames = 0;
+	videoCaptureFps = 0.0;
+	videoDisplayFps = 0.0;
+	videoFpsElapsed.start();
+	videoFpsTimer->start();
+
+	videoTestPathReport.clear();
+
+	// The settings as they stand in the dialog, not as they were last stored:
+	// the point of the test is to see what the current selections do before
+	// committing to them.
+	testCam->openSession(testSessionId(), testSessionId());
+	QMetaObject::invokeMethod(testCam, "configureCapture", Qt::QueuedConnection,
+	                           Q_ARG(QString, dev),
+	                           Q_ARG(int, selectedVideoWidth()), Q_ARG(int, selectedVideoHeight()),
+	                           Q_ARG(int, selectedVideoFrameRate()),
+	                           Q_ARG(bool, cbPreferCompressed->isChecked()),
+	                           Q_ARG(QString, callVideoCodec->itemData(callVideoCodec->currentIndex()).toString()),
+	                           Q_ARG(int, callVideoBitrate->value() * 1000),
+	                           Q_ARG(int, selectedVideoEncodingAcceleration()),
+	                           Q_ARG(QByteArray, testSessionId()), Q_ARG(QByteArray, testSessionId()));
+	QMetaObject::invokeMethod(testCam, "Capture", Qt::QueuedConnection);
+
+	// The decoder is only started once the camera has settled on a format,
+	// which is what captureStarted() reports - the same order a call follows,
+	// where the peer's 0x75 message arrives before its first video packet.
+}
+
+void SettingsDialog::videoTestCaptureStarted(QString codec, int width, int height,
+                                             double frameRate)
+{
+	if (!videoTestRunning)
+		return;
+
+	// Says which path the test is exercising: the camera's own compressed
+	// stream forwarded untouched, or frames decoded and re-encoded here.
+	//
+	// The rate is the one the camera settled on, and is shown whether or not
+	// it is the one that was asked for - a camera substituting a lower rate
+	// does so silently, so seeing it here is the whole point. It is not the
+	// same figure as the measured rate in the status line: this is what the
+	// camera agreed to, that is what actually arrived, and the two differing
+	// means something is dropping frames rather than never producing them.
+	videoTestFormat = frameRate > 0.0
+	                  ? tr("%1 %2x%3 @%4").arg(codec).arg(width).arg(height)
+	                    .arg(frameRate, 0, 'f', frameRate < 10.0 ? 1 : 0)
+	                  : tr("%1 %2x%3").arg(codec).arg(width).arg(height);
+	videoPreview->setText(tr("Capturing %1...").arg(videoTestFormat));
+
+	bool vaapiRendering = false;
+#ifdef HAVE_VAAPI
+	// Asking for frames to be kept in GPU memory once it is known that they
+	// cannot be drawn from there would only mean starting each test with a
+	// blank preview until it failed again.
+	vaapiRendering = cbVaapiRendering->isChecked() && !VaapiRenderWidget::renderingKnownBroken();
+#endif
+
+	testDecoder->openSession(testSessionId(), testSessionId());
+	QMetaObject::invokeMethod(testDecoder, "configurePlayback", Qt::QueuedConnection,
+	                           Q_ARG(QString, codec),
+	                           Q_ARG(int, width), Q_ARG(int, height),
+	                           Q_ARG(int, selectedVideoDecodingAcceleration()),
+	                           Q_ARG(bool, vaapiRendering),
+	                           Q_ARG(QByteArray, testSessionId()), Q_ARG(QByteArray, testSessionId()));
+	QMetaObject::invokeMethod(testDecoder, "Play", Qt::QueuedConnection);
+}
+
+void SettingsDialog::videoTestPath(QString description)
+{
+	if (!videoTestRunning)
+		return;
+
+	// Capture and playback each report once; both lines are kept so the whole
+	// path is visible, since either end can quietly fall back to software.
+	if (!videoTestPathReport.isEmpty())
+		videoTestPathReport += QLatin1String(", ");
+	videoTestPathReport += description;
+}
+
+void SettingsDialog::stopVideoTest()
+{
+	// Direct calls: both devices are blocked inside their capture/decode
+	// loops, so a queued call would never reach them (see the comments in
+	// AudioVideoCallController::stopAudioPipeline()).
+	testCam->Close();
+	testDecoder->Close();
+
+	testAssembler.reset();
+	testVideoSeq = 0;
+	videoTestRunning = false;
+	videoTestFormat.clear();
+	videoTestPathReport.clear();
+	videoTestGpuRendering = false;
+	videoFpsTimer->stop();
+	videoCaptureFps = 0.0;
+	videoDisplayFps = 0.0;
+	btVideoTest->setText(tr("Test 📷"));
+	videoPreview->clear();
+	videoTestStatus->clear();
+	lastTestFrame = QImage();
+#ifdef HAVE_VAAPI
+	videoPreviewGpu->clearFrame();
+	videoPreviewGpu->widget()->hide();
+	videoPreview->show();
+#endif
+
+	// Last, once the preview label is back in place: drops the display size so
+	// that a test started again does not begin against whatever the previous
+	// one left behind. videoTestRunning is already false, which is what makes
+	// this clear it rather than set it.
+	reportVideoPreviewArea();
+}
+
+void SettingsDialog::videoTestFragment(QByteArray data, bool is_last_fragment)
+{
+	if (!videoTestRunning)
+		return;
+
+	// The encoder emits fragments exactly as they would go onto the wire, so
+	// feed them through the same assembler the receiving end of a call uses.
+	// The sequence number is rebuilt here the way send_video_packet() builds
+	// it - the counter has to be kept as well, since the assembler uses it to
+	// tell a fragment that follows the previous one from one that comes after
+	// a loss. The timestamp is constant, as nothing here can lose a fragment
+	// and only frame boundaries matter.
+	quint16 seq = testVideoSeq & VideoFrameAssembler::SeqNumMask;
+
+	testVideoSeq = (testVideoSeq + 1) & VideoFrameAssembler::SeqNumMask;
+
+	if (is_last_fragment)
+	{
+		seq |= VideoFrameAssembler::LastFragmentFlag;
+
+		// One encoded frame has just been completed, which in steady state is
+		// one frame off the camera. Counted here rather than at the camera
+		// because this is also what a call would be putting on the wire.
+		videoCapturedFrames++;
+	}
+
+	QByteArray frame = testAssembler.addFragment(seq, 0, data);
+
+	if (frame.isEmpty())
+		return;
+
+	// Direct call, for the same reason as in the call controller.
+	testDecoder->enqueueFrame(frame);
+}
+
+void SettingsDialog::videoTestFrame(QImage frame)
+{
+	if (!videoTestRunning || frame.isNull())
+		return;
+
+	videoDisplayedFrames++;
+
+	// The preview itself is showing pixels now, so what format came off the
+	// camera and which of the GPU or CPU did the work goes underneath it.
+	updateVideoTestStatus();
+
+	lastTestFrame = frame;
+	updateVideoPreview();
+}
+
+void SettingsDialog::videoFpsTick()
+{
+	const qint64 elapsed = videoFpsElapsed.restart();
+
+	if (elapsed <= 0)
+		return;
+
+	videoCaptureFps = videoCapturedFrames * 1000.0 / elapsed;
+	videoDisplayFps = videoDisplayedFrames * 1000.0 / elapsed;
+	videoCapturedFrames = 0;
+	videoDisplayedFrames = 0;
+
+	updateVideoTestStatus();
+}
+
+void SettingsDialog::updateVideoTestStatus()
+{
+	if (!videoTestRunning)
+		return;
+
+	QString text = videoTestFormat;
+
+	if (!videoTestPathReport.isEmpty())
+		text = tr("%1 - %2").arg(text, videoTestPathReport);
+
+	if (videoTestGpuRendering)
+		text += tr(", GPU rendering");
+
+	// Nothing to say until the first second is up and a rate has been
+	// measured, and saying "0.0 fps" in the meantime would read as a fault.
+	if (videoCaptureFps > 0.0 || videoDisplayFps > 0.0)
+	{
+		const int asked = selectedVideoFrameRate();
+
+		// The two rates are usually the same, and printing both every time
+		// would bury the case that matters. They part company when the
+		// pipeline cannot keep up with the camera - frames are then dropped
+		// between the two, see VideoDevice::enqueueFrame().
+		if (qAbs(videoCaptureFps - videoDisplayFps) > 1.0)
+			text += tr(", %1 fps captured, %2 shown")
+			        .arg(videoCaptureFps, 0, 'f', 1).arg(videoDisplayFps, 0, 'f', 1);
+		else
+			text += tr(", %1 fps").arg(videoCaptureFps, 0, 'f', 1);
+
+		// A camera asked for more than it can deliver is not obliged to say
+		// so - it just sends fewer frames - so the shortfall is spelled out
+		// rather than left for the user to notice against the setting they
+		// chose. Half a frame of slack, since a camera holding its rate
+		// still reads a little under on any one second.
+		if (asked > 0 && videoCaptureFps < asked - 0.5)
+			text += tr(" of %1 requested").arg(asked);
+	}
+
+	videoTestStatus->setText(text);
+}
+
+void SettingsDialog::updateVideoPreview()
+{
+	// Only while the test is running: with it stopped the preview is showing
+	// status text instead, and putting the last frame back over that on a
+	// resize would be wrong.
+	if (!videoTestRunning || lastTestFrame.isNull() || videoPreview->isHidden())
+		return;
+
+	// Normally a no-op - testDecoder was told the size of this area and the
+	// frame arrived at it already. It earns its place across a resize, when
+	// frames converted at the old size have still to be drawn at the new one.
+	QImage scaled = videoTestScaler.scale(lastTestFrame, videoPreview->size());
+
+	if (scaled.isNull())
+		return;
+
+	videoPreview->setPixmap(QPixmap::fromImage(scaled));
+}
+
+void SettingsDialog::reportVideoPreviewArea()
+{
+	// The preview can be resized by the layout before the decoder has been
+	// built; see the note at the top of the constructor.
+	//
+	// isHidden() rather than isVisible(): what matters is whether this label is
+	// the renderer in use, not whether the dialog is on screen. When the GPU
+	// widget has the preview it scales frames itself, on the GPU, and wants
+	// them at their own resolution - see videoTestHwFrame().
+	if (!testDecoder || videoPreview->isHidden())
+		return;
+
+	// Direct call rather than invokeMethod() - testDecoder's thread is blocked
+	// inside Play(), so a queued call would sit behind the very loop it is
+	// meant to reach. Same rule as the Close() calls in stopVideoTest().
+	testDecoder->setDisplaySize(videoTestRunning ? videoPreview->size() : QSize());
+}
+
+bool SettingsDialog::eventFilter(QObject *watched, QEvent *event)
+{
+	if (watched == videoPreview && event->type() == QEvent::Resize)
+	{
+		reportVideoPreviewArea();
+		updateVideoPreview();
+	}
+
+	return QDialog::eventFilter(watched, event);
+}
+
+#ifdef HAVE_VAAPI
+void SettingsDialog::videoTestHwFrame(AVFramePtr frame)
+{
+	if (!videoTestRunning)
+		return;
+
+	// The widget has given up on drawing; leave the preview area with the
+	// label and get the decoder to produce frames it can show.
+	if (!videoPreviewGpu->isWorking())
+	{
+		testDecoder->disableHardwareRendering();
+		return;
+	}
+
+	// Frames arriving here never went through system memory, so the label has
+	// nothing to show - the GL widget takes over the preview area.
+	if (videoPreviewGpu->widget()->isHidden())
+	{
+		videoPreview->hide();
+		videoPreviewGpu->widget()->show();
+
+		// The widget scales the surface itself, on the GPU, so the decoder
+		// has no reason to produce frames at any particular size - and it is
+		// not producing these ones at all.
+		testDecoder->setDisplaySize(QSize());
+	}
+
+	videoDisplayedFrames++;
+	videoTestGpuRendering = true;
+	updateVideoTestStatus();
+
+	videoPreviewGpu->setFrame(frame);
+}
+
+void SettingsDialog::videoTestRenderFailed(QString message)
+{
+	// Drawing straight from GPU memory did not work out. The decoder is still
+	// running, so leave the test going rather than killing it: ask it to bring
+	// frames back into system memory, which the label can show. The reason
+	// stands in the label until the first of those frames replaces it.
+	qWarning() << message;
+
+	videoPreviewGpu->widget()->hide();
+	videoPreview->show();
+	videoPreview->setText(message);
+
+	// The status line must stop claiming GPU rendering; frames are about to
+	// start coming back through system memory instead.
+	videoTestGpuRendering = false;
+	updateVideoTestStatus();
+
+	// Frames are about to start arriving in system memory, so the decoder needs
+	// the size to produce them at. Sent explicitly rather than left to the
+	// label's resize, which does not fire if showing it did not change its
+	// geometry.
+	reportVideoPreviewArea();
+
+	// Direct call, for the same reason as in videoTestFragment().
+	testDecoder->disableHardwareRendering();
+}
+#endif
+
+void SettingsDialog::videoTestError(QString message)
+{
+	if (!videoTestRunning)
+		return;
+
+	stopVideoTest();
+	videoPreview->setText(message);
+}
+
+void SettingsDialog::fillDevicesComboBox(QComboBox *cb, MediaDevice *dev, enum MediaDeviceStreamDirection dir)
+{
+		cb->clear();
+		QList<MediaDeviceInfo> md = dev->Enumerate(dir);
+		for (int i = 0; i < md.size(); i++)
+		{
+			QString item = QString(QLatin1String("%2\n(%1)"))
+									.arg(md.at(i).device)
+									.arg(md.at(i).humanReadable);
+
+			// A camera's compressed formats are not listed here but in the
+			// resolution list, which is where they actually mean something: a
+			// camera offers them at some of its sizes and not at others, so
+			// naming them against the camera as a whole said less than it
+			// appeared to.
+
+			cb->addItem(item, md.at(i).device);
+		}
+}
+
+void SettingsDialog::fillVideoDevices()
+{
+		VideoDevice vd;
+
+		// Refilling walks the current index through -1 and back, and each step
+		// of that would otherwise ask a camera what it can do - which is not
+		// free, on Windows it means instantiating the capture filter. So the
+		// format lists below are rebuilt once, at the end.
+		const QString previous = videoDev->itemData(videoDev->currentIndex()).toString();
+
+		videoDev->blockSignals(true);
+		fillDevicesComboBox(videoDev, &vd, CAPTURE);
+
+		// Refresh is for picking up a camera that was plugged in, not for
+		// moving the selection off the one already chosen.
+		int item = videoDev->findData(previous);
+		if (item >= 0)
+			videoDev->setCurrentIndex(item);
+
+		videoDev->blockSignals(false);
+
+		fillVideoResolutions();
+}
+
+void SettingsDialog::fillVideoResolutions()
+{
+	// Nothing to fill into yet while the constructor is still building the
+	// tab - fillVideoDevices() runs before these exist.
+	if (!videoRes || !videoFps)
+		return;
+
+	const QString dev = videoDev->itemData(videoDev->currentIndex()).toString();
+
+	videoFormats = dev.isEmpty() ? QList<VideoCaptureFormat>()
+	                             : VideoDevice::CaptureFormats(dev);
+
+	// Refilling moves the current index about; the frame rate list is rebuilt
+	// once at the end rather than on every one of those intermediate changes.
+	videoRes->blockSignals(true);
+	videoRes->clear();
+
+	if (videoFormats.isEmpty())
+	{
+		// Either the camera would not say or this platform cannot ask. Offer
+		// the common sizes rather than an empty list - a camera that cannot
+		// produce one of them is handled the same way as any other request it
+		// will not honour, see VideoDevice::Capture().
+		for (unsigned int i = 0; i < sizeof(kFallbackResolutions) / sizeof(kFallbackResolutions[0]); i++)
+		{
+			const int w = kFallbackResolutions[i].width;
+			const int h = kFallbackResolutions[i].height;
+
+			videoRes->addItem(QString(QLatin1String("%1x%2")).arg(w).arg(h), QSize(w, h));
+		}
+	}
+	else
+	{
+		for (int i = 0; i < videoFormats.size(); i++)
+		{
+			const VideoCaptureFormat &f = videoFormats.at(i);
+			QString item = QString(QLatin1String("%1x%2")).arg(f.width).arg(f.height);
+
+			// The formats this camera can hand over ready-made at this size,
+			// which is what "prefer compressed formats" below acts on.
+			if (!f.compressedFormats.isEmpty())
+				item += QString(QLatin1String(" [%1]")).arg(f.compressedFormats.join(QLatin1String(", ")));
+
+			videoRes->addItem(item, QSize(f.width, f.height));
+		}
+	}
+
+	// Keep the configured size selected across a device change where the new
+	// camera offers it too, rather than silently moving the setting to
+	// whatever happens to be first in the new list.
+	Settings st(config_dbname);
+	QSize wanted(st.loadValue("video.capture_width", kDefaultCaptureWidth).toInt(),
+	             st.loadValue("video.capture_height", kDefaultCaptureHeight).toInt());
+
+	int item = videoRes->findData(wanted);
+
+	if (item < 0)
+		item = videoRes->findData(QSize(kDefaultCaptureWidth, kDefaultCaptureHeight));
+
+	if (item >= 0)
+		videoRes->setCurrentIndex(item);
+
+	videoRes->blockSignals(false);
+
+	fillVideoFrameRates();
+}
+
+void SettingsDialog::fillVideoFrameRates()
+{
+	if (!videoFps)
+		return;
+
+	const QSize size = videoRes->itemData(videoRes->currentIndex()).toSize();
+	QList<int> rates;
+
+	for (int i = 0; i < videoFormats.size(); i++)
+	{
+		if (videoFormats.at(i).width == size.width() && videoFormats.at(i).height == size.height())
+		{
+			rates = videoFormats.at(i).frameRates;
+			break;
+		}
+	}
+
+	videoFps->blockSignals(true);
+	videoFps->clear();
+
+	if (rates.isEmpty())
+	{
+		// Same reasoning as for the sizes: a camera that named its sizes but
+		// not its rates, or one we could not ask at all.
+		for (unsigned int i = 0; i < sizeof(kFallbackFrameRates) / sizeof(kFallbackFrameRates[0]); i++)
+			rates << kFallbackFrameRates[i];
+	}
+
+	for (int i = 0; i < rates.size(); i++)
+		videoFps->addItem(tr("%1 fps").arg(rates.at(i)), rates.at(i));
+
+	Settings st(config_dbname);
+	int wanted = st.loadValue("video.capture_framerate", kDefaultCaptureFrameRate).toInt();
+
+	int item = videoFps->findData(wanted);
+
+	if (item < 0)
+		item = videoFps->findData(kDefaultCaptureFrameRate);
+
+	// Neither the configured rate nor the default is on offer at this size -
+	// take the highest the camera does offer, which is the first in the list.
+	if (item < 0 && videoFps->count() > 0)
+		item = 0;
+
+	if (item >= 0)
+		videoFps->setCurrentIndex(item);
+
+	videoFps->blockSignals(false);
+}
+
+int SettingsDialog::selectedVideoWidth() const
+{
+	const QSize size = videoRes->itemData(videoRes->currentIndex()).toSize();
+
+	return size.isValid() ? size.width() : kDefaultCaptureWidth;
+}
+
+int SettingsDialog::selectedVideoHeight() const
+{
+	const QSize size = videoRes->itemData(videoRes->currentIndex()).toSize();
+
+	return size.isValid() ? size.height() : kDefaultCaptureHeight;
+}
+
+int SettingsDialog::selectedVideoFrameRate() const
+{
+	bool ok = false;
+	const int fps = videoFps->itemData(videoFps->currentIndex()).toInt(&ok);
+
+	return (ok && fps > 0) ? fps : kDefaultCaptureFrameRate;
+}
+
+void SettingsDialog::offerAcceleration(QCheckBox *cb, VideoAcceleration acceleration, bool encoding)
+{
+	if (VideoDevice::AccelerationBuiltIn(acceleration, encoding))
+		return;
+
+	cb->setEnabled(false);
+	cb->setToolTip(encoding
+	               ? tr("Not available: the FFmpeg this program runs with was built without "
+	                    "these encoders.")
+	               : tr("Not available: the FFmpeg this program runs with was built without "
+	                    "support for these decoders."));
+}
+
+int SettingsDialog::selectedVideoEncodingAcceleration() const
+{
+	int flags = 0;
+
+	// isEnabled() as well, so that a path greyed out by offerAcceleration()
+	// but ticked in a stored setting is not passed on - it would only be
+	// skipped with a warning further down.
+#ifdef HAVE_VAAPI
+	if (cbVaapiEncoding->isEnabled() && cbVaapiEncoding->isChecked())
+		flags |= VideoAccelerationVaapi;
+#endif
+#ifdef HAVE_D3D12VA
+	if (cbD3d12vaEncoding->isEnabled() && cbD3d12vaEncoding->isChecked())
+		flags |= VideoAccelerationD3d12va;
+#endif
+#ifdef Q_OS_WIN
+	if (cbMediaFoundationEncoding->isEnabled() && cbMediaFoundationEncoding->isChecked())
+		flags |= VideoAccelerationMediaFoundation;
+#endif
+
+	return flags;
+}
+
+int SettingsDialog::selectedVideoDecodingAcceleration() const
+{
+	int flags = 0;
+
+#ifdef HAVE_VAAPI
+	if (cbVaapiDecoding->isEnabled() && cbVaapiDecoding->isChecked())
+		flags |= VideoAccelerationVaapi;
+#endif
+#ifdef HAVE_D3D12VA
+	if (cbD3d12vaDecoding->isEnabled() && cbD3d12vaDecoding->isChecked())
+		flags |= VideoAccelerationD3d12va;
+#endif
+#ifdef Q_OS_WIN
+	if (cbD3d11vaDecoding->isEnabled() && cbD3d11vaDecoding->isChecked())
+		flags |= VideoAccelerationD3d11va;
+	if (cbDxva2Decoding->isEnabled() && cbDxva2Decoding->isChecked())
+		flags |= VideoAccelerationDxva2;
+#endif
+
+	return flags;
+}
+
+void SettingsDialog::callAudioCodecChanged()
+{
+	const QString codec = callAudioCodec->itemData(callAudioCodec->currentIndex()).toString();
+
+	if (callAudioBitrateAdjustable(codec))
+	{
+		// Coming back from a fixed rate codec, whose rate is showing in the
+		// box; the user's own choice is in audioBitrateKbps.
+		if (!callAudioBitrate->isEnabled())
+		{
+			callAudioBitrate->setEnabled(true);
+			callAudioBitrate->setValue(audioBitrateKbps);
+			callAudioBitrate->setToolTip(QString());
+		}
+
+		return;
+	}
+
+	if (callAudioBitrate->isEnabled())
+		audioBitrateKbps = callAudioBitrate->value();
+
+	// Show what the codec will actually run at rather than leaving a number
+	// behind that has nothing to do with it.
+	callAudioBitrate->setEnabled(false);
+	callAudioBitrate->setValue(callAudioFixedBitrateKbps(codec));
+	callAudioBitrate->setToolTip(tr("This codec codes a fixed number of bits per sample, so its "
+	                                "bitrate follows from the sample rate and cannot be chosen."));
+}
+
+void SettingsDialog::audioDriverChanged(int index)
+{
+	Q_UNUSED(index)
+
+	if (!audioDriver)
+		return;
+
+	// Take effect straight away rather than on OK, so the device lists below
+	// show the right names and the Test button uses them.
+	AudioDevice::SetLinuxDriverName(audioDriver->itemData(audioDriver->currentIndex()).toString());
+
+	fillAudioCaptureDevices();
+	fillAudioPlaybackDevices();
+	fillAudioRingDevices();
+
+	// ALSA has no echo cancellation of its own and PulseAudio does, so the
+	// platform option comes and goes with this choice.
+	updateEchoCancellationChoices();
+}
+
+void SettingsDialog::updateEchoCancellationChoices()
+{
+	// PlatformDriverName() reads the driver SetLinuxDriverName() published,
+	// which audioDriverChanged() has already updated by the time it calls
+	// this - so the answer follows the combo box rather than the saved
+	// setting.
+	const QString driver = AudioDevice::PlatformDriverName(CAPTURE);
+	const bool available = AudioDevice::PlatformEchoCancellationAvailable(driver);
+
+	rbEchoCancelPlatform->setEnabled(available);
+
+	if (available)
+	{
+		rbEchoCancelPlatform->setToolTip(tr("Lets the operating system or sound server cancel the "
+		                                    "echo instead. Where it exists this is the better "
+		                                    "one: it sits below Pica Pica and can see the real "
+		                                    "speaker signal and the real clock.\n\n"
+		                                    "With PulseAudio or PipeWire it also means picking an "
+		                                    "echo cancelling source as the microphone above - a "
+		                                    "plain input device is not processed."));
+	}
+	else
+	{
+		rbEchoCancelPlatform->setToolTip(tr("Not available: the audio system in use does not "
+		                                    "cancel echo for us."));
+
+		// A disabled button that is still the checked one would leave the
+		// group showing a choice that is not in effect.
+		if (rbEchoCancelPlatform->isChecked())
+			rbEchoCancelOwn->setChecked(true);
+	}
+}
+
+void SettingsDialog::fillAudioCaptureDevices()
+{
+	AudioDevice acd;
+	fillDevicesComboBox(audioCaptureDev, &acd, CAPTURE);
+}
+
+void SettingsDialog::fillAudioPlaybackDevices()
+{
+	AudioDevice apd;
+	fillDevicesComboBox(audioPlaybackDev, &apd, PLAYBACK);
+}
+
+void SettingsDialog::fillAudioRingDevices()
+{
+	AudioDevice ard;
+	fillDevicesComboBox(audioRingDev, &ard, PLAYBACK);
+}
+
 void SettingsDialog::toggleIncomingConnections(bool checked)
 {
-	addr->setEnabled(checked);
-	publicPort->setEnabled(checked);
-	localPort->setEnabled(checked);
-#ifdef HAVE_LIBMINIUPNPC
-	cbEnableUPnP->setEnabled(checked);
-#endif
+	Q_UNUSED(checked);
+
+	updateDirectConnWidgets();
+}
+
+void SettingsDialog::updateDirectConnWidgets()
+{
+	bool upnp = cbEnableUPnP && cbEnableUPnP->isChecked();
+
+	incomingBox->setEnabled(rbEnableIncomingConns->isChecked());
+	lbAutoAddrs->setEnabled(rbAddrAuto->isChecked());
+	manualBox->setEnabled(rbAddrManual->isChecked());
+	btAddrUpnp->setEnabled(upnp);
+
+	updateAutoAddrsLabel();
+}
+
+void SettingsDialog::updateAutoAddrsLabel()
+{
+	in_addr_t ifaddrs[PICA_IFADDRS_MAX];
+	QStringList addrs;
+	int n;
+
+	n = PICA_get_ifaddrs_ipv4(ifaddrs, PICA_IFADDRS_MAX);
+
+	for (int i = 0; i < n; i++)
+	{
+		struct in_addr in;
+
+		in.s_addr = ifaddrs[i];
+		addrs.append(QString::fromLatin1(inet_ntoa(in)));
+	}
+
+	QString text = addrs.isEmpty()
+	               ? tr("No network interface address found.")
+	               : tr("Announced to peers: %1, port %2 or the next free one")
+	               .arg(addrs.join(", ")).arg(DirectC2CSettings::DefaultPort);
+
+	if (cbEnableUPnP && cbEnableUPnP->isChecked())
+		text += tr(", followed by the external address of the UPnP router with the forwarded port.");
+	else
+		text += ".";
+
+	lbAutoAddrs->setText(text);
+}
+
+void SettingsDialog::addAddrRow(const QString &host, int port, bool upnp)
+{
+	int row = addrTable->rowCount();
+	QTableWidgetItem *hostItem, *portItem;
+
+	addrTable->insertRow(row);
+
+	if (upnp)
+	{
+		// Filled in at run time, so there is nothing to edit; the role marks
+		// it as the UPnP entry.
+		hostItem = new QTableWidgetItem(tr("UPnP router's external address"));
+		portItem = new QTableWidgetItem(tr("forwarded port"));
+		hostItem->setData(Qt::UserRole, true);
+		hostItem->setFlags(hostItem->flags() & ~Qt::ItemIsEditable);
+		portItem->setFlags(portItem->flags() & ~Qt::ItemIsEditable);
+	}
+	else
+	{
+		hostItem = new QTableWidgetItem(host);
+		portItem = new QTableWidgetItem(QString::number(port));
+	}
+
+	addrTable->setItem(row, 0, hostItem);
+	addrTable->setItem(row, 1, portItem);
+}
+
+bool SettingsDialog::addrRowIsUpnp(int row) const
+{
+	QTableWidgetItem *item = addrTable->item(row, 0);
+
+	return item && item->data(Qt::UserRole).toBool();
+}
+
+void SettingsDialog::addAddr()
+{
+	addAddrRow(QString(), localPort->value(), false);
+
+	addrTable->setCurrentCell(addrTable->rowCount() - 1, 0);
+	addrTable->editItem(addrTable->item(addrTable->rowCount() - 1, 0));
+}
+
+void SettingsDialog::removeAddr()
+{
+	int row = addrTable->currentRow();
+
+	if (row >= 0)
+		addrTable->removeRow(row);
+}
+
+static void swapTableRows(QTableWidget *t, int a, int b)
+{
+	for (int col = 0; col < t->columnCount(); col++)
+	{
+		QTableWidgetItem *ia = t->takeItem(a, col);
+		QTableWidgetItem *ib = t->takeItem(b, col);
+
+		t->setItem(a, col, ib);
+		t->setItem(b, col, ia);
+	}
+}
+
+void SettingsDialog::moveAddrUp()
+{
+	int row = addrTable->currentRow();
+
+	if (row <= 0)
+		return;
+
+	swapTableRows(addrTable, row, row - 1);
+	addrTable->setCurrentCell(row - 1, addrTable->currentColumn());
+}
+
+void SettingsDialog::moveAddrDown()
+{
+	int row = addrTable->currentRow();
+
+	if (row < 0 || row + 1 >= addrTable->rowCount())
+		return;
+
+	swapTableRows(addrTable, row, row + 1);
+	addrTable->setCurrentCell(row + 1, addrTable->currentColumn());
+}
+
+void SettingsDialog::addInterfaceAddrs()
+{
+	in_addr_t ifaddrs[PICA_IFADDRS_MAX];
+	int n;
+
+	// private addresses come first already, as they should in the list
+	n = PICA_get_ifaddrs_ipv4(ifaddrs, PICA_IFADDRS_MAX);
+
+	for (int i = 0; i < n; i++)
+	{
+		struct in_addr in;
+		QString host;
+		bool present = false;
+
+		in.s_addr = ifaddrs[i];
+		host = QString::fromLatin1(inet_ntoa(in));
+
+		for (int row = 0; row < addrTable->rowCount(); row++)
+			if (!addrRowIsUpnp(row) && addrTable->item(row, 0)->text().trimmed() == host
+			        && addrTable->item(row, 1)->text().trimmed().toInt() == localPort->value())
+				present = true;
+
+		if (!present)
+			addAddrRow(host, localPort->value(), false);
+	}
+
+	if (n == 0)
+		lbUpnpInfo->setText(tr("No network interface address found."));
+}
+
+void SettingsDialog::addUpnpAddrRow()
+{
+	for (int row = 0; row < addrTable->rowCount(); row++)
+		if (addrRowIsUpnp(row))
+		{
+			addrTable->setCurrentCell(row, 0);
+			return;
+		}
+
+	addAddrRow(QString(), 0, true);
+}
+
+void SettingsDialog::queryUpnpAddr()
+{
+	std::shared_ptr<int> status = std::make_shared<int>(PICA_UPNP_ERRNOIGD);
+	std::shared_ptr<QString> result = std::make_shared<QString>();
+
+	btUpnpQuery->setEnabled(false);
+	lbUpnpInfo->setText(tr("Asking the UPnP router..."));
+
+	// Parentless and deleting itself when done: the dialog may be closed
+	// before the router answers, and a QThread must not be destroyed while it
+	// runs. The answer only reaches the dialog if it is still there.
+	QThread *t = QThread::create([status, result]()
+	{
+		struct PICA_upnp_ctx *ctx = nullptr;
+		char addr[64];
+		int ret;
+
+		ret = PICA_upnp_discover(PICA_UPNP_DISCOVER_TIMEOUT, &ctx);
+
+		if (ret == PICA_UPNP_OK)
+		{
+			ret = PICA_upnp_external_addr(ctx, addr, sizeof(addr));
+
+			if (ret == PICA_UPNP_OK)
+				*result = QString::fromLatin1(addr);
+
+			PICA_upnp_free(ctx);
+		}
+
+		*status = ret;
+	});
+
+	connect(t, &QThread::finished, t, &QObject::deleteLater);
+	connect(t, &QThread::finished, this, [this, status, result]()
+	{
+		upnpQueryFinished(*status, *result);
+	});
+
+	t->start();
+}
+
+void SettingsDialog::upnpQueryFinished(int status, QString addr)
+{
+	btUpnpQuery->setEnabled(true);
+
+	if (status != PICA_UPNP_OK)
+	{
+		lbUpnpInfo->setText(tr("UPnP: %1").arg(PICA_upnp_strerror(status)));
+		return;
+	}
+
+	lbUpnpInfo->setText(tr("The router's external address is %1. Unless UPnP is enabled above, "
+	                       "the port has to be forwarded on the router by hand.").arg(addr));
+
+	for (int row = 0; row < addrTable->rowCount(); row++)
+		if (!addrRowIsUpnp(row) && addrTable->item(row, 0)->text().trimmed() == addr)
+			return;
+
+	addAddrRow(addr, localPort->value(), false);
+}
+
+bool SettingsDialog::validateAddrTable()
+{
+	bool upnp = cbEnableUPnP && cbEnableUPnP->isChecked();
+	int usable = 0;
+
+	if (!rbEnableIncomingConns->isChecked() || !rbAddrManual->isChecked())
+		return true;
+
+	for (int row = 0; row < addrTable->rowCount(); row++)
+	{
+		QString host;
+		bool ok = false;
+		int port;
+
+		if (addrRowIsUpnp(row))
+		{
+			usable += upnp ? 1 : 0;
+			continue;
+		}
+
+		host = addrTable->item(row, 0) ? addrTable->item(row, 0)->text().trimmed() : QString();
+		port = addrTable->item(row, 1) ? addrTable->item(row, 1)->text().trimmed().toInt(&ok) : 0;
+
+		// ';' and ':' would not survive DirectC2CSettings' stored form
+		if (host.isEmpty() || host.contains(';') || host.contains(':'))
+		{
+			QMessageBox::warning(this, tr("Direct connections"),
+			                     tr("Row %1 of the address list has no valid IPv4 address or host name.").arg(row + 1));
+			return false;
+		}
+
+		if (!ok || port <= 0 || port > 65535)
+		{
+			QMessageBox::warning(this, tr("Direct connections"),
+			                     tr("Row %1 of the address list has no valid port number.").arg(row + 1));
+			return false;
+		}
+
+		usable++;
+	}
+
+	if (usable == 0 && !upnp)
+	{
+		QMessageBox::warning(this, tr("Direct connections"),
+		                     tr("The address list is empty, so peers would have nowhere to connect to. "
+		                        "Add an address, or use the automatic configuration."));
+		return false;
+	}
+
+	return true;
 }
 
 void SettingsDialog::toggleMultipleLogins(bool checked)
@@ -156,6 +1996,9 @@ void SettingsDialog::toggleMultipleLogins(bool checked)
 
 void SettingsDialog::OK()
 {
+	if (!validateAddrTable())
+		return;
+
 	storeSettings();
 	done(1);
 }
@@ -171,8 +2014,10 @@ void SettingsDialog::loadSettings()
 
 	//Direct c2c connections
 	int c2c_state;
+	DirectC2CSettings dcs;
 
-	c2c_state = st.loadValue("direct_c2c.state", 1).toInt();
+	dcs.load(st);
+	c2c_state = dcs.state;
 
 	switch (c2c_state)
 	{
@@ -192,40 +2037,22 @@ void SettingsDialog::loadSettings()
 		break;
 	}
 
-#ifdef HAVE_LIBMINIUPNPC
-	cbEnableUPnP->setChecked(st.loadValue("direct_c2c.upnp_enabled", 1).toBool());
-#endif
+	if (cbEnableUPnP)
+		cbEnableUPnP->setChecked(dcs.upnp);
 
-	addr->lineEdit()->setText(st.loadValue("direct_c2c.public_addr", "autoconfigure").toString());
+	if (dcs.addrConfig == DirectC2CSettings::AddrConfigManual)
+		rbAddrManual->setChecked(true);
+	else
+		rbAddrAuto->setChecked(true);
 
-	if (addr->lineEdit()->text().contains(QString("autoconfigure")))
-	{
-		in_addr_t guess;
-		struct in_addr in;
+	localPort->setValue(dcs.localPort);
 
-		guess = PICA_guess_listening_addr_ipv4();
-		in.s_addr = guess;
-		addr->lineEdit()->setText(QString("autoconfigured(%1)").arg(inet_ntoa(in)));
+	addrTable->setRowCount(0);
 
-#ifdef HAVE_LIBMINIUPNPC
-		if (cbEnableUPnP->isChecked() && PICA_is_reserved_addr_ipv4(guess))
-		{
-			int ret;
-			char public_ip[64];
-			ret = PICA_upnp_autoconfigure_ipv4(st.loadValue("direct_c2c.public_port", 2298).toInt(),
-			                                   st.loadValue("direct_c2c.local_port", 2298).toInt(),
-			                                   public_ip);
+	foreach (const DirectC2CSettings::Addr &a, dcs.addrs)
+		addAddrRow(a.host, a.port, a.upnp);
 
-			if (ret)
-			{
-				addr->lineEdit()->setText(QString("autoconfigured(%1)").arg(public_ip));
-			}
-		}
-#endif
-	}
-
-	publicPort->setValue(st.loadValue("direct_c2c.public_port", 2298).toInt());
-	localPort->setValue(st.loadValue("direct_c2c.local_port", 2298).toInt());
+	updateDirectConnWidgets();
 
 	//multiple logins
 	int mlpstate;
@@ -249,6 +2076,94 @@ void SettingsDialog::loadSettings()
 		break;
 	}
 
+	QString videoCapDevVal = st.loadValue("video.capture_device", QString()).toString();
+	int videoDevItem = videoDev->findData(videoCapDevVal);
+	if (videoDevItem >= 0)
+		videoDev->setCurrentIndex(videoDevItem);
+
+	// The resolution and frame rate lists pick the stored size and rate out of
+	// what the selected camera offers as they are filled, which the line above
+	// has just triggered where it changed the camera - see
+	// fillVideoResolutions().
+
+	cbPreferCompressed->setChecked(st.loadValue("video.prefer_compressed", 0).toBool());
+
+	// Call encoding parameters. Read through CallSettings rather than from st
+	// directly, so that the dialog and a call that is started without ever
+	// opening it agree on what "not configured" means.
+	const CallSettings cs = CallSettings::load();
+
+	int callVideoCodecItem = callVideoCodec->findData(cs.videoCodec);
+	if (callVideoCodecItem >= 0)
+		callVideoCodec->setCurrentIndex(callVideoCodecItem);
+
+	callVideoBitrate->setValue(qBound(kMinVideoBitrateKbps, cs.videoBitrateKbps, kMaxVideoBitrateKbps));
+
+	// Before the codec is selected: selecting one whose bitrate is fixed puts
+	// that codec's rate in the box and keeps this as the value to come back
+	// to, see callAudioCodecChanged().
+	audioBitrateKbps = qBound(kMinAudioBitrateKbps, cs.audioBitrateKbps, kMaxAudioBitrateKbps);
+	callAudioBitrate->setValue(audioBitrateKbps);
+
+	int callAudioCodecItem = callAudioCodec->findData(cs.audioCodec);
+	if (callAudioCodecItem >= 0)
+		callAudioCodec->setCurrentIndex(callAudioCodecItem);
+
+	// Explicitly, because setCurrentIndex() above only emits when the index
+	// actually changes - and the stored codec is often the one already showing.
+	callAudioCodecChanged();
+
+#ifdef HAVE_VAAPI
+	cbVaapiEncoding->setChecked(st.loadValue("video.vaapi_encoding", 0).toBool());
+	cbVaapiDecoding->setChecked(st.loadValue("video.vaapi_decoding", 0).toBool());
+	cbVaapiRendering->setChecked(st.loadValue("video.vaapi_rendering", 0).toBool());
+#endif
+#ifdef HAVE_D3D12VA
+	cbD3d12vaEncoding->setChecked(st.loadValue("video.d3d12va_encoding", 0).toBool());
+	cbD3d12vaDecoding->setChecked(st.loadValue("video.d3d12va_decoding", 0).toBool());
+#endif
+#ifdef Q_OS_WIN
+	cbMediaFoundationEncoding->setChecked(st.loadValue("video.mediafoundation_encoding", 0).toBool());
+	cbD3d11vaDecoding->setChecked(st.loadValue("video.d3d11va_decoding", 0).toBool());
+	cbDxva2Decoding->setChecked(st.loadValue("video.dxva2_decoding", 0).toBool());
+#endif
+
+	QString audioCapDevVal = st.loadValue("audio.capture_device", "default").toString();
+	int audioCapDevItem = audioCaptureDev->findData(audioCapDevVal);
+	if (audioCapDevItem >= 0)
+		audioCaptureDev->setCurrentIndex(audioCapDevItem);
+
+	QString audioPlaybackDevVal = st.loadValue("audio.playback_device", "default").toString();
+	int audioPlaybackDevItem = audioPlaybackDev->findData(audioPlaybackDevVal);
+	if (audioPlaybackDevItem >= 0)
+		audioPlaybackDev->setCurrentIndex(audioPlaybackDevItem);
+
+	// Not read from st directly: the setting has a default that depends on the
+	// platform, and an older on/off setting to fall back on.
+	switch (loadEchoCancellationSetting())
+	{
+	case EchoCancellationPlatform:
+		rbEchoCancelPlatform->setChecked(true);
+		break;
+
+	case EchoCancellationNone:
+		rbEchoCancelNone->setChecked(true);
+		break;
+
+	case EchoCancellationOwn:
+	default:
+		rbEchoCancelOwn->setChecked(true);
+		break;
+	}
+
+	// Covers a saved "platform" on a machine where it is no longer on offer -
+	// a Linux install whose audio system has since been moved to ALSA.
+	updateEchoCancellationChoices();
+
+	QString audioRingDevVal = st.loadValue("audio.ring_device", "default").toString();
+	int audioRingDevItem = audioRingDev->findData(audioRingDevVal);
+	if (audioRingDevItem >= 0)
+		audioRingDev->setCurrentIndex(audioRingDevItem);
 }
 
 void SettingsDialog::storeSettings()
@@ -256,24 +2171,37 @@ void SettingsDialog::storeSettings()
 	Settings st(config_dbname);
 
 	//Direct c2c connections
-	int c2c_state;
+	DirectC2CSettings dcs;
+
+	dcs.state = 1;
 
 	if (rbDisableDirectConns->isChecked())
-		c2c_state = 0;
+		dcs.state = 0;
 	else if (rbEnableOutgoingConns->isChecked())
-		c2c_state = 1;
+		dcs.state = 1;
 	else if (rbEnableIncomingConns->isChecked())
-		c2c_state = 2;
+		dcs.state = 2;
 
-	st.storeValue("direct_c2c.state", QString::number(c2c_state));
+	dcs.upnp = cbEnableUPnP ? cbEnableUPnP->isChecked() : false;
+	dcs.addrConfig = rbAddrManual->isChecked() ? DirectC2CSettings::AddrConfigManual
+	                                           : DirectC2CSettings::AddrConfigAuto;
+	dcs.localPort = localPort->value();
 
-#ifdef HAVE_LIBMINIUPNPC
-	st.storeValue("direct_c2c.upnp_enabled", cbEnableUPnP->isChecked() ? "1" : "0");
-#endif
+	// Kept even when the automatic configuration is selected, so that
+	// switching back to the manual one finds it as it was.
+	for (int row = 0; row < addrTable->rowCount(); row++)
+	{
+		DirectC2CSettings::Addr a;
 
-	st.storeValue("direct_c2c.public_addr", addr->lineEdit()->text());
-	st.storeValue("direct_c2c.public_port", QString::number(publicPort->value()));
-	st.storeValue("direct_c2c.local_port", QString::number(localPort->value()));
+		a.upnp = addrRowIsUpnp(row);
+		a.host = a.upnp ? QString() : addrTable->item(row, 0)->text().trimmed();
+		a.port = a.upnp ? 0 : addrTable->item(row, 1)->text().trimmed().toInt();
+
+		if (a.upnp || (!a.host.isEmpty() && a.port > 0 && a.port <= 65535))
+			dcs.addrs.append(a);
+	}
+
+	dcs.store(st);
 
 	//multiple logins
 	int mlpstate;
@@ -286,4 +2214,62 @@ void SettingsDialog::storeSettings()
 		mlpstate = PICA_MULTILOGIN_ALLOW;
 
 	st.storeValue("multiple_logins.state", QString::number(mlpstate));
+
+	st.storeValue("video.capture_device", videoDev->itemData(videoDev->currentIndex()).toString());
+	st.storeValue("video.capture_width", QString::number(selectedVideoWidth()));
+	st.storeValue("video.capture_height", QString::number(selectedVideoHeight()));
+	st.storeValue("video.capture_framerate", QString::number(selectedVideoFrameRate()));
+	st.storeValue("video.prefer_compressed", cbPreferCompressed->isChecked() ? "1" : "0");
+
+	st.storeValue("call.video_codec", callVideoCodec->itemData(callVideoCodec->currentIndex()).toString());
+	st.storeValue("call.audio_codec", callAudioCodec->itemData(callAudioCodec->currentIndex()).toString());
+	st.storeValue("call.video_bitrate_kbps", QString::number(callVideoBitrate->value()));
+
+	// The box shows a fixed rate codec's own bitrate while such a codec is
+	// selected; what gets stored is the user's choice either way, so that
+	// switching back to Opus finds it again on the next visit.
+	if (callAudioBitrate->isEnabled())
+		audioBitrateKbps = callAudioBitrate->value();
+
+	st.storeValue("call.audio_bitrate_kbps", QString::number(audioBitrateKbps));
+#ifdef HAVE_VAAPI
+	st.storeValue("video.vaapi_encoding", cbVaapiEncoding->isChecked() ? "1" : "0");
+	st.storeValue("video.vaapi_decoding", cbVaapiDecoding->isChecked() ? "1" : "0");
+	st.storeValue("video.vaapi_rendering", cbVaapiRendering->isChecked() ? "1" : "0");
+#endif
+#ifdef HAVE_D3D12VA
+	st.storeValue("video.d3d12va_encoding", cbD3d12vaEncoding->isChecked() ? "1" : "0");
+	st.storeValue("video.d3d12va_decoding", cbD3d12vaDecoding->isChecked() ? "1" : "0");
+#endif
+#ifdef Q_OS_WIN
+	st.storeValue("video.mediafoundation_encoding", cbMediaFoundationEncoding->isChecked() ? "1" : "0");
+	st.storeValue("video.d3d11va_decoding", cbD3d11vaDecoding->isChecked() ? "1" : "0");
+	st.storeValue("video.dxva2_decoding", cbDxva2Decoding->isChecked() ? "1" : "0");
+#endif
+	st.storeValue("audio.capture_device", audioCaptureDev->itemData(audioCaptureDev->currentIndex()).toString());
+	st.storeValue("audio.playback_device", audioPlaybackDev->itemData(audioPlaybackDev->currentIndex()).toString());
+	st.storeValue("audio.ring_device", audioRingDev->itemData(audioRingDev->currentIndex()).toString());
+
+	if (audioDriver)
+	{
+		QString drv = audioDriver->itemData(audioDriver->currentIndex()).toString();
+		st.storeValue("audio.driver", drv);
+		AudioDevice::SetLinuxDriverName(drv);
+	}
+
+	// After the driver, since on Linux that is what decides whether the
+	// platform option means anything - and updateEchoCancellationChoices()
+	// has already moved the selection off it if it does not.
+	EchoCancellationMode echoMode = EchoCancellationOwn;
+
+	if (rbEchoCancelPlatform->isChecked())
+		echoMode = EchoCancellationPlatform;
+	else if (rbEchoCancelNone->isChecked())
+		echoMode = EchoCancellationNone;
+
+	storeEchoCancellationSetting(echoMode);
+
+	// Publish it to the audio threads, the same way the driver above is
+	// published - see AudioDevice::SetEchoCancellation().
+	AudioDevice::SetEchoCancellation(echoMode);
 }

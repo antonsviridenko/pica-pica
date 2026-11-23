@@ -21,10 +21,18 @@
 #define CLOSE closesocket
 #define SHUTDOWN(s) shutdown(s,SD_BOTH)
 #define IOCTLSETNONBLOCKINGSOCKET(s, a) {unsigned long arg = (a); ioctlsocket(s, FIONBIO, (unsigned long*)&arg); }
+/* Winsock takes the option value as char*, unlike the BSD sockets API */
+#define SETTCPNODELAY(s) {int arg = 1; setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&arg, sizeof(arg)); }
 #else
 #define CLOSE close
 #define SHUTDOWN(s) shutdown(s,SHUT_RDWR)
 #define IOCTLSETNONBLOCKINGSOCKET(s, a) {int arg = (a); ioctl(s, FIONBIO, (int*)&arg); }
+/* Disables Nagle's algorithm. Every Pica Pica protocol message is small and
+ * is meant to be delivered as soon as it is written - holding one back until
+ * the previous one is acknowledged adds delay to chat messages and, much more
+ * noticeably, to the audio and video packets of a call.
+ */
+#define SETTCPNODELAY(s) {int arg = 1; setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &arg, sizeof(arg)); }
 #endif
 
 #if  defined(WIN32) || defined (__APPLE__)

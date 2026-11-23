@@ -1,0 +1,2522 @@
+/*
+	(c) Copyright  2012 - 2026 Anton Sviridenko
+	https://picapica.im
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, version 3.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+#include "videodevice.h"
+#include "callsettings.h"
+// For the shared decision about what size a frame is drawn at - the decode loop
+// produces frames at exactly the size CallWindow expects, see VideoScaler.
+#include "videoscaler.h"
+#include "../PICA_proto.h"
+#include "../PICA_media.h"
+
+#include <QFile>
+#include <QDebug>
+#include <QMutexLocker>
+#include <QMap>
+#include <QPair>
+#include <cstring>
+#include <algorithm>
+#include <functional>
+
+#ifdef Q_OS_WIN
+#include <objbase.h>
+#endif
+
+#ifdef Q_OS_LINUX
+#include <linux/videodev2.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+// Added to the kernel headers later than the formats around it, so define it
+// here when building against an older set.
+#ifndef V4L2_PIX_FMT_HEVC
+#define V4L2_PIX_FMT_HEVC v4l2_fourcc('H', 'E', 'V', 'C')
+#endif
+#endif
+
+// FFmpeg headers
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavdevice/avdevice.h>
+#include <libavcodec/avcodec.h>
+#include <libavutil/opt.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/frame.h>
+#include <libavutil/mem.h>
+#include <libavutil/error.h>
+#include <libswscale/swscale.h>
+#include <libavutil/hwcontext.h>
+#include <libavutil/pixdesc.h>
+}
+
+// Largest amount of encoded data one 0x77 message can carry over a c2c or
+// directc2c connection: the protocol's per-message payload cap, minus the
+// sequence number + timestamp header that every call media packet carries.
+// Over a mediac2c connection the limit is the path MTU instead and is set
+// with setMaxFragmentSize() once that connection is up.
+static const int kMaxFragmentSize = PICA_PROTO_C2CMSG_MAXDATASIZE - PICA_PROTO_CALL_PACKET_HDRSIZE;
+
+// Largest encoded slice the software encoder is asked to produce: one that
+// still fits into a single datagram of a mediac2c connection, so that losing
+// a datagram costs a slice of the picture rather than a whole frame.
+static const int kSliceMaxSize = PICA_MEDIA_SAFE_PAYLOAD;
+
+static QString ff_errstr(int err)
+{
+	char buf[256] = {0};
+	av_strerror(err, buf, sizeof(buf));
+	return QString::fromLocal8Bit(buf);
+}
+
+#ifdef Q_OS_WIN
+// Both defined in videodshow.cpp. FFmpeg's dshow demuxer can capture but can
+// neither enumerate the cameras nor say what formats one offers, so both
+// answers come from DirectShow itself.
+QList<MediaDeviceInfo> pica_enumerate_dshow_video();
+QStringList pica_dshow_compressed_formats(const QString &device);
+#endif
+
+#ifdef Q_OS_LINUX
+// Compressed formats worth forwarding untouched, best first: HEVC gives the
+// most picture per byte, H.264 is the widely supported middle ground, and
+// MJPEG - every frame a standalone JPEG - costs far more bandwidth but still
+// beats decoding and re-encoding. The names are FFmpeg codec names, as used
+// by the v4l2 demuxer's input_format option and by the 0x75 protocol message.
+static const struct
+{
+	unsigned int v4l2_pixelformat;
+	const char *ffmpeg_codec;
+} kCompressedFormatPreference[] =
+{
+	{ V4L2_PIX_FMT_HEVC,  "hevc"  },
+	{ V4L2_PIX_FMT_H264,  "h264"  },
+	{ V4L2_PIX_FMT_MJPEG, "mjpeg" },
+	// Some cameras report plain JPEG rather than MJPEG for the same stream.
+	{ V4L2_PIX_FMT_JPEG,  "mjpeg" }
+};
+#endif
+
+// Which FFmpeg encoder produces each of the codecs the "Video Codec" setting
+// offers, on the GPU and in software. Several names per codec because FFmpeg
+// names its external library encoders after the library rather than after the
+// codec, and names a hardware one after the API that drives it - VAAPI where
+// there is libva, Direct3D 12 and Media Foundation on Windows. The id as well,
+// so that a build without the library named here can still fall back to
+// whatever other encoder it has for the same codec.
+//
+// A null hardware name means that API has no encoder for the codec: neither
+// D3D12 Video nor FFmpeg's Media Foundation wrapper has VP9 encoding, so a call
+// set to VP9 encodes in software on Windows however the acceleration settings
+// stand.
+static const struct
+{
+	const char *codec;
+	AVCodecID id;
+	const char *vaapiEncoder;
+	const char *d3d12vaEncoder;
+	const char *mediaFoundationEncoder;
+	const char *swEncoder;
+} kVideoEncoders[] =
+{
+	{ "h264", AV_CODEC_ID_H264, "h264_vaapi", "h264_d3d12va", "h264_mf", "libx264"    },
+	{ "hevc", AV_CODEC_ID_HEVC, "hevc_vaapi", "hevc_d3d12va", "hevc_mf", "libx265"    },
+	{ "vp9",  AV_CODEC_ID_VP9,  "vp9_vaapi",  nullptr,        nullptr,   "libvpx-vp9" }
+};
+
+#ifdef Q_OS_WIN
+// The Windows GPU decoders, in the order they are tried when more than one is
+// enabled. Direct3D 11 first: it is the one FFmpeg's own tools default to on
+// Windows and the most exercised of the three. Direct3D 12 next, being newer
+// to FFmpeg, and DXVA2 - Direct3D 9 underneath - last, for GPUs and drivers
+// too old for either of the others.
+//
+// The pixel format is the one the decoder hands back GPU frames in when driven
+// through a device of the given type - D3D11 rather than the older
+// D3D11VA_VLD, which is the same API set up by hand instead of through a
+// hardware context.
+static const struct
+{
+	VideoAcceleration flag;
+	AVHWDeviceType deviceType;
+	AVPixelFormat pixelFormat;
+	const char *name;
+} kWindowsHwDecoders[] =
+{
+	{ VideoAccelerationD3d11va, AV_HWDEVICE_TYPE_D3D11VA, AV_PIX_FMT_D3D11,     "Direct3D 11" },
+#ifdef HAVE_D3D12VA
+	{ VideoAccelerationD3d12va, AV_HWDEVICE_TYPE_D3D12VA, AV_PIX_FMT_D3D12,     "Direct3D 12" },
+#endif
+	{ VideoAccelerationDxva2,   AV_HWDEVICE_TYPE_DXVA2,   AV_PIX_FMT_DXVA2_VLD, "DXVA2"       }
+};
+#endif
+
+static int videoEncoderIndex(const QString &codec)
+{
+	for (unsigned int i = 0; i < sizeof(kVideoEncoders) / sizeof(kVideoEncoders[0]); i++)
+	{
+		if (codec == QLatin1String(kVideoEncoders[i].codec))
+			return (int)i;
+	}
+
+	// An unrecognised setting - written by a build offering something this one
+	// does not, or by hand - falls back to the codec every peer can decode
+	// rather than leaving the call without video.
+	return 0;
+}
+
+// Sets the private options that make an encoder suitable for a live call:
+// low latency, no frame reordering, and parameter sets the receiver can pick
+// up mid-stream. Each of the three encoders spells all of that differently,
+// which is why this is keyed on the encoder rather than on the codec.
+static void applyLiveEncoderOptions(AVCodecContext *enc_ctx, const QString &encoderName, int sliceMaxSize)
+{
+	if (encoderName == QLatin1String("libx264"))
+	{
+		av_opt_set(enc_ctx->priv_data, "preset", "veryfast", 0);
+		av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
+
+		// Keeps every slice within one datagram of a mediac2c connection, so
+		// that a lost fragment costs a slice of the picture rather than the
+		// whole frame. Harmless when the media goes over TCP instead - it
+		// only splits frames into more NAL units than strictly necessary.
+		av_opt_set(enc_ctx->priv_data, "x264opts",
+		           QString("slice-max-size=%1").arg(sliceMaxSize).toUtf8().constData(), 0);
+	}
+	else if (encoderName == QLatin1String("libx265"))
+	{
+		av_opt_set(enc_ctx->priv_data, "preset", "ultrafast", 0);
+		av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
+
+		// repeat-headers is the x265 equivalent of leaving
+		// AV_CODEC_FLAG_GLOBAL_HEADER off below: without it the VPS/SPS/PPS go
+		// out once, at the start, and a receiver that joins the stream later -
+		// which every receiver does, the call being already running by the
+		// time its decoder opens - never sees them.
+		//
+		// x265 has no slice-max-size; the nearest thing is a fixed number of
+		// slices per frame, which does not bound their size. Fragmentation
+		// handles oversized frames either way, a loss just costs more of the
+		// picture than it does with x264.
+		av_opt_set(enc_ctx->priv_data, "x265-params", "repeat-headers=1:bframes=0", 0);
+	}
+	else if (encoderName == QLatin1String("libvpx-vp9"))
+	{
+		// "realtime" with a high cpu-used is libvpx's zerolatency: it caps how
+		// long the encoder may spend per frame rather than letting it take as
+		// long as the quality target needs.
+		av_opt_set(enc_ctx->priv_data, "deadline", "realtime", 0);
+		av_opt_set_int(enc_ctx->priv_data, "cpu-used", 8, 0);
+		// No lookahead - it would hold frames back, which is latency in a
+		// live call - and keep the bitstream decodable across a loss.
+		av_opt_set_int(enc_ctx->priv_data, "lag-in-frames", 0, 0);
+		av_opt_set_int(enc_ctx->priv_data, "error-resilient", 1, 0);
+
+		// VP9 carries no parameter sets to repeat: everything a decoder needs
+		// is in the keyframe itself, so joining mid-stream needs nothing
+		// special here.
+	}
+}
+
+#ifdef Q_OS_WIN
+// Defined in videodshow.cpp, alongside the enumeration functions - see the
+// comment on pica_enumerate_dshow_video() for why the answers come from
+// DirectShow rather than from FFmpeg's demuxer.
+QList<VideoCaptureFormat> pica_dshow_capture_formats(const QString &device);
+#endif
+
+#if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
+// Frame rates worth offering out of a camera that reports a continuous range
+// rather than a list of what it supports. Such a camera will take anything in
+// between, so this is only a question of what to put in a dropdown.
+static const int kStandardFrameRates[] = { 60, 50, 30, 25, 24, 20, 15, 10, 5 };
+
+// Sizes offered for the same reason, out of a camera that reports a range of
+// sizes rather than a list. Ones outside the range, or that the reported step
+// does not land on, are dropped by the caller.
+static const struct
+{
+	int width;
+	int height;
+} kStandardSizes[] =
+{
+	{ 1920, 1080 }, { 1280, 720 }, { 1024, 768 }, { 800, 600 },
+	{ 848, 480 }, { 640, 480 }, { 640, 360 }, { 424, 240 },
+	{ 352, 288 }, { 320, 240 }, { 176, 144 }, { 160, 120 }
+};
+
+// Largest picture first, and highest frame rate first within each.
+static bool captureFormatLessThan(const VideoCaptureFormat &a, const VideoCaptureFormat &b)
+{
+	const qint64 areaA = (qint64)a.width * a.height;
+	const qint64 areaB = (qint64)b.width * b.height;
+
+	if (areaA != areaB)
+		return areaA > areaB;
+
+	return a.width > b.width;
+}
+#endif
+
+// Picks the GPU pixel format out of what the decoder offers - the one the
+// device attached to the decoder produces, which Play() leaves in
+// ctx->opaque. When it is not among them, the first software format is
+// returned instead, which leaves the decoder working on the CPU.
+//
+// Software rather than simply the first entry: the list starts with every
+// hwaccel the FFmpeg build has, and one other than ours would only be tried,
+// found not to match the device, and taken out of the list again. The same
+// happens to ours when the GPU turns out not to support the stream after all -
+// FFmpeg then asks again without it, which is when the warning below is
+// printed.
+static AVPixelFormat hw_get_format(AVCodecContext *ctx, const AVPixelFormat *formats)
+{
+	const AVPixelFormat wanted = (AVPixelFormat)(intptr_t)ctx->opaque;
+	const AVPixelFormat *software = nullptr;
+
+	for (const AVPixelFormat *p = formats; *p != AV_PIX_FMT_NONE; p++)
+	{
+		if (*p == wanted)
+			return *p;
+
+		const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(*p);
+
+		if (!software && desc && !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL))
+			software = p;
+	}
+
+	qWarning() << "The GPU cannot decode this stream, decoding in software";
+
+	return software ? *software : formats[0];
+}
+
+QStringList VideoDevice::CompressedFormats(const QString &device)
+{
+	QStringList result;
+
+#ifdef Q_OS_LINUX
+	int fd = ::open(device.toLatin1().constData(), O_RDWR | O_NONBLOCK);
+	if (fd < 0)
+		return result;
+
+	// Collect what the camera offers first, then report it in preference
+	// order rather than in the order the camera happens to list it.
+	QList<unsigned int> offered;
+	struct v4l2_fmtdesc fmt;
+
+	memset(&fmt, 0, sizeof fmt);
+	fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+	for (fmt.index = 0; ::ioctl(fd, VIDIOC_ENUM_FMT, &fmt) == 0; fmt.index++)
+	{
+		if (fmt.flags & V4L2_FMT_FLAG_COMPRESSED)
+			offered << fmt.pixelformat;
+	}
+	::close(fd);
+
+	for (unsigned int i = 0; i < sizeof(kCompressedFormatPreference) / sizeof(kCompressedFormatPreference[0]); i++)
+	{
+		QString codec = QLatin1String(kCompressedFormatPreference[i].ffmpeg_codec);
+
+		if (offered.contains(kCompressedFormatPreference[i].v4l2_pixelformat) && !result.contains(codec))
+			result << codec;
+	}
+#elif defined(Q_OS_WIN)
+	result = pica_dshow_compressed_formats(device);
+#else
+	Q_UNUSED(device);
+#endif
+
+	return result;
+}
+
+#ifdef Q_OS_LINUX
+// Every picture size the camera offers in one pixel format.
+//
+// A camera answers this in one of two ways: a list of the sizes it has, or a
+// range it will scale anything within. There is no list to show for the
+// second, so the standard sizes that fall inside the range stand in for one.
+static QList<QPair<int, int> > v4l2FrameSizes(int fd, unsigned int pixelformat)
+{
+	QList<QPair<int, int> > sizes;
+	struct v4l2_frmsizeenum fs;
+
+	memset(&fs, 0, sizeof fs);
+	fs.pixel_format = pixelformat;
+
+	for (fs.index = 0; ::ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &fs) == 0; fs.index++)
+	{
+		if (fs.type == V4L2_FRMSIZE_TYPE_DISCRETE)
+		{
+			sizes << qMakePair((int)fs.discrete.width, (int)fs.discrete.height);
+			continue;
+		}
+
+		for (unsigned int i = 0; i < sizeof(kStandardSizes) / sizeof(kStandardSizes[0]); i++)
+		{
+			const unsigned int w = kStandardSizes[i].width;
+			const unsigned int h = kStandardSizes[i].height;
+
+			if (w < fs.stepwise.min_width || w > fs.stepwise.max_width ||
+			    h < fs.stepwise.min_height || h > fs.stepwise.max_height)
+				continue;
+
+			// A continuous camera reports a step of one, so this only ever
+			// excludes anything on a genuinely stepwise one.
+			if (fs.stepwise.step_width > 1 && (w - fs.stepwise.min_width) % fs.stepwise.step_width)
+				continue;
+
+			if (fs.stepwise.step_height > 1 && (h - fs.stepwise.min_height) % fs.stepwise.step_height)
+				continue;
+
+			sizes << qMakePair((int)w, (int)h);
+		}
+
+		// A non-discrete answer is a single entry describing the whole range;
+		// there is no index 1 to ask for.
+		break;
+	}
+
+	return sizes;
+}
+
+// v4l2 reports frame intervals - seconds per frame - and we want the rate, so
+// every one of these is a reciprocal.
+static double v4l2IntervalToFps(const struct v4l2_fract &f)
+{
+	if (f.numerator == 0 || f.denominator == 0)
+		return 0.0;
+
+	return (double)f.denominator / (double)f.numerator;
+}
+
+// The frame rates the camera offers for one pixel format at one size, highest
+// first. Same two shapes of answer as the sizes above, handled the same way.
+static QList<int> v4l2FrameRates(int fd, unsigned int pixelformat, int width, int height)
+{
+	QList<int> rates;
+	struct v4l2_frmivalenum fi;
+
+	memset(&fi, 0, sizeof fi);
+	fi.pixel_format = pixelformat;
+	fi.width = width;
+	fi.height = height;
+
+	for (fi.index = 0; ::ioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &fi) == 0; fi.index++)
+	{
+		if (fi.type == V4L2_FRMIVAL_TYPE_DISCRETE)
+		{
+			int fps = qRound(v4l2IntervalToFps(fi.discrete));
+
+			if (fps > 0 && !rates.contains(fps))
+				rates << fps;
+
+			continue;
+		}
+
+		// The longest interval is the lowest rate, hence the crossed over
+		// names here.
+		const double minFps = v4l2IntervalToFps(fi.stepwise.max);
+		const double maxFps = v4l2IntervalToFps(fi.stepwise.min);
+
+		for (unsigned int i = 0; i < sizeof(kStandardFrameRates) / sizeof(kStandardFrameRates[0]); i++)
+		{
+			const int fps = kStandardFrameRates[i];
+
+			if (fps >= minFps && fps <= maxFps && !rates.contains(fps))
+				rates << fps;
+		}
+
+		break;
+	}
+
+	std::sort(rates.begin(), rates.end(), std::greater<int>());
+
+	return rates;
+}
+#endif
+
+void pica_merge_capture_rates(VideoCaptureFormat &entry, const QString &codec,
+                              const QList<int> &rates)
+{
+	int existing = -1;
+
+	for (int p = 0; p < entry.pixelFormats.size(); p++)
+	{
+		if (entry.pixelFormats.at(p).codec == codec)
+		{
+			existing = p;
+			break;
+		}
+	}
+
+	// Two of a platform's pixel formats can carry the same codec name - v4l2
+	// reports MJPEG and plain JPEG separately and both come out as "mjpeg" -
+	// so a format already seen is added to rather than started again.
+	if (existing < 0)
+	{
+		VideoPixelFormat pf;
+
+		pf.codec = codec;
+		entry.pixelFormats << pf;
+		existing = entry.pixelFormats.size() - 1;
+	}
+
+	VideoPixelFormat &pf = entry.pixelFormats[existing];
+
+	for (int r = 0; r < rates.size(); r++)
+	{
+		if (!pf.frameRates.contains(rates.at(r)))
+			pf.frameRates << rates.at(r);
+
+		if (!entry.frameRates.contains(rates.at(r)))
+			entry.frameRates << rates.at(r);
+	}
+}
+
+void pica_finish_capture_format(VideoCaptureFormat &entry)
+{
+	std::sort(entry.frameRates.begin(), entry.frameRates.end(), std::greater<int>());
+
+	// Uncompressed first, then the compressed formats in whatever order the
+	// platform put compressedFormats in, rather than the order the camera
+	// happened to list them.
+	QList<VideoPixelFormat> ordered;
+
+	for (int p = 0; p < entry.pixelFormats.size(); p++)
+	{
+		if (entry.pixelFormats.at(p).codec.isEmpty())
+			ordered << entry.pixelFormats.at(p);
+	}
+
+	for (int c = 0; c < entry.compressedFormats.size(); c++)
+	{
+		for (int p = 0; p < entry.pixelFormats.size(); p++)
+		{
+			if (entry.pixelFormats.at(p).codec == entry.compressedFormats.at(c))
+			{
+				ordered << entry.pixelFormats.at(p);
+				break;
+			}
+		}
+	}
+
+	for (int p = 0; p < ordered.size(); p++)
+		std::sort(ordered[p].frameRates.begin(), ordered[p].frameRates.end(),
+		          std::greater<int>());
+
+	entry.pixelFormats = ordered;
+}
+
+QList<VideoCaptureFormat> VideoDevice::CaptureFormats(const QString &device)
+{
+	QList<VideoCaptureFormat> result;
+
+#ifdef Q_OS_LINUX
+	int fd = ::open(device.toLatin1().constData(), O_RDWR | O_NONBLOCK);
+	if (fd < 0)
+		return result;
+
+	// Keyed on the size, because a camera reports its sizes once per pixel
+	// format and the same size usually comes back several times over. Each
+	// format it comes back in becomes an entry in pixelFormats, keeping the
+	// rates that format can manage with the format itself - see
+	// VideoPixelFormat for why that association matters.
+	QMap<QPair<int, int>, VideoCaptureFormat> bySize;
+
+	struct v4l2_fmtdesc fmt;
+
+	memset(&fmt, 0, sizeof fmt);
+	fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+	for (fmt.index = 0; ::ioctl(fd, VIDIOC_ENUM_FMT, &fmt) == 0; fmt.index++)
+	{
+		// What this pixel format is called in a 0x75 message, empty for an
+		// uncompressed one and for a compressed one we would not forward.
+		QString codec;
+
+		for (unsigned int i = 0; i < sizeof(kCompressedFormatPreference) / sizeof(kCompressedFormatPreference[0]); i++)
+		{
+			if (kCompressedFormatPreference[i].v4l2_pixelformat == fmt.pixelformat)
+			{
+				codec = QLatin1String(kCompressedFormatPreference[i].ffmpeg_codec);
+				break;
+			}
+		}
+
+		QList<QPair<int, int> > sizes = v4l2FrameSizes(fd, fmt.pixelformat);
+
+		for (int s = 0; s < sizes.size(); s++)
+		{
+			VideoCaptureFormat &entry = bySize[sizes.at(s)];
+
+			entry.width = sizes.at(s).first;
+			entry.height = sizes.at(s).second;
+
+			if (!codec.isEmpty() && !entry.compressedFormats.contains(codec))
+				entry.compressedFormats << codec;
+
+			// Kept against the format it belongs to - MJPEG at 1280x720 and
+			// uncompressed at 1280x720 are not the same offer - and merged
+			// into the size's own list as well.
+			pica_merge_capture_rates(entry, codec,
+			                         v4l2FrameRates(fd, fmt.pixelformat, entry.width, entry.height));
+		}
+	}
+
+	::close(fd);
+
+	for (QMap<QPair<int, int>, VideoCaptureFormat>::iterator it = bySize.begin(); it != bySize.end(); ++it)
+	{
+		VideoCaptureFormat entry = it.value();
+
+		// The formats were collected in whatever order the camera listed them
+		// in; report them in preference order, the same one
+		// CompressedFormats() and VideoDevice::Capture() work in.
+		QStringList ordered;
+
+		for (unsigned int i = 0; i < sizeof(kCompressedFormatPreference) / sizeof(kCompressedFormatPreference[0]); i++)
+		{
+			QString codec = QLatin1String(kCompressedFormatPreference[i].ffmpeg_codec);
+
+			if (entry.compressedFormats.contains(codec) && !ordered.contains(codec))
+				ordered << codec;
+		}
+
+		entry.compressedFormats = ordered;
+
+		pica_finish_capture_format(entry);
+
+		result << entry;
+	}
+
+	std::sort(result.begin(), result.end(), captureFormatLessThan);
+#elif defined(Q_OS_WIN)
+	result = pica_dshow_capture_formats(device);
+#else
+	Q_UNUSED(device);
+#endif
+
+	return result;
+}
+
+// A reassembled frame never legitimately approaches this; a stream that does
+// is a peer flooding fragments that never carry the last-fragment flag, so the
+// partial frame is dropped and reassembly resynchronizes at the next boundary.
+static const int kMaxAssembledFrameBytes = 4 * 1024 * 1024;
+
+VideoFrameAssembler::VideoFrameAssembler()
+	: m_timestamp(0), m_lastSeq(0)
+{
+	// Through reset() rather than an initialiser list of its own: a fresh
+	// assembler and one that has been reset are the same thing, and stating
+	// that start-of-stream state twice is how the two came to disagree - the
+	// constructor's copy is what the first call after launch actually uses.
+	reset();
+}
+
+void VideoFrameAssembler::reset()
+{
+	m_buffer.clear();
+	m_inProgress = false;
+	m_haveLastSeq = false;
+
+	// The next fragment is taken to begin a frame, rather than to be the
+	// middle of one whose start was lost.
+	//
+	// Every caller resets a stream that is about to start, never one being
+	// joined in flight - a call resets before the first packet can arrive, and
+	// the switch to a mediac2c connection deliberately does not reset, since
+	// media keeps arriving over either transport for the whole call. So the
+	// first fragment after this really is the first one the sender sent.
+	//
+	// Assuming the opposite costs the stream's first frame, and that frame is
+	// the one that matters: with a camera's own compressed stream being
+	// forwarded untouched, it carries the parameter sets and the only keyframe
+	// the camera will produce for the next ten seconds, so losing it means ten
+	// seconds of black. If this assumption is ever wrong the cost is one
+	// truncated frame that the decoder rejects, and the next frame boundary
+	// resynchronizes as usual.
+	m_lastWasFrameEnd = true;
+}
+
+QByteArray VideoFrameAssembler::addFragment(quint16 seq_num, quint32 timestamp, const QByteArray &data)
+{
+	const quint16 counter = seq_num & SeqNumMask;
+	const bool isLast = (seq_num & LastFragmentFlag) != 0;
+	bool contiguous = true;
+
+	// Over a mediac2c connection fragments can be lost, so a fragment is only
+	// accepted if it directly follows the previous one. When it does not,
+	// what is in the buffer is incomplete and everything up to the end of the
+	// current frame has to be skipped: a fragment may only begin a frame if
+	// the one before it ended a frame. Without that rule, losing a frame's
+	// first fragment would make its second fragment look like the beginning
+	// of a frame and hand the decoder a truncated one.
+	if (m_haveLastSeq)
+		contiguous = (counter == ((m_lastSeq + 1) & SeqNumMask));
+
+	m_lastSeq = counter;
+	m_haveLastSeq = true;
+
+	if (!contiguous)
+	{
+		// Resynchronize at the next frame boundary. This fragment can still
+		// start a frame itself, if the gap swallowed whole frames and it
+		// happens to be a first fragment - which is what a matching new
+		// timestamp on an empty buffer means.
+		m_buffer.clear();
+		m_inProgress = false;
+		m_lastWasFrameEnd = false;
+	}
+
+	if (!m_lastWasFrameEnd && !m_inProgress)
+	{
+		// Still in the middle of a frame whose beginning was lost.
+		m_lastWasFrameEnd = isLast;
+		return QByteArray();
+	}
+
+	// Fragments of one encoded frame all carry the same timestamp; a
+	// different one while a frame is still being assembled means the rest of
+	// that frame is never coming, so drop what was collected and start over.
+	if (m_inProgress && timestamp != m_timestamp)
+		m_buffer.clear();
+
+	m_buffer.append(data);
+
+	/* Bound the partial frame: a peer that never sets the last-fragment flag
+	 * would otherwise grow this without limit. Drop it and resync at the next
+	 * frame boundary, exactly as for a lost fragment above.
+	 */
+	if (m_buffer.size() > kMaxAssembledFrameBytes)
+	{
+		m_buffer.clear();
+		m_inProgress = false;
+		m_lastWasFrameEnd = false;
+		return QByteArray();
+	}
+
+	m_timestamp = timestamp;
+	m_inProgress = true;
+	m_lastWasFrameEnd = isLast;
+
+	if (!isLast)
+		return QByteArray();
+
+	QByteArray frame = m_buffer;
+
+	m_buffer.clear();
+	m_inProgress = false;
+
+	return frame;
+}
+
+VideoDevice::VideoDevice(QObject *parent)
+	: QObject(parent), m_width(kDefaultCaptureWidth), m_height(kDefaultCaptureHeight),
+	  m_frameRate(kDefaultCaptureFrameRate), m_bitrate(kDefaultVideoBitrateKbps * 1000),
+	  m_preferCompressed(false),
+	  m_acceleration(0), m_useVaapiRender(false), m_reconfigure(0),
+	  m_pendingWidth(0), m_pendingHeight(0), m_pendingAcceleration(0),
+	  m_pendingUseVaapiRender(false),
+	  m_maxFragmentSize(kMaxFragmentSize), m_displaySize(0), m_decoderStarted(0)
+{
+}
+
+void VideoDevice::setDisplaySize(QSize size)
+{
+	// Packed into one atomic so that the decode loop always reads a width and
+	// a height that belong together - see m_displaySize. Sizes beyond what
+	// half an int holds are not real displays, and clamping them is enough:
+	// the frame is fitted inside this area, so an area larger than the frame
+	// simply means no resizing.
+	int width = qBound(0, size.width(), 0xFFFF);
+	int height = qBound(0, size.height(), 0xFFFF);
+
+	if (width == 0 || height == 0)
+	{
+		m_displaySize.storeRelaxed(0);
+		return;
+	}
+
+	m_displaySize.storeRelaxed((width << 16) | height);
+}
+
+QSize VideoDevice::displaySize() const
+{
+	int packed = m_displaySize.loadRelaxed();
+
+	if (packed == 0)
+		return QSize();
+
+	return QSize((packed >> 16) & 0xFFFF, packed & 0xFFFF);
+}
+
+void VideoDevice::setMaxFragmentSize(int size)
+{
+	if (size <= 0 || size > kMaxFragmentSize)
+		size = kMaxFragmentSize;
+
+	m_maxFragmentSize.storeRelaxed(size);
+}
+
+VideoDevice::~VideoDevice()
+{
+	Close();
+}
+
+void VideoDevice::configureCapture(QString deviceName, int width, int height, int frameRate,
+                                   bool preferCompressed, QString codec, int bitrate,
+                                   int acceleration,
+                                   QByteArray caller_id, QByteArray callee_id)
+{
+	m_caller_id = caller_id;
+	m_callee_id = callee_id;
+	m_deviceName = deviceName;
+	m_width = width;
+	m_height = height;
+	m_frameRate = frameRate > 0 ? frameRate : kDefaultCaptureFrameRate;
+	m_codec = codec;
+	m_bitrate = bitrate > 0 ? bitrate : kDefaultVideoBitrateKbps * 1000;
+	m_preferCompressed = preferCompressed;
+	m_acceleration = acceleration;
+}
+
+void VideoDevice::configurePlayback(QString codec, int width, int height,
+                                    int acceleration, bool useVaapiRender,
+                                    QByteArray caller_id, QByteArray callee_id)
+{
+	m_caller_id = caller_id;
+	m_callee_id = callee_id;
+	setPlaybackParams(codec, width, height, acceleration, useVaapiRender);
+	// A renderer that failed during an earlier call says nothing about this
+	// one - it may well be a different window.
+	m_hwRenderDisabled.storeRelaxed(0);
+}
+
+void VideoDevice::setPlaybackParams(const QString &codec, int width, int height,
+                                    int acceleration, bool useVaapiRender)
+{
+	m_codec = codec;
+	m_width = width;
+	m_height = height;
+	// Drawing a VA surface requires having decoded into one in the first
+	// place, so asking for GPU rendering turns on VAAPI decoding regardless.
+	m_acceleration = acceleration | (useVaapiRender ? VideoAccelerationVaapi : 0);
+	m_useVaapiRender = useVaapiRender;
+	// A fresh decode session, so the startup queue depth applies again until
+	// this one's loop is consuming - see enqueueFrame().
+	m_decoderStarted.storeRelaxed(0);
+}
+
+void VideoDevice::openSession(QByteArray caller_id, QByteArray callee_id)
+{
+	m_openSession.open(caller_id, callee_id);
+}
+
+void VideoDevice::changePlayback(QString codec, int width, int height,
+                                 int acceleration, bool useVaapiRender)
+{
+	QMutexLocker locker(&m_queueMutex);
+
+	m_pendingCodec = codec;
+	m_pendingWidth = width;
+	m_pendingHeight = height;
+	m_pendingAcceleration = acceleration;
+	m_pendingUseVaapiRender = useVaapiRender;
+	m_reconfigure.storeRelaxed(1);
+	/* encoded with the parameters being replaced */
+	m_frameQueue.clear();
+	m_queueCond.wakeAll();
+}
+
+void VideoDevice::disableHardwareRendering()
+{
+	m_hwRenderDisabled.storeRelaxed(1);
+}
+
+void VideoDevice::enqueueFrame(QByteArray encodedFrame)
+{
+	QMutexLocker locker(&m_queueMutex);
+
+	// Deeper while the decoder is still starting up - see kStartupQueueDepth.
+	const int depth = m_decoderStarted.loadRelaxed() ? kMaxQueueDepth : kStartupQueueDepth;
+
+	while (m_frameQueue.size() >= depth)
+		m_frameQueue.dequeue();
+
+	m_frameQueue.enqueue(encodedFrame);
+	m_queueCond.wakeAll();
+}
+
+void VideoDevice::Close()
+{
+	m_openSession.close();
+
+	{
+		QMutexLocker locker(&m_queueMutex);
+		m_reconfigure.storeRelaxed(0);
+		m_frameQueue.clear();
+	}
+	m_queueCond.wakeAll();
+}
+
+// The string to hand avformat_open_input() for a camera.
+//
+// DirectShow namespaces its devices by type, so a camera has to be asked for
+// as "video=<name>" - the same name behind an "audio=" prefix would be a
+// microphone. v4l2 and avfoundation take the device path or index as it comes,
+// so the name is stored unprefixed and decorated here, which also keeps what
+// the settings dialog shows and stores readable.
+static QByteArray cameraOpenUrl(const QString &device)
+{
+#ifdef Q_OS_WIN
+	return (QStringLiteral("video=") + device).toUtf8();
+#else
+	return device.toUtf8();
+#endif
+}
+
+// Compressed formats in the order to prefer them as something to decode and
+// re-encode, which is not the order to prefer them for forwarding untouched -
+// that one is in kCompressedFormatPreference, and ranks by bytes on the wire.
+//
+// Here MJPEG comes first instead of last. Every frame is a standalone JPEG, so
+// there are no reference frames to track and no reordering delay, it is the
+// cheapest of the three to decode, and it is the one format essentially every
+// UVC camera offers. Decoding a camera's H.264 only to re-encode it costs more
+// and adds the decoder's delay for nothing, since the result is re-encoded to
+// the configured codec and bitrate either way.
+static const char * const kTranscodeSourcePreference[] = { "mjpeg", "h264", "hevc" };
+
+// One way of opening the camera: which pixel format to ask the driver for, what
+// to do with the packets that come back, and how much of the request to insist
+// on. Built by buildCaptureAttempts() and tried in order.
+struct CaptureAttempt
+{
+	// v4l2 input_format / dshow codec id to ask for. Empty leaves the choice
+	// to the camera, which means its default - uncompressed, on every camera
+	// seen so far.
+	QString inputFormat;
+
+	// Forward the camera's packets as they arrive instead of decoding and
+	// re-encoding them. Only ever set for a compressed inputFormat, and only
+	// when the "prefer compressed formats" setting asked for it: a compressed
+	// format is also worth asking for purely to get the frame rate, which is
+	// what the same format with this false means.
+	bool passthrough;
+
+	bool constrainSize;
+	bool constrainRate;
+
+	// Why this attempt is in the list, for the log when it fails.
+	QString reason;
+};
+
+// Whether a camera has said this format can manage this frame rate.
+//
+// An empty rate list means the camera would not say, which is not the same as
+// saying no - those formats are treated as capable and left to prove it at open
+// time, which is how this worked before any of it was enumerated.
+static bool formatHasRate(const VideoPixelFormat &format, int frameRate)
+{
+	return format.frameRates.isEmpty() || frameRate <= 0 ||
+	       format.frameRates.contains(frameRate);
+}
+
+// The orders to try opening the camera in, best first.
+//
+// The point of consulting the enumerated formats here is that a camera asked
+// for a frame rate a format cannot carry does not fail - it opens and then
+// delivers fewer frames, silently. USB 2.0 does not have the bandwidth for
+// uncompressed video at 30fps much above VGA, so asking for the camera's
+// default format at 1280x720@30 gets 10fps and no indication of it. Asking for
+// MJPEG at the same size gets 30, and decoding it costs far less than the
+// missing two thirds of the frames.
+//
+// Hence the order: forward a compressed stream if that was asked for, then
+// uncompressed if it can carry the rate - no decode, no second generation of
+// lossy compression - and then compressed as a source to decode and re-encode,
+// which is what lifts the frame rate above what the bus will carry raw.
+//
+// Everything above only considers formats the camera has said can do the job.
+// The tail then repeats the whole list with the rate and then the size dropped,
+// because listing a format and delivering it at a given size and rate are
+// separate claims and cameras routinely honour the first without the others.
+// Whatever eventually opens is what gets announced to the peer, so relaxing
+// these changes what is sent, not what is claimed.
+static QList<CaptureAttempt> buildCaptureAttempts(const QString &device, int width, int height,
+                                                  int frameRate, bool preferCompressed,
+                                                  const QString &configuredCodec)
+{
+	QList<CaptureAttempt> attempts;
+	QStringList passthroughOrder;
+
+	if (preferCompressed)
+	{
+		passthroughOrder = VideoDevice::CompressedFormats(device);
+
+		// The configured codec first when the camera can produce it itself:
+		// forwarding that one means the peer receives exactly what was asked
+		// for, rather than whichever compressed format the camera happened to
+		// rank highest. The rest keep their preference order behind it, since
+		// forwarding any of them still beats decoding and re-encoding.
+		if (passthroughOrder.removeAll(configuredCodec) > 0)
+			passthroughOrder.prepend(configuredCodec);
+	}
+
+	// What the camera says it can do at this size. Absent - an unsupported
+	// platform, or a camera that would not be enumerated - leaves every
+	// candidate below looking capable, which is the behaviour from before any
+	// of this was known.
+	VideoCaptureFormat atSize;
+
+	atSize.width = 0;
+	atSize.height = 0;
+
+	const QList<VideoCaptureFormat> formats = VideoDevice::CaptureFormats(device);
+
+	for (int i = 0; i < formats.size(); i++)
+	{
+		if (formats.at(i).width == width && formats.at(i).height == height)
+		{
+			atSize = formats.at(i);
+			break;
+		}
+	}
+
+	// Indexed by codec name, empty string being the uncompressed one. A format
+	// the camera did not list at this size is absent, and absent is not
+	// capable - unless nothing was enumerated at all, below.
+	const bool enumerated = !atSize.pixelFormats.isEmpty();
+
+	for (int i = 0; i < passthroughOrder.size(); i++)
+	{
+		const QString codec = passthroughOrder.at(i);
+		bool capable = !enumerated;
+
+		for (int p = 0; p < atSize.pixelFormats.size(); p++)
+		{
+			if (atSize.pixelFormats.at(p).codec == codec)
+			{
+				capable = formatHasRate(atSize.pixelFormats.at(p), frameRate);
+				break;
+			}
+		}
+
+		if (capable)
+			attempts << CaptureAttempt{ codec, true, true, true,
+			                            QStringLiteral("forwarded unchanged") };
+	}
+
+	bool uncompressedCapable = !enumerated;
+
+	for (int p = 0; p < atSize.pixelFormats.size(); p++)
+	{
+		if (atSize.pixelFormats.at(p).codec.isEmpty())
+		{
+			uncompressedCapable = formatHasRate(atSize.pixelFormats.at(p), frameRate);
+			break;
+		}
+	}
+
+	if (uncompressedCapable)
+		attempts << CaptureAttempt{ QString(), false, true, true,
+		                            QStringLiteral("uncompressed, re-encoded here") };
+
+	for (unsigned int i = 0; i < sizeof(kTranscodeSourcePreference) / sizeof(kTranscodeSourcePreference[0]); i++)
+	{
+		const QString codec = QLatin1String(kTranscodeSourcePreference[i]);
+
+		for (int p = 0; p < atSize.pixelFormats.size(); p++)
+		{
+			if (atSize.pixelFormats.at(p).codec == codec &&
+			    formatHasRate(atSize.pixelFormats.at(p), frameRate))
+			{
+				attempts << CaptureAttempt{ codec, false, true, true,
+				                            QStringLiteral("compressed for the frame rate, re-encoded here") };
+				break;
+			}
+		}
+	}
+
+	// The loosened tail. Same candidates, in the same order, with the rate
+	// given up and then the size as well - and without consulting what the
+	// camera claimed, since by this point its claims have been wrong.
+	QStringList tail = passthroughOrder;
+	QList<bool> tailPassthrough;
+
+	for (int i = 0; i < passthroughOrder.size(); i++)
+		tailPassthrough << true;
+
+	tail << QString();
+	tailPassthrough << false;
+
+	for (unsigned int i = 0; i < sizeof(kTranscodeSourcePreference) / sizeof(kTranscodeSourcePreference[0]); i++)
+	{
+		const QString codec = QLatin1String(kTranscodeSourcePreference[i]);
+
+		if (!atSize.compressedFormats.contains(codec))
+			continue;
+
+		tail << codec;
+		tailPassthrough << false;
+	}
+
+	for (int i = 0; i < tail.size(); i++)
+		attempts << CaptureAttempt{ tail.at(i), tailPassthrough.at(i), true, false,
+		                            QStringLiteral("any rate the camera will give") };
+
+	attempts << CaptureAttempt{ QString(), false, false, false,
+	                            QStringLiteral("anything the camera will give") };
+
+	return attempts;
+}
+
+// One attempt at opening the camera.
+//
+// inputFormat empty asks for whatever the camera gives; a width of zero
+// drops the size and frame rate constraints as well. *ifmt_ctx is left null on
+// failure - avformat_open_input() frees and clears it - so the caller can just
+// try again.
+static int openCamera(const AVInputFormat *ifmt, const QByteArray &url,
+                      int width, int height, int framerate,
+                      const QString &inputFormat, AVFormatContext **ifmt_ctx)
+{
+	AVDictionary *opts = nullptr;
+
+	if (width > 0 && height > 0)
+		av_dict_set(&opts, "video_size", QString("%1x%2").arg(width).arg(height).toUtf8().constData(), 0);
+
+	if (framerate > 0)
+		av_dict_set(&opts, "framerate", QString::number(framerate).toUtf8().constData(), 0);
+
+	if (!inputFormat.isEmpty())
+	{
+#ifdef Q_OS_WIN
+		// dshow has no input_format option. It picks the compressed stream
+		// from AVFormatContext::video_codec_id instead, which is what
+		// "-vcodec mjpeg" ahead of "-i" sets on the command line - and that
+		// has to be set on a context allocated here, since
+		// avformat_open_input() would otherwise make one only after the point
+		// where the demuxer reads it.
+		const AVCodec *dec = avcodec_find_decoder_by_name(inputFormat.toUtf8().constData());
+
+		if (!dec)
+		{
+			av_dict_free(&opts);
+			return AVERROR(EINVAL);
+		}
+
+		*ifmt_ctx = avformat_alloc_context();
+
+		if (!*ifmt_ctx)
+		{
+			av_dict_free(&opts);
+			return AVERROR(ENOMEM);
+		}
+
+		(*ifmt_ctx)->video_codec_id = dec->id;
+#else
+		av_dict_set(&opts, "input_format", inputFormat.toUtf8().constData(), 0);
+#endif
+	}
+
+#ifdef Q_OS_WIN
+	// The dshow demuxer calls CoInitialize(0) and CoUninitialize() once each
+	// for every camera it opens - the latter on a failed open as well, and
+	// whether or not the former succeeded. Capture() keeps this thread in the
+	// multithreaded apartment, where dshow's CoInitialize(0) fails and counts
+	// for nothing, so its CoUninitialize() would take away the reference
+	// Capture() holds. This reference is the one for it to take instead.
+	// Should dshow not get as far as either call, it is merely left over,
+	// which keeps the thread in the apartment it should be in anyway.
+	CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+#endif
+
+	int ret = avformat_open_input(ifmt_ctx, url.constData(), ifmt, &opts);
+	av_dict_free(&opts);
+
+	return ret;
+}
+
+#ifdef Q_OS_WIN
+// Holds the calling thread in COM's multithreaded apartment for as long as it
+// exists, if the thread is not already committed to the single-threaded one.
+//
+// Media Foundation, which the h264_mf and hevc_mf encoders go through, refuses
+// a thread in the single-threaded apartment - and that is where the dshow
+// demuxer puts the capture thread when it opens the camera, unless the thread
+// has joined the multithreaded one first. DirectShow itself works in either.
+class ComMultithreadedScope
+{
+public:
+	ComMultithreadedScope() : m_hr(CoInitializeEx(nullptr, COINIT_MULTITHREADED))
+	{
+		if (m_hr == RPC_E_CHANGED_MODE)
+			qWarning() << "The capture thread is already in COM's single-threaded apartment, "
+			              "Media Foundation encoding will not be available";
+	}
+
+	~ComMultithreadedScope()
+	{
+		if (SUCCEEDED(m_hr))
+			CoUninitialize();
+	}
+
+private:
+	HRESULT m_hr;
+};
+#endif
+
+void VideoDevice::Capture()
+{
+	/* closed before it got to start */
+	if (sessionClosed())
+		return;
+
+#ifdef Q_OS_WIN
+	// Before the camera is opened - see ComMultithreadedScope - and for the
+	// whole of the capture, since the encoder is used on this thread until the
+	// loop below returns.
+	ComMultithreadedScope comApartment;
+#endif
+
+	avdevice_register_all();
+#if LIBAVFORMAT_VERSION_MAJOR < 58
+	av_register_all();
+	avcodec_register_all();
+#endif
+
+	const QByteArray deviceUtf8 = cameraOpenUrl(m_deviceName);
+	const QByteArray driverUtf8 = VideoDevice::PlatformDriverName().toUtf8();
+	const AVInputFormat *ifmt = av_find_input_format(driverUtf8.constData());
+	if (!ifmt)
+	{
+		QString msg = QString("Could not find '%1' video input driver").arg(VideoDevice::PlatformDriverName());
+		qWarning() << msg;
+		emit errorOccurred(msg);
+		return;
+	}
+
+	// Which formats to try, in which order, and what to do with each - worked
+	// out from what the camera said it can deliver at this size and rate. See
+	// buildCaptureAttempts().
+	const QList<CaptureAttempt> attempts =
+	    buildCaptureAttempts(m_deviceName, m_width, m_height, m_frameRate,
+	                         m_preferCompressed, m_codec);
+
+	QString passthroughCodec;
+	AVFormatContext *ifmt_ctx = nullptr;
+	int ret = AVERROR(EINVAL);
+
+	for (int a = 0; a < attempts.size(); a++)
+	{
+		const CaptureAttempt &attempt = attempts.at(a);
+
+		ret = openCamera(ifmt, deviceUtf8,
+		                 attempt.constrainSize ? m_width : 0,
+		                 attempt.constrainSize ? m_height : 0,
+		                 attempt.constrainRate ? m_frameRate : 0,
+		                 attempt.inputFormat, &ifmt_ctx);
+
+		if (ret >= 0)
+		{
+			// Only a forwarding attempt makes this a passthrough; the same
+			// format asked for to get the frame rate goes to the transcode
+			// loop instead.
+			passthroughCodec = attempt.passthrough ? attempt.inputFormat : QString();
+			break;
+		}
+
+		QString asked;
+
+		if (!attempt.constrainSize)
+			asked = QStringLiteral("any size or rate");
+		else if (attempt.constrainRate)
+			asked = QString("%1x%2 @%3").arg(m_width).arg(m_height).arg(m_frameRate);
+		else
+			asked = QString("%1x%2 at any rate").arg(m_width).arg(m_height);
+
+		qWarning() << QString("Camera '%1': no %2 at %3 - %4 (%5)")
+		              .arg(m_deviceName,
+		                   attempt.inputFormat.isEmpty() ? QStringLiteral("stream") : attempt.inputFormat,
+		                   asked,
+		                   attempt.reason,
+		                   ff_errstr(ret));
+	}
+
+	if (ret < 0)
+	{
+		// Not fatal to the call - it simply proceeds without outgoing video.
+		QString msg = QString("Could not open camera '%1': %2").arg(m_deviceName, ff_errstr(ret));
+
+#ifdef Q_OS_WIN
+		// A camera that enumerated but will not open is usually not a broken
+		// camera. Windows will happily list a device while refusing to
+		// instantiate it, which is what "Let desktop apps access your camera"
+		// being switched off looks like from here - and what another
+		// application already holding the camera looks like too. Neither is
+		// distinguishable from a genuine I/O error at this level, so say so
+		// rather than leaving the user with an error code that suggests
+		// hardware trouble.
+		msg += tr(" - check that \"Let desktop apps access your camera\" is enabled in the "
+		          "Windows camera privacy settings, and that no other application is using it");
+#endif
+
+		qWarning() << msg;
+		emit errorOccurred(msg);
+		return;
+	}
+
+	if ((ret = avformat_find_stream_info(ifmt_ctx, nullptr)) < 0 || ifmt_ctx->nb_streams < 1)
+	{
+		QString msg = QString("Could not determine camera stream parameters: %1").arg(ff_errstr(ret));
+		qWarning() << msg;
+		emit errorOccurred(msg);
+		avformat_close_input(&ifmt_ctx);
+		return;
+	}
+
+	AVStream *in_st = ifmt_ctx->streams[0];
+
+	// Check what actually came back rather than trusting the request. A
+	// camera can list a format and then open in a different one, and asking
+	// for it is spelled differently per demuxer - so the one thing worth
+	// relying on is the stream in front of us. Handing raw frames to the
+	// passthrough loop would put unencoded video on the wire labelled as
+	// something it is not.
+	if (!passthroughCodec.isEmpty())
+	{
+		const AVCodec *wanted = avcodec_find_decoder_by_name(passthroughCodec.toUtf8().constData());
+
+		if (!wanted || in_st->codecpar->codec_id != wanted->id)
+		{
+			qWarning() << QString("Camera '%1' opened as %2 rather than the %3 that was asked for, re-encoding")
+			              .arg(m_deviceName,
+			                   QLatin1String(avcodec_get_name(in_st->codecpar->codec_id)),
+			                   passthroughCodec);
+			passthroughCodec.clear();
+		}
+	}
+
+	if (!passthroughCodec.isEmpty())
+		runPassthroughLoop(ifmt_ctx, in_st, passthroughCodec);
+	else
+		runTranscodeLoop(ifmt_ctx, in_st);
+
+	avformat_close_input(&ifmt_ctx);
+}
+
+void VideoDevice::emitFragments(const unsigned char *data, int size)
+{
+	// One encoded frame goes out as one or more 0x77 messages; the final one
+	// is flagged so the receiver knows the frame is complete (see the
+	// fragmentation notes in the protocol doc).
+	int offset = 0;
+	// Read once per frame rather than per fragment, so that a transport
+	// change in the middle of a frame cannot make the receiving side see a
+	// frame whose fragments were sized by two different rules.
+	const int maxFragment = m_maxFragmentSize.loadRelaxed();
+
+	while (offset < size)
+	{
+		int chunk = qMin(maxFragment, size - offset);
+		bool isLast = (offset + chunk >= size);
+
+		emit packetReady(QByteArray((const char *)data + offset, chunk), isLast);
+		offset += chunk;
+	}
+}
+
+// The frame rate the camera actually settled on, which is not necessarily the
+// one that was asked for - and when the open had to fall back to letting the
+// camera choose, was not asked for at all. Encoding at a rate the frames do
+// not arrive at gives a stream whose timestamps disagree with reality, and it
+// is also what captureStarted() reports, so that the rate a camera quietly
+// substituted is visible rather than having to be measured.
+static AVRational cameraFrameRate(AVStream *in_st, int fallbackRate)
+{
+	AVRational fr = in_st->avg_frame_rate;
+
+	if (fr.num <= 0 || fr.den <= 0)
+		fr = in_st->r_frame_rate;
+
+	if (fr.num <= 0 || fr.den <= 0)
+		fr = AVRational{ fallbackRate, 1 };
+
+	return fr;
+}
+
+void VideoDevice::runPassthroughLoop(AVFormatContext *ifmt_ctx, AVStream *in_st, const QString &codec)
+{
+	// The camera decides the picture size here, since nothing rescales it on
+	// the way out - announce what it actually produced.
+	int width = in_st->codecpar->width > 0 ? in_st->codecpar->width : m_width;
+	int height = in_st->codecpar->height > 0 ? in_st->codecpar->height : m_height;
+
+	emit captureStarted(codec, width, height,
+	                    av_q2d(cameraFrameRate(in_st, m_frameRate)));
+
+	// Nothing encodes here at all - the camera's own packets go out as they
+	// arrive - so any hardware encoding setting simply has nothing to act on.
+	emit accelerationInUse(QStringLiteral("no encoding, camera stream forwarded unchanged"));
+
+	AVPacket *pkt = av_packet_alloc();
+	bool loggedReadError = false;
+
+	while (!stopRequested())
+	{
+		int ret = av_read_frame(ifmt_ctx, pkt);
+		if (ret < 0)
+		{
+			if (ret == AVERROR(EAGAIN))
+				continue;
+			if (!loggedReadError)
+			{
+				qWarning() << QString("Camera read failed: %1").arg(ff_errstr(ret));
+				loggedReadError = true;
+			}
+			break;
+		}
+
+		emitFragments(pkt->data, pkt->size);
+		av_packet_unref(pkt);
+	}
+
+	av_packet_free(&pkt);
+}
+
+// The pixel format to hand libswscale for a decoded camera frame, and whether
+// that frame's values use the full 0-255 range rather than the 16-235 one.
+//
+// MJPEG decodes to one of the yuvj* formats, which mean "the yuv* of the same
+// name, with full range values". libswscale still understands them and infers
+// the range, but warns that they are deprecated - and since capturing MJPEG
+// and re-encoding it is now the ordinary path for anything above VGA on USB
+// 2.0, that warning would otherwise be printed for most calls. Saying the same
+// thing the way libswscale asks for it keeps the range explicit instead of
+// inferred, and the log readable.
+static AVPixelFormat swscaleSourceFormat(AVPixelFormat format, bool *fullRange)
+{
+	*fullRange = true;
+
+	switch (format)
+	{
+	case AV_PIX_FMT_YUVJ420P:
+		return AV_PIX_FMT_YUV420P;
+	case AV_PIX_FMT_YUVJ422P:
+		return AV_PIX_FMT_YUV422P;
+	case AV_PIX_FMT_YUVJ444P:
+		return AV_PIX_FMT_YUV444P;
+	case AV_PIX_FMT_YUVJ440P:
+		return AV_PIX_FMT_YUV440P;
+	case AV_PIX_FMT_YUVJ411P:
+		return AV_PIX_FMT_YUV411P;
+	default:
+		break;
+	}
+
+	*fullRange = false;
+	return format;
+}
+
+#if defined(HAVE_VAAPI) || defined(HAVE_D3D12VA)
+// Opens one of FFmpeg's hardware encoders on a device that has already been
+// created, and makes the pool of GPU surfaces it takes its input from.
+//
+// Shared by the VAAPI and the Direct3D 12 paths, which differ only in the
+// device handed in here and in the pixel format naming the memory the surfaces
+// live in - from the pool onwards it is the same hwcontext machinery, and the
+// encoder is configured exactly as the software one is below.
+//
+// options are the encoder's private options, as avcodec_open2() takes them;
+// null for none.
+//
+// Returns the opened context with the pool it draws from in *hw_frames_ref, or
+// null with nothing left allocated and the reason logged, which leaves the
+// caller to encode in software.
+static AVCodecContext *openHwEncoder(const AVCodec *enc, AVBufferRef *hw_device_ref,
+                                     AVPixelFormat hw_pix_fmt, int width, int height,
+                                     AVRational frameRate, int64_t bitrate, int gopSize,
+                                     AVDictionary **options, AVBufferRef **hw_frames_ref)
+{
+	AVCodecContext *enc_ctx = avcodec_alloc_context3(enc);
+
+	*hw_frames_ref = enc_ctx ? av_hwframe_ctx_alloc(hw_device_ref) : nullptr;
+
+	if (!*hw_frames_ref)
+	{
+		qWarning() << QString("Could not create a surface pool for the %1 encoder, encoding in software")
+		              .arg(QLatin1String(enc->name));
+		if (enc_ctx) avcodec_free_context(&enc_ctx);
+		return nullptr;
+	}
+
+	// The pool the encoder draws its input surfaces from. NV12 is what these
+	// encoders take; the frames themselves live in GPU memory, which is what
+	// hw_pix_fmt denotes.
+	AVHWFramesContext *frames_ctx = (AVHWFramesContext *)(*hw_frames_ref)->data;
+	frames_ctx->format = hw_pix_fmt;
+	frames_ctx->sw_format = AV_PIX_FMT_NV12;
+	frames_ctx->width = width;
+	frames_ctx->height = height;
+	frames_ctx->initial_pool_size = 20;
+
+	int ret = av_hwframe_ctx_init(*hw_frames_ref);
+
+	if (ret < 0)
+	{
+		qWarning() << QString("Could not initialise the surface pool for the %1 encoder (%2), encoding in software")
+		              .arg(QLatin1String(enc->name), ff_errstr(ret));
+		av_buffer_unref(hw_frames_ref);
+		avcodec_free_context(&enc_ctx);
+		return nullptr;
+	}
+
+	enc_ctx->width = width;
+	enc_ctx->height = height;
+	enc_ctx->pix_fmt = hw_pix_fmt;
+	enc_ctx->time_base = av_inv_q(frameRate);
+	enc_ctx->framerate = frameRate;
+	enc_ctx->bit_rate = bitrate;
+	enc_ctx->gop_size = gopSize;
+	enc_ctx->max_b_frames = 0;
+	enc_ctx->hw_frames_ctx = av_buffer_ref(*hw_frames_ref);
+
+	// No preset/tune here: those belong to the software encoders and mean
+	// nothing to a hardware one.
+	ret = avcodec_open2(enc_ctx, enc, options);
+
+	if (ret < 0)
+	{
+		// Not "encoding in software" here: the caller may have another way of
+		// opening it left to try.
+		qWarning() << QString("The %1 encoder would not open (%2)")
+		              .arg(QLatin1String(enc->name), ff_errstr(ret));
+		av_buffer_unref(hw_frames_ref);
+		avcodec_free_context(&enc_ctx);
+		return nullptr;
+	}
+
+	return enc_ctx;
+}
+#endif
+
+#ifdef Q_OS_WIN
+// Opens one of FFmpeg's Media Foundation encoders. These reach the GPU through
+// the encoder the vendor's driver registers with Windows rather than through a
+// device of our own, and take their input in system memory, so unlike
+// openHwEncoder() there is no device and no surface pool here: NV12 frames go
+// in as they are and the driver does the upload.
+//
+// Returns the opened context, or null with the reason logged.
+static AVCodecContext *openMediaFoundationEncoder(const AVCodec *enc, int width, int height,
+                                                  AVRational frameRate, int64_t bitrate,
+                                                  int gopSize)
+{
+	AVCodecContext *enc_ctx = avcodec_alloc_context3(enc);
+
+	if (!enc_ctx)
+		return nullptr;
+
+	enc_ctx->width = width;
+	enc_ctx->height = height;
+	// What the hardware encoders take natively; YUV420P would be converted
+	// inside the encoder instead of by the scaler we run anyway.
+	enc_ctx->pix_fmt = AV_PIX_FMT_NV12;
+	enc_ctx->time_base = av_inv_q(frameRate);
+	enc_ctx->framerate = frameRate;
+	enc_ctx->bit_rate = bitrate;
+	enc_ctx->gop_size = gopSize;
+	enc_ctx->max_b_frames = 0;
+	// Becomes CODECAPI_AVLowLatencyMode, which stops the encoder holding
+	// frames back to look ahead.
+	enc_ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+
+	// Hardware only. Without it FFmpeg would also accept Microsoft's own
+	// software H.264 encoder, which is worse at the job than the libx264 this
+	// falls back to when no hardware encoder opens - so "GPU encoding" in the
+	// status line can be taken at its word.
+	av_opt_set_int(enc_ctx->priv_data, "hw_encoding", 1, 0);
+	// Tells the driver what the stream is for, the nearest Media Foundation
+	// has to x264's zerolatency tune. Constant bitrate because a call has a
+	// fixed amount of network to fit into. Both are hints that a driver is free
+	// to ignore, and FFmpeg does not treat them failing as an error.
+	av_opt_set(enc_ctx->priv_data, "scenario", "video_conference", 0);
+	av_opt_set(enc_ctx->priv_data, "rate_control", "cbr", 0);
+
+	int ret = avcodec_open2(enc_ctx, enc, nullptr);
+
+	if (ret < 0)
+	{
+		qWarning() << QString("The %1 encoder would not open (%2) - no hardware Media Foundation "
+		                      "encoder for this codec, or it refused the settings")
+		              .arg(QLatin1String(enc->name), ff_errstr(ret));
+		avcodec_free_context(&enc_ctx);
+		return nullptr;
+	}
+
+	return enc_ctx;
+}
+#endif
+
+void VideoDevice::runTranscodeLoop(AVFormatContext *ifmt_ctx, AVStream *in_st)
+{
+	const AVRational frameRate = cameraFrameRate(in_st, m_frameRate);
+
+	// Which encoder produces the configured codec. Looked up once: the GPU
+	// attempt and the software fallback below are two encoders for the same
+	// codec, so the peer is told the same thing either way.
+	const int encIdx = videoEncoderIndex(m_codec);
+
+	// Two seconds between keyframes. A receiver that joins late or loses a
+	// packet waits this long for a picture, so it is a latency figure as much
+	// as a bandwidth one - hence deriving it from the real rate rather than
+	// from a fixed frame count.
+	const int gopSize = qMax(1, (int)av_q2d(frameRate) * 2);
+
+	int ret;
+
+	// The camera hands us either raw frames or a compressed stream that is
+	// not being forwarded as-is; either way it goes through a decoder here to
+	// get raw pictures for the encoder.
+	const AVCodec *cam_dec = avcodec_find_decoder(in_st->codecpar->codec_id);
+	AVCodecContext *dec_ctx = cam_dec ? avcodec_alloc_context3(cam_dec) : nullptr;
+	if (!cam_dec || !dec_ctx ||
+	    avcodec_parameters_to_context(dec_ctx, in_st->codecpar) < 0 ||
+	    avcodec_open2(dec_ctx, cam_dec, nullptr) < 0)
+	{
+		QString msg = "Could not open camera format decoder";
+		qWarning() << msg;
+		emit errorOccurred(msg);
+		if (dec_ctx) avcodec_free_context(&dec_ctx);
+		return;
+	}
+
+	// The GPU encoder is tried first when asked for, and anything that goes
+	// wrong on the way - no such encoder built into FFmpeg, no usable device,
+	// no surface pool, the encoder refusing to open - just leaves hardware
+	// false and takes the software path below.
+	bool hardware = false;
+	const AVCodec *enc = nullptr;
+	AVCodecContext *enc_ctx = nullptr;
+	AVBufferRef *hw_frames_ref = nullptr;
+
+#ifdef HAVE_VAAPI
+	if ((m_acceleration & VideoAccelerationVaapi) && VaapiContext::isAvailable())
+	{
+		enc = avcodec_find_encoder_by_name(kVideoEncoders[encIdx].vaapiEncoder);
+		AVBufferRef *hw_device_ref = enc ? VaapiContext::deviceRef() : nullptr;
+
+		if (hw_device_ref)
+		{
+			enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_VAAPI,
+			                        m_width, m_height, frameRate, m_bitrate, gopSize,
+			                        nullptr, &hw_frames_ref);
+
+			// Newer Intel GPUs (iHD driver, Gen11+) expose only the low-power
+			// VAEntrypointEncSliceLP, which FFmpeg will not pick unless asked.
+			if (!enc_ctx)
+			{
+				AVDictionary *opts = nullptr;
+				av_dict_set(&opts, "low_power", "1", 0);
+				enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_VAAPI,
+				                        m_width, m_height, frameRate, m_bitrate, gopSize,
+				                        &opts, &hw_frames_ref);
+				av_dict_free(&opts);
+			}
+
+			hardware = enc_ctx != nullptr;
+
+			av_buffer_unref(&hw_device_ref);
+		}
+		else if (enc)
+		{
+			qWarning() << "No usable VAAPI device, encoding in software";
+		}
+		else
+		{
+			qWarning() << QString("FFmpeg has no %1 encoder, encoding in software")
+			              .arg(QLatin1String(kVideoEncoders[encIdx].vaapiEncoder));
+		}
+
+		if (!hardware)
+			enc = nullptr;
+	}
+#endif
+
+#ifdef HAVE_D3D12VA
+	// What the same request means on Windows, where the GPU is reached
+	// through D3D12 Video rather than through libva. Written as a fallback
+	// after the VAAPI attempt rather than as its alternative so that a build
+	// that somehow has both - libva has a Windows port of its own - still
+	// gets a hardware encoder if only one of the two comes up.
+	//
+	// The device is created per capture session and dropped with it, unlike
+	// the VAAPI one: nothing else in the client holds a D3D12 device - the
+	// decoder makes its own, and rendering does not go through one.
+	if (!hardware && (m_acceleration & VideoAccelerationD3d12va))
+	{
+		const char *encoderName = kVideoEncoders[encIdx].d3d12vaEncoder;
+
+		enc = encoderName ? avcodec_find_encoder_by_name(encoderName) : nullptr;
+
+		AVBufferRef *hw_device_ref = nullptr;
+		ret = enc ? av_hwdevice_ctx_create(&hw_device_ref, AV_HWDEVICE_TYPE_D3D12VA,
+		                                   nullptr, nullptr, 0)
+		          : 0;
+
+		if (hw_device_ref)
+		{
+			// Given only a bitrate, FFmpeg picks the rate control itself and
+			// asks the driver for VBR and then CBR - nothing else. A driver can
+			// refuse both, AMD's does, so QVBR is asked for explicitly after
+			// that: still held to the bitrate, with a quality target on top.
+			// Null is FFmpeg's own choice.
+			static const char * const kRateControls[] = { nullptr, "QVBR" };
+
+			for (unsigned int r = 0; !enc_ctx && r < sizeof(kRateControls) / sizeof(kRateControls[0]); r++)
+			{
+				// The D3D12 encoders keep up to async_depth frames in flight
+				// and hand a packet back only once that many have gone in, so
+				// the default of two holds every frame back by one - a frame
+				// interval of latency for nothing, with one frame at a time
+				// coming in.
+				AVDictionary *options = nullptr;
+
+				av_dict_set(&options, "async_depth", "1", 0);
+				if (kRateControls[r])
+					av_dict_set(&options, "rc_mode", kRateControls[r], 0);
+
+				enc_ctx = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_D3D12,
+				                        m_width, m_height, frameRate, m_bitrate, gopSize,
+				                        &options, &hw_frames_ref);
+				av_dict_free(&options);
+			}
+
+			hardware = enc_ctx != nullptr;
+
+			// None of the modes that follow a bitrate. Constant QP has no
+			// bitrate limit at all - a moving picture can take many times what
+			// the call was set to - so it is not used, but whether the driver
+			// has it is worth a line in the log: it decides whether this GPU
+			// could be used with rate control of our own instead.
+			if (!hardware)
+			{
+				AVDictionary *options = nullptr;
+				AVBufferRef *probe_frames_ref = nullptr;
+
+				av_dict_set(&options, "rc_mode", "CQP", 0);
+
+				AVCodecContext *probe = openHwEncoder(enc, hw_device_ref, AV_PIX_FMT_D3D12,
+				                                      m_width, m_height, frameRate, m_bitrate,
+				                                      gopSize, &options, &probe_frames_ref);
+				av_dict_free(&options);
+
+				// FFmpeg's own messages above say why each attempt failed;
+				// this says what the attempts were, and what the probe found.
+				qWarning() << QString("The %1 encoder would not open with any rate control that "
+				                      "follows a bitrate (FFmpeg's choice, then QVBR); it %2 with "
+				                      "constant QP. Encoding in software")
+				              .arg(QLatin1String(enc->name),
+				                   probe ? QStringLiteral("does open") : QStringLiteral("does not open either"));
+
+				if (probe)
+				{
+					avcodec_free_context(&probe);
+					av_buffer_unref(&probe_frames_ref);
+				}
+			}
+
+			av_buffer_unref(&hw_device_ref);
+		}
+		else if (enc)
+		{
+			// Where the GPU or the version of Windows cannot encode at all,
+			// which is a plain answer rather than a fault: D3D12 video
+			// encoding needs Windows 11, or Windows 10 with the Agility SDK
+			// alongside the client.
+			qWarning() << QString("No usable Direct3D 12 encoding device (%1), encoding in software")
+			              .arg(ff_errstr(ret));
+		}
+		else if (encoderName)
+		{
+			qWarning() << QString("FFmpeg has no %1 encoder, encoding in software")
+			              .arg(QLatin1String(encoderName));
+		}
+		else
+		{
+			qWarning() << QString("Direct3D 12 cannot encode %1, encoding in software")
+			              .arg(QLatin1String(kVideoEncoders[encIdx].codec));
+		}
+
+		if (!hardware)
+			enc = nullptr;
+	}
+#endif
+
+#ifdef Q_OS_WIN
+	// Last of the hardware paths: Media Foundation goes through whatever
+	// encoder the GPU vendor's driver has registered with Windows, so it also
+	// covers GPUs, drivers and versions of Windows that predate D3D12 video
+	// encoding.
+	if (!hardware && (m_acceleration & VideoAccelerationMediaFoundation))
+	{
+		const char *encoderName = kVideoEncoders[encIdx].mediaFoundationEncoder;
+
+		enc = encoderName ? avcodec_find_encoder_by_name(encoderName) : nullptr;
+
+		if (enc)
+		{
+			enc_ctx = openMediaFoundationEncoder(enc, m_width, m_height, frameRate,
+			                                     m_bitrate, gopSize);
+			hardware = enc_ctx != nullptr;
+		}
+		else if (encoderName)
+		{
+			qWarning() << QString("FFmpeg has no %1 encoder, encoding in software")
+			              .arg(QLatin1String(encoderName));
+		}
+		else
+		{
+			qWarning() << QString("Media Foundation cannot encode %1, encoding in software")
+			              .arg(QLatin1String(kVideoEncoders[encIdx].codec));
+		}
+
+		if (!hardware)
+			enc = nullptr;
+	}
+#endif
+
+	// Named rather than taken from enc->name because the VAAPI branch above
+	// may have left a different encoder in enc; filled in below for the
+	// software path, which is the only one the private options apply to.
+	QString swEncoderName;
+
+	if (!hardware)
+	{
+		enc = avcodec_find_encoder_by_name(kVideoEncoders[encIdx].swEncoder);
+		if (!enc)
+			enc = avcodec_find_encoder(kVideoEncoders[encIdx].id);
+		enc_ctx = enc ? avcodec_alloc_context3(enc) : nullptr;
+		if (!enc || !enc_ctx)
+		{
+			QString msg = QString("No %1 encoder available").arg(QLatin1String(kVideoEncoders[encIdx].codec));
+			qWarning() << msg;
+			emit errorOccurred(msg);
+			if (enc_ctx) avcodec_free_context(&enc_ctx);
+			avcodec_free_context(&dec_ctx);
+			return;
+		}
+
+		swEncoderName = QLatin1String(enc->name);
+
+		enc_ctx->width = m_width;
+		enc_ctx->height = m_height;
+		enc_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+		enc_ctx->time_base = av_inv_q(frameRate);
+		enc_ctx->framerate = frameRate;
+		enc_ctx->bit_rate = m_bitrate;
+		enc_ctx->gop_size = gopSize;
+		// B-frames reorder output, which would cost latency in a live call.
+		enc_ctx->max_b_frames = 0;
+
+		// Note the absence of AV_CODEC_FLAG_GLOBAL_HEADER: we want the parameter
+		// sets repeated in-band with every keyframe, since the receiving side has
+		// no out-of-band way to learn them and may start decoding mid-stream.
+		applyLiveEncoderOptions(enc_ctx, swEncoderName, kSliceMaxSize);
+
+		if ((ret = avcodec_open2(enc_ctx, enc, nullptr)) < 0)
+		{
+			QString msg = QString("Could not open the %1 encoder: %2").arg(swEncoderName, ff_errstr(ret));
+			qWarning() << msg;
+			emit errorOccurred(msg);
+			avcodec_free_context(&enc_ctx);
+			avcodec_free_context(&dec_ctx);
+			return;
+		}
+	}
+
+	// Which format the camera is actually delivering, reported alongside the
+	// encoder because the two together explain the frame rate: an uncompressed
+	// camera stream is what caps the rate on a USB 2.0 bus, and seeing
+	// "mjpeg" here is what says that cap has been stepped around. See
+	// buildCaptureAttempts().
+	const QString source = in_st->codecpar->codec_id == AV_CODEC_ID_RAWVIDEO
+	                       ? QStringLiteral("uncompressed")
+	                       : QString::fromLatin1(avcodec_get_name(in_st->codecpar->codec_id));
+
+	// Named from the encoder that was actually opened rather than written out
+	// per API: "h264_vaapi" and "hevc_d3d12va" say both which codec and which
+	// accelerator settled it, and cannot drift from what is running.
+	emit accelerationInUse(hardware
+	                       ? QString("GPU encoding (%1) from %2")
+	                         .arg(QLatin1String(enc->name), source)
+	                       : QString("CPU encoding (%1) from %2").arg(swEncoderName, source));
+
+	// Everything the camera sends is scaled to the encoder's size and re-encoded,
+	// so this is what the peer will receive regardless of what the camera
+	// produced. The codec name is taken from the encoder rather than written
+	// out literally, so that changing the encoder above cannot leave the peer
+	// being told something else - avcodec_get_name() yields exactly the
+	// FFmpeg codec names the 0x75 message is defined in terms of.
+	//
+	// The rate is the camera's, not the encoder's: the encoder is configured
+	// from it (see frameRate above) and encodes every frame it is given, so
+	// what the camera delivers is what goes out.
+	emit captureStarted(QLatin1String(avcodec_get_name(enc_ctx->codec_id)),
+	                    enc_ctx->width, enc_ctx->height, av_q2d(frameRate));
+
+	// What the camera's frames are scaled into. With an encoder that draws on
+	// a surface pool this is only a staging buffer in system memory - NV12,
+	// which is what the GPU encoders take - that gets uploaded to a GPU
+	// surface below; the encoder itself consumes surfaces and never sees this
+	// frame. Every other encoder, Media Foundation's included, takes it as it
+	// is.
+	AVPixelFormat sw_pix_fmt = enc_ctx->hw_frames_ctx ? AV_PIX_FMT_NV12 : enc_ctx->pix_fmt;
+
+	AVFrame *enc_frame = av_frame_alloc();
+	if (enc_frame)
+	{
+		enc_frame->format = sw_pix_fmt;
+		enc_frame->width = enc_ctx->width;
+		enc_frame->height = enc_ctx->height;
+	}
+	if (!enc_frame || av_frame_get_buffer(enc_frame, 0) < 0)
+	{
+		QString msg = "Could not allocate encoder frame";
+		qWarning() << msg;
+		emit errorOccurred(msg);
+		if (enc_frame) av_frame_free(&enc_frame);
+		if (hw_frames_ref) av_buffer_unref(&hw_frames_ref);
+		avcodec_free_context(&enc_ctx);
+		avcodec_free_context(&dec_ctx);
+		return;
+	}
+
+	SwsContext *sws = nullptr;
+	AVPacket *in_pkt = av_packet_alloc();
+	AVFrame *cam_frame = av_frame_alloc();
+	AVPacket *out_pkt = av_packet_alloc();
+	int64_t pts = 0;
+	bool loggedReadError = false;
+	bool loggedScaleError = false;
+	bool loggedEncodeError = false;
+
+	while (!stopRequested())
+	{
+		ret = av_read_frame(ifmt_ctx, in_pkt);
+		if (ret < 0)
+		{
+			if (ret == AVERROR(EAGAIN))
+				continue;
+			if (!loggedReadError)
+			{
+				qWarning() << QString("Camera read failed: %1").arg(ff_errstr(ret));
+				loggedReadError = true;
+			}
+			break;
+		}
+
+		ret = avcodec_send_packet(dec_ctx, in_pkt);
+		av_packet_unref(in_pkt);
+		if (ret < 0)
+			continue;
+
+		while (avcodec_receive_frame(dec_ctx, cam_frame) == 0)
+		{
+			// Built lazily: the camera's actual frame format and size are
+			// only known once a frame has been decoded, and may differ from
+			// what was requested.
+			if (!sws)
+			{
+				bool srcFullRange = false;
+				const AVPixelFormat srcFormat =
+				    swscaleSourceFormat((AVPixelFormat)cam_frame->format, &srcFullRange);
+
+				sws = sws_getContext(cam_frame->width, cam_frame->height, srcFormat,
+				                     enc_ctx->width, enc_ctx->height, sw_pix_fmt,
+				                     SWS_BILINEAR, nullptr, nullptr, nullptr);
+				if (!sws)
+				{
+					if (!loggedScaleError)
+					{
+						qWarning() << "Could not set up capture scaler";
+						loggedScaleError = true;
+					}
+					av_frame_unref(cam_frame);
+					continue;
+				}
+
+				// The range the format name no longer carries. The encoder
+				// wants the studio range, so this is a real conversion and not
+				// just a label: without it a JPEG frame's blacks and whites
+				// would be clipped rather than compressed into 16-235.
+				if (srcFullRange)
+				{
+					const int *coefs = sws_getCoefficients(SWS_CS_DEFAULT);
+
+					sws_setColorspaceDetails(sws, coefs, 1, coefs, 0,
+					                         0, 1 << 16, 1 << 16);
+				}
+			}
+
+			if (av_frame_make_writable(enc_frame) < 0)
+			{
+				av_frame_unref(cam_frame);
+				continue;
+			}
+
+			sws_scale(sws, cam_frame->data, cam_frame->linesize, 0, cam_frame->height,
+			          enc_frame->data, enc_frame->linesize);
+			av_frame_unref(cam_frame);
+
+			enc_frame->pts = pts++;
+
+			// What actually goes to the encoder: the staging frame itself, or
+			// a GPU surface holding a copy of it for an encoder that draws on
+			// a surface pool.
+			AVFrame *frame_to_encode = enc_frame;
+			AVFrame *hw_frame = nullptr;
+
+			if (enc_ctx->hw_frames_ctx)
+			{
+				hw_frame = av_frame_alloc();
+
+				if (!hw_frame ||
+				    av_hwframe_get_buffer(enc_ctx->hw_frames_ctx, hw_frame, 0) < 0 ||
+				    av_hwframe_transfer_data(hw_frame, enc_frame, 0) < 0)
+				{
+					if (!loggedEncodeError)
+					{
+						qWarning() << "Could not upload the frame to the GPU";
+						loggedEncodeError = true;
+					}
+					if (hw_frame) av_frame_free(&hw_frame);
+					continue;
+				}
+
+				hw_frame->pts = enc_frame->pts;
+				frame_to_encode = hw_frame;
+			}
+
+			int send_ret = avcodec_send_frame(enc_ctx, frame_to_encode);
+
+			// An encoder with an input queue of its own - Media Foundation's
+			// hardware ones are - can refuse a frame until the packets it has
+			// ready are taken. Take them and offer the frame again, rather than
+			// dropping it and reporting a failure that is not one.
+			if (send_ret == AVERROR(EAGAIN))
+			{
+				while (avcodec_receive_packet(enc_ctx, out_pkt) == 0)
+				{
+					emitFragments(out_pkt->data, out_pkt->size);
+					av_packet_unref(out_pkt);
+				}
+
+				send_ret = avcodec_send_frame(enc_ctx, frame_to_encode);
+			}
+
+			if (hw_frame)
+				av_frame_free(&hw_frame);
+
+			if (send_ret != 0)
+			{
+				if (!loggedEncodeError)
+				{
+					qWarning() << QString("%1 encode failed").arg(QLatin1String(avcodec_get_name(enc_ctx->codec_id)));
+					loggedEncodeError = true;
+				}
+				continue;
+			}
+
+			while (avcodec_receive_packet(enc_ctx, out_pkt) == 0)
+			{
+				emitFragments(out_pkt->data, out_pkt->size);
+				av_packet_unref(out_pkt);
+			}
+		}
+	}
+
+	av_packet_free(&in_pkt);
+	av_packet_free(&out_pkt);
+	av_frame_free(&cam_frame);
+	av_frame_free(&enc_frame);
+	if (sws) sws_freeContext(sws);
+	if (hw_frames_ref) av_buffer_unref(&hw_frames_ref);
+	avcodec_free_context(&enc_ctx);
+	avcodec_free_context(&dec_ctx);
+}
+
+void VideoDevice::Play()
+{
+	// More than one pass only when changePlayback() interrupts the one that is
+	// running. Also covers being closed before getting to start.
+	while (!sessionClosed())
+	{
+		{
+			QMutexLocker locker(&m_queueMutex);
+
+			if (m_reconfigure.loadRelaxed())
+			{
+				setPlaybackParams(m_pendingCodec, m_pendingWidth, m_pendingHeight,
+				                  m_pendingAcceleration, m_pendingUseVaapiRender);
+				m_reconfigure.storeRelaxed(0);
+			}
+		}
+
+		decode();
+
+		/* closed, or gave up on an error */
+		if (!m_reconfigure.loadRelaxed())
+			break;
+	}
+}
+
+void VideoDevice::decode()
+{
+#if LIBAVFORMAT_VERSION_MAJOR < 58
+	avcodec_register_all();
+#endif
+
+	// The peer announces its codec by FFmpeg name in the 0x75 message, which
+	// is exactly what avcodec_find_decoder_by_name() takes - so whatever the
+	// other side ends up sending (its own camera's hevc/h264/mjpeg stream
+	// forwarded untouched, or h264 it encoded itself) is handled here without
+	// a codec list to keep in step.
+	const AVCodec *dec = avcodec_find_decoder_by_name(m_codec.toLatin1().constData());
+	if (dec && dec->type != AVMEDIA_TYPE_VIDEO)
+		dec = nullptr;
+	AVCodecContext *dec_ctx = dec ? avcodec_alloc_context3(dec) : nullptr;
+
+	// The GPU API the decoder ended up attached to, for the status line; null
+	// while decoding in software.
+	const char *hwDecoderName = nullptr;
+
+#ifdef HAVE_VAAPI
+	// Has to be attached before opening the decoder. Unlike encoding, there is
+	// no separate hardware decoder to look up: the ordinary decoder is told to
+	// use a VAAPI device, and get_format then picks the GPU pixel format when
+	// the codec and hardware between them can manage it.
+	if ((m_acceleration & VideoAccelerationVaapi) && dec_ctx && VaapiContext::isAvailable())
+	{
+		AVBufferRef *hw_device_ref = VaapiContext::deviceRef();
+
+		if (hw_device_ref)
+		{
+			// The context takes ownership of this reference.
+			dec_ctx->hw_device_ctx = hw_device_ref;
+			dec_ctx->opaque = (void *)(intptr_t)AV_PIX_FMT_VAAPI;
+			dec_ctx->get_format = hw_get_format;
+			hwDecoderName = "VAAPI";
+		}
+		else
+		{
+			qWarning() << "No usable VAAPI device, decoding in software";
+		}
+	}
+#endif
+
+#ifdef Q_OS_WIN
+	// The same arrangement on Windows, with a device of our own per decode
+	// session - created here and freed with the decoder - since nothing else in
+	// the client holds one. The first API in kWindowsHwDecoders whose device
+	// comes up is the one used.
+	for (unsigned int i = 0;
+	     dec_ctx && !dec_ctx->hw_device_ctx && i < sizeof(kWindowsHwDecoders) / sizeof(kWindowsHwDecoders[0]);
+	     i++)
+	{
+		if (!(m_acceleration & kWindowsHwDecoders[i].flag))
+			continue;
+
+		AVBufferRef *hw_device_ref = nullptr;
+		int ret = av_hwdevice_ctx_create(&hw_device_ref, kWindowsHwDecoders[i].deviceType,
+		                                 nullptr, nullptr, 0);
+
+		if (ret < 0)
+		{
+			qWarning() << QString("No usable %1 decoding device (%2)")
+			              .arg(QLatin1String(kWindowsHwDecoders[i].name), ff_errstr(ret));
+			continue;
+		}
+
+		dec_ctx->hw_device_ctx = hw_device_ref;
+		dec_ctx->opaque = (void *)(intptr_t)kWindowsHwDecoders[i].pixelFormat;
+		dec_ctx->get_format = hw_get_format;
+		hwDecoderName = kWindowsHwDecoders[i].name;
+	}
+#endif
+
+	if (!dec || !dec_ctx || avcodec_open2(dec_ctx, dec, nullptr) < 0)
+	{
+		QString msg = QString("Unsupported call video codec: %1").arg(m_codec);
+		qWarning() << msg;
+		emit errorOccurred(msg);
+		if (dec_ctx) avcodec_free_context(&dec_ctx);
+		return;
+	}
+
+	SwsContext *sws = nullptr;
+	int sws_width = 0, sws_height = 0;
+	AVPixelFormat sws_fmt = AV_PIX_FMT_NONE;
+	// Size the scaler is producing, which is the size of the area the window
+	// reported through setDisplaySize() with the frame fitted into it - not
+	// the size of the decoded frame.
+	int sws_dst_width = 0, sws_dst_height = 0;
+	AVFrame *dec_frame = av_frame_alloc();
+	bool loggedDecodeError = false;
+	bool loggedScaleError = false;
+	bool loggedTransferError = false;
+	// Whether the GPU is really doing the decoding is only knowable from a
+	// decoded frame, so the answer is reported once the first one arrives
+	// rather than guessed from what was asked for.
+	bool reportedAcceleration = false;
+
+	while (true)
+	{
+		QByteArray frameData;
+		{
+			QMutexLocker locker(&m_queueMutex);
+			while (m_frameQueue.isEmpty() && !stopRequested())
+				m_queueCond.wait(&m_queueMutex, 100);
+
+			if (stopRequested())
+				break;
+
+			if (m_frameQueue.isEmpty())
+				continue;
+
+			frameData = m_frameQueue.dequeue();
+
+			// The codec is open and the loop is consuming, so the backlog held
+			// for startup is no longer wanted: from here on the newest frame
+			// wins. Set under the queue mutex so enqueueFrame() cannot read it
+			// while this frame is being taken.
+			m_decoderStarted.storeRelaxed(1);
+		}
+
+		AVPacket *in_pkt = av_packet_alloc();
+		if (av_new_packet(in_pkt, frameData.size()) < 0)
+		{
+			av_packet_free(&in_pkt);
+			continue;
+		}
+		memcpy(in_pkt->data, frameData.constData(), frameData.size());
+
+		int ret = avcodec_send_packet(dec_ctx, in_pkt);
+		av_packet_free(&in_pkt);
+		if (ret < 0)
+		{
+			if (!loggedDecodeError)
+			{
+				qWarning() << QString("%1 decode failed: %2").arg(m_codec, ff_errstr(ret));
+				loggedDecodeError = true;
+			}
+			continue;
+		}
+
+		while (avcodec_receive_frame(dec_ctx, dec_frame) == 0)
+		{
+			// A frame left in GPU memory carries the pool it came from, and
+			// only such a frame does - which settles whether the GPU really
+			// decoded it, whatever was asked for.
+			const bool decodedOnGpu = dec_frame->hw_frames_ctx != nullptr;
+
+			if (!reportedAcceleration)
+			{
+				emit accelerationInUse(decodedOnGpu && hwDecoderName
+				                       ? QString("GPU decoding (%1)").arg(QLatin1String(hwDecoderName))
+				                       : QStringLiteral("CPU decoding"));
+				reportedAcceleration = true;
+			}
+
+			// The frame the rest of this iteration works from. A GPU frame
+			// holds no pixels, so unless it is going straight to a renderer
+			// that can draw it, it has to be brought down into system memory
+			// first.
+			AVFrame *display_frame = dec_frame;
+			AVFrame *sw_frame = nullptr;
+
+#ifdef HAVE_VAAPI
+			if (decodedOnGpu && dec_frame->format == AV_PIX_FMT_VAAPI &&
+			    m_useVaapiRender && !m_hwRenderDisabled.loadRelaxed())
+			{
+				// Zero copy: hand the surface itself over, holding a
+				// reference so it stays alive until the renderer is done.
+				AVFrame *hw_ref = av_frame_alloc();
+
+				if (hw_ref && av_frame_ref(hw_ref, dec_frame) == 0)
+				{
+					emit hwFrameReady(wrapAVFrame(hw_ref));
+				}
+				else if (hw_ref)
+				{
+					av_frame_free(&hw_ref);
+				}
+
+				av_frame_unref(dec_frame);
+				continue;
+			}
+#endif
+
+			if (decodedOnGpu)
+			{
+				sw_frame = av_frame_alloc();
+
+				if (!sw_frame || av_hwframe_transfer_data(sw_frame, dec_frame, 0) < 0)
+				{
+					if (!loggedTransferError)
+					{
+						qWarning() << "Could not read the decoded frame back from the GPU";
+						loggedTransferError = true;
+					}
+					if (sw_frame) av_frame_free(&sw_frame);
+					av_frame_unref(dec_frame);
+					continue;
+				}
+
+				display_frame = sw_frame;
+			}
+
+			// The picture is converted straight to the size it is going to
+			// be drawn at, rather than to its own size for the window to
+			// resize afterwards. The resize costs almost nothing here,
+			// inside a colour conversion that has to run regardless, and
+			// nothing is converted only to be discarded when the window is
+			// smaller than the frame - between 1.1 and 4.6 times cheaper
+			// over the whole pipeline, see tests/test_videoscaler.
+			//
+			// Read once per frame: the window reports a new area on every
+			// resize, and mid-call resolution changes move the frame size
+			// underneath it as well.
+			QSize frameSize(display_frame->width, display_frame->height);
+			QSize displayArea = displaySize();
+			QSize target = displayArea.isEmpty() ? frameSize
+			                                     : VideoScaler::fitted(frameSize, displayArea);
+
+			if (target.isEmpty())
+				target = frameSize;
+
+			// Rebuilt whenever the incoming picture format or size changes,
+			// or the window is resized - including on the first frame, when
+			// they first become known.
+			if (!sws || frameSize.width() != sws_width || frameSize.height() != sws_height ||
+			    (AVPixelFormat)display_frame->format != sws_fmt ||
+			    target.width() != sws_dst_width || target.height() != sws_dst_height)
+			{
+				if (sws) sws_freeContext(sws);
+				sws_width = frameSize.width();
+				sws_height = frameSize.height();
+				sws_fmt = (AVPixelFormat)display_frame->format;
+				sws_dst_width = target.width();
+				sws_dst_height = target.height();
+
+				// AV_PIX_FMT_0RGB32 is laid out exactly as
+				// QImage::Format_RGB32 on either endianness, so the
+				// window gets a 32 bit image it can draw without a
+				// conversion of its own - which Format_RGB888 needed.
+				sws = sws_getContext(sws_width, sws_height, sws_fmt,
+				                     sws_dst_width, sws_dst_height, AV_PIX_FMT_0RGB32,
+				                     SWS_BILINEAR, nullptr, nullptr, nullptr);
+
+				if (!sws)
+				{
+					if (!loggedScaleError)
+					{
+						qWarning() << "Could not set up playback scaler";
+						loggedScaleError = true;
+					}
+					if (sw_frame) av_frame_free(&sw_frame);
+					av_frame_unref(dec_frame);
+					continue;
+				}
+			}
+
+			// Allocated per frame rather than reused, which is what lets it
+			// go to the GUI thread without being copied: the queued signal
+			// takes a reference to this buffer and the image frees itself
+			// once the window is done with it. A single reused buffer would
+			// have to be deep copied instead, since the next frame would
+			// overwrite it while the window was still drawing.
+			QImage img(target, QImage::Format_RGB32);
+
+			if (img.isNull())
+			{
+				if (sw_frame) av_frame_free(&sw_frame);
+				av_frame_unref(dec_frame);
+				continue;
+			}
+
+			uint8_t *dst_data[4] = { img.bits(), nullptr, nullptr, nullptr };
+			int dst_linesize[4] = { (int)img.bytesPerLine(), 0, 0, 0 };
+
+			sws_scale(sws, display_frame->data, display_frame->linesize, 0, display_frame->height,
+			          dst_data, dst_linesize);
+
+			emit frameReady(img);
+
+			if (sw_frame) av_frame_free(&sw_frame);
+			av_frame_unref(dec_frame);
+		}
+	}
+
+	av_frame_free(&dec_frame);
+	if (sws) sws_freeContext(sws);
+	avcodec_free_context(&dec_ctx);
+}
+
+QList<MediaDeviceInfo> VideoDevice::Enumerate(enum MediaDeviceStreamDirection dir)
+{
+	QList<MediaDeviceInfo> result;
+	int index = 0;
+
+#ifdef Q_OS_WIN
+	Q_UNUSED(index)
+
+	// Cameras are capture only; nothing renders video to a device here.
+	if (dir != PLAYBACK)
+		result = pica_enumerate_dshow_video();
+
+	return result;
+#endif
+
+	if (dir == PLAYBACK)
+		return result;
+#ifdef Q_OS_LINUX
+	for (int i = 0; i < 64; i++)
+	{
+		QString device = QString(QLatin1String("/dev/video%1")).arg(i);
+		if (QFile::exists(device))
+		{
+			MediaDeviceInfo d;
+			d.device = device;
+
+			QFile v4l2_name(QString(QLatin1String("/sys/class/video4linux/video%1/name")).arg(i));
+			if (v4l2_name.open((QIODevice::ReadOnly | QIODevice::Text)))
+			{
+				d.humanReadable = QString(v4l2_name.readLine()).trimmed();
+				v4l2_name.close();
+			}
+			/* Skip metadata device nodes introduced in latest kernels
+			 * See:
+			 * https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=088ead25524583e2200aa99111bea2f66a86545a
+			 * https://bugzilla.kernel.org/show_bug.cgi?id=199575
+			 * Add only devices having V4L2_CAP_VIDEO_CAPTURE capability.
+			*/
+			int fd = ::open(d.device.toLatin1().constData(), O_RDWR | O_NONBLOCK);
+			if (fd < 0)
+				continue;
+			struct v4l2_capability cap;
+			memset(&cap, 0, sizeof cap);
+			int ret  = ::ioctl(fd, VIDIOC_QUERYCAP, &cap);
+			::close(fd);
+			if (ret == -1)
+				continue;
+			if (!(cap.device_caps & V4L2_CAP_VIDEO_CAPTURE))
+				continue;
+			d.index = index++;
+
+			result << d;
+		}
+	}
+#endif
+	return result;
+}
+
+bool VideoDevice::AccelerationBuiltIn(VideoAcceleration acceleration, bool encoding)
+{
+	// The device type a decoder has to support to be driven through this
+	// acceleration; none for one that has no decoding side.
+	AVHWDeviceType deviceType = AV_HWDEVICE_TYPE_NONE;
+
+	switch (acceleration)
+	{
+	case VideoAccelerationVaapi:
+		deviceType = AV_HWDEVICE_TYPE_VAAPI;
+		break;
+#ifdef HAVE_D3D12VA
+	case VideoAccelerationD3d12va:
+		deviceType = AV_HWDEVICE_TYPE_D3D12VA;
+		break;
+#endif
+	case VideoAccelerationD3d11va:
+		deviceType = AV_HWDEVICE_TYPE_D3D11VA;
+		break;
+	case VideoAccelerationDxva2:
+		deviceType = AV_HWDEVICE_TYPE_DXVA2;
+		break;
+	default:
+		break;
+	}
+
+	for (unsigned int i = 0; i < sizeof(kVideoEncoders) / sizeof(kVideoEncoders[0]); i++)
+	{
+		if (encoding)
+		{
+			const char *name = nullptr;
+
+			if (acceleration == VideoAccelerationVaapi)
+				name = kVideoEncoders[i].vaapiEncoder;
+			else if (acceleration == VideoAccelerationD3d12va)
+				name = kVideoEncoders[i].d3d12vaEncoder;
+			else if (acceleration == VideoAccelerationMediaFoundation)
+				name = kVideoEncoders[i].mediaFoundationEncoder;
+
+			if (name && avcodec_find_encoder_by_name(name))
+				return true;
+
+			continue;
+		}
+
+		if (deviceType == AV_HWDEVICE_TYPE_NONE)
+			return false;
+
+		// A decoder lists a hardware configuration for each hwaccel compiled
+		// in for it, and a hwaccel is only compiled in along with the
+		// hardware context it needs - so finding one here answers for both.
+		const AVCodec *dec = avcodec_find_decoder(kVideoEncoders[i].id);
+
+		for (int c = 0; dec; c++)
+		{
+			const AVCodecHWConfig *config = avcodec_get_hw_config(dec, c);
+
+			if (!config)
+				break;
+
+			if (config->device_type == deviceType &&
+			    (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+QString VideoDevice::PlatformDriverName()
+{
+#if defined(Q_OS_LINUX)
+	return QStringLiteral("v4l2");
+#elif defined(Q_OS_MACOS) || defined(Q_OS_MAC)
+	return QStringLiteral("avfoundation");
+#elif defined(Q_OS_WIN)
+	return QStringLiteral("dshow");
+#else
+	return QStringLiteral("v4l2");
+#endif
+}

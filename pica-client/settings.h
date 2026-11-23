@@ -24,7 +24,8 @@
 class Settings
 {
 public:
-	Settings(QString storage);
+	// See Nodes::Nodes() for what connectionName selects and why.
+	Settings(QString storage, QString connectionName = QString());
 
 	QVariant loadValue(QString name, QVariant defval);
 	void storeValue(QString name, QString val);

@@ -19,12 +19,17 @@
 
 #include "nodes.h"
 #include "../PICA_client.h"
+#include "../PICA_media.h"
 #include "../PICA_proto.h"
 #include "accounts.h"
+#include "directlistener.h"
+#include "directc2csettings.h"
 #include <QObject>
+#include <QThread>
 #include <QMap>
 #include <QVector>
 #include <QPair>
+#include <QSet>
 
 
 class SkyNet : public QObject
@@ -32,9 +37,12 @@ class SkyNet : public QObject
 	Q_OBJECT
 public:
 	SkyNet();
-	void Join(Accounts::AccountRecord &accrec);
-	bool isSelfAware();
+	~SkyNet();
+	void Join(const Accounts::AccountRecord &accrec);
 	void Exit();
+	// Reads the direct connection settings again, after the settings dialog
+	// stored them: starts, restarts or stops the listener as they say.
+	void ApplyDirectC2CSettings();
 
 	void SendMessage(QByteArray to, QString msg);
 	void SendFile(QByteArray to, QString filepath);
@@ -44,10 +52,16 @@ public:
 	void ResumeFile(QByteArray peer_id, bool resume_sending);
 	void CancelFile(QByteArray peer_id, bool cancel_sending);
 
-	Accounts::AccountRecord CurrentAccount()
-	{
-		return skynet_account;
-	};
+	void StartCall(QByteArray to);
+	void AcceptCall(QByteArray from);
+	void RejectCall(QByteArray from);
+	void HangupCall(QByteArray with);
+
+	void SendAudioParams(QByteArray to, QString codec, quint16 sample_rate);
+	void SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void SendVideoParams(QByteArray to, QString codec, quint16 width, quint16 height);
+	void SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 signals:
 	void MessageReceived(QByteArray from, QString msg);
@@ -78,15 +92,50 @@ signals:
 
 	void c2cClosed(QByteArray peer_id);
 
+	void CallFailed(QByteArray peer_id, QString reason);
+	void IncomingCall(QByteArray from);
+	void CallAccepted(QByteArray by);
+	void CallRejected(QByteArray by);
+	void CallHungup(QByteArray by);
+
+	void IncomingAudioParams(QByteArray peer_id, QString codec, quint16 sample_rate);
+	void IncomingAudioPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void IncomingVideoParams(QByteArray peer_id, QString codec, quint16 width, quint16 height);
+	void IncomingVideoPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	/** The media packets of the call started or stopped being carried over a
+	 *  direct UDP (mediac2c) connection. max_payload is the largest amount of
+	 *  data one media packet can carry from now on.
+	 */
+	void CallMediaTransportChanged(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload);
 private:
-	Nodes nodes;
+	// Constructed in init(), once this SkyNet instance is running on its
+	// own network thread and that thread's dedicated QSqlDatabase
+	// connection has been opened - see init() in skynet.cpp.
+	Nodes *nodes;
 	QList<QPair<struct PICA_c2n *, Nodes::NodeRecord> > connecting_nodes;
 	QList<struct PICA_c2n *> connected_nodes_to_close;
 	bool self_aware;
+	bool call_waiting_c2c_connect;
+	QByteArray call_waiting_to;
 	QString status;
 	struct PICA_c2n *active_nodelink;
 	struct PICA_acc *acc;
 	struct PICA_listener *listener;
+	// Opens the listener and looks after its UPnP mapping on a thread of its
+	// own, see directlistener.h. The listener is waited for before the nodes
+	// are connected to, so that the first 0x0B messages already carry the
+	// external address.
+	DirectListener *direct_listener;
+	QThread direct_listener_thread;
+	bool listener_setup_pending;
+	bool listener_failed;
+	// the settings the listener was, or is being, set up for
+	DirectC2CSettings listener_cfg;
+	// do_Join() waits for the listener to be set up; cleared by Exit(), so
+	// that a listener arriving late does not bring the client back online
+	bool join_deferred;
 	Accounts::AccountRecord skynet_account;
 
 	QMap<QByteArray, QList<QString> > msgqueues;
@@ -96,6 +145,7 @@ private:
 	int event_loop_timer_id;
 	int file_transfer_timer_id;
 	int c2c_reconnect_timer_id;
+	int call_timer_id;
 
 	void timerEvent(QTimerEvent * e);
 
@@ -106,10 +156,28 @@ private:
 	struct PICA_c2c *find_active_chan(QByteArray peer_id);
 	QList<QByteArray> filter_existing_chans(QList<QByteArray> peer_ids);
 	bool open_account();
-	void active_filetransfers_up();
-	void active_filetransfers_down();
+	void active_filetransfers_up(QByteArray peer, bool sending);
+	void active_filetransfers_down(QByteArray peer, bool sending);
 	void active_filetransfers_reset();
 	quint32 active_filetransfers;
+	// Peers whose incoming/outgoing transfer currently contributes to
+	// active_filetransfers. Membership makes up()/down() idempotent, so a
+	// down() for a transfer that was never counted (a cancel of an offer still
+	// awaiting acceptance, or a cancel after a pause) cannot underflow the
+	// counter and leave the zero-interval timer running forever.
+	QSet<QByteArray> counted_ft_in;
+	QSet<QByteArray> counted_ft_out;
+
+	/* Only one call can be in progress at a time, so this is a flag and not
+	 * a counter like active_filetransfers.
+	 */
+	void call_active_set(bool active, QByteArray peer);
+	bool call_active;
+	QByteArray call_active_peer;
+
+	void continue_start_call();
+	// check if there is a call waiting to be initiated with peer_id
+	bool is_call_waiting_for(const QByteArray &peer_id);
 
 	void emit_MessageReceived(QByteArray from, QString msg);
 	void emit_UnableToDeliver(QByteArray to, QString msg);
@@ -136,17 +204,30 @@ private:
 	void emit_c2cClosed(QByteArray peer_id);
 	void emit_ConnectionStatusUpdated(QByteArray peer_id, QString status);
 
-	//получение сообщения.
+	void emit_CallFailed(QByteArray peer_id, QString reason);
+	void emit_IncomingCall(QByteArray from);
+	void emit_CallAccepted(QByteArray by);
+	void emit_CallRejected(QByteArray by);
+	void emit_CallHungup(QByteArray by);
+
+	void emit_IncomingAudioParams(QByteArray peer_id, QString codec, quint16 sample_rate);
+	void emit_IncomingAudioPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void emit_IncomingVideoParams(QByteArray peer_id, QString codec, quint16 width, quint16 height);
+	void emit_IncomingVideoPacket(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void emit_CallMediaTransportChanged(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload);
+
 	static void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type);
-	//получение подтверждения о доставке сообщения
+
 	static void msgok_cb(const unsigned char *peer_id);
-	//создание канала с собеседником
+
 	static void c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename);
-	//создать канал не удалось
+
 	static void c2c_failed(const unsigned char *peer_id);
-	//входящий запрос на создание канала от пользователя с номером caller_id
+
 	static int accept_cb(const unsigned char *caller_id);
-	//запрошенный пользователь не найден, в оффлайне или отказался от общения
+
 	static void notfound_cb(const unsigned char *callee_id);
 
 	static void c2c_closed_cb(const unsigned char *peer_id, int reason);
@@ -179,6 +260,36 @@ private:
 
 	static void direct_c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename);
 
+	static void incoming_call_cb(const unsigned char *peer_id);
+
+	static void call_picked_up_cb(const unsigned char *peer_id);
+
+	static void call_rejected_cb(const unsigned char *peer_id);
+
+	static void call_hangup_cb(const unsigned char *peer_id);
+
+	static void call_audio_params_cb(const unsigned char *peer_id, const char *codec, uint16_t sample_rate);
+
+	static void call_video_params_cb(const unsigned char *peer_id, const char *codec, uint16_t width, uint16_t height);
+
+	static void call_audio_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
+
+	static void call_video_packet_cb(const unsigned char *peer_id, uint16_t seq_num, uint32_t timestamp, uint16_t size, const char *pkt_data);
+
+	static void call_media_transport_cb(const unsigned char *peer_id, int transport, const char *ciphersuitename, unsigned int max_payload);
+
+	bool online() const;
+	// Closes a listener that dcs no longer want and, with start set, begins
+	// setting up the one they do. Returns whether a listener is being set
+	// up, i.e. there will be one to wait for.
+	bool sync_listener(const DirectC2CSettings &dcs, bool start);
+	void start_listener_setup(const DirectC2CSettings &dcs);
+	void drop_listener();
+	// what the node connections are told: connect-only while there is no
+	// listener for incoming connections
+	PICA_directc2c_config effective_directc2c_config(int state) const;
+	void set_nodelinks_directc2c(int state);
+
 private slots:
 	void nodelink_activated(PICA_c2n *c2n);
 	void nodelink_closed(PICA_c2n *c2n, int error);
@@ -186,7 +297,56 @@ private slots:
 	void multilogin_event(quint64 timestamp, QString node_addr, quint16 node_port);
 
 	void node_status_changed(Nodes::NodeRecord nr, bool alive);
+
+	void listener_ready(quintptr l, QString upnp_addr, int upnp_port);
+	void listener_upnp_changed(QString upnp_addr, int upnp_port);
+	void listener_status_msg(QString msg, bool is_critical);
 	void verify_peer_cert(QByteArray peer_id, QString cert_pem, bool *verified);
+
+	// Connected to the network thread's QThread::started() signal. Runs
+	// once, on the network thread itself, right before that thread's
+	// event loop starts. Anything that needs to be tied to the network
+	// thread rather than whatever thread constructed this SkyNet
+	// instance - the event-loop timers and this object's own QSqlDatabase
+	// connection - is set up here instead of in the constructor.
+	void init();
+
+	// QObject::moveToThread() only succeeds when called from the thread
+	// the object is currently affiliated with - it cannot be "pulled" in
+	// from a different thread. So reclaiming this object for the main
+	// thread at shutdown has to happen via a call executed here, on the
+	// network thread itself (see main.cpp, invoked with
+	// Qt::BlockingQueuedConnection before the network thread is stopped),
+	// rather than by calling moveToThread() directly from main().
+	void moveBackToMainThread();
+
+	// Actual implementations behind the public action methods below.
+	// The public methods only forward here via QMetaObject::invokeMethod()
+	// with Qt::AutoConnection, so callers on any thread are automatically
+	// marshaled onto whichever thread this SkyNet instance lives on -
+	// direct call if already on that thread, queued otherwise.
+	void do_Join(const Accounts::AccountRecord &accrec);
+	void do_Exit();
+	void do_ApplyDirectC2CSettings();
+
+	void do_SendMessage(QByteArray to, QString msg);
+	void do_SendFile(QByteArray to, QString filepath);
+	void do_AcceptFile(QByteArray from, QString filepath);
+	void do_DenyFile(QByteArray from);
+	void do_PauseFile(QByteArray peer_id, bool pause_sending);
+	void do_ResumeFile(QByteArray peer_id, bool resume_sending);
+	void do_CancelFile(QByteArray peer_id, bool cancel_sending);
+
+	void do_StartCall(QByteArray to);
+	void do_AcceptCall(QByteArray from);
+	void do_RejectCall(QByteArray from);
+	void do_HangupCall(QByteArray with);
+
+	void do_SendAudioParams(QByteArray to, QString codec, quint16 sample_rate);
+	void do_SendAudioPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
+
+	void do_SendVideoParams(QByteArray to, QString codec, quint16 width, quint16 height);
+	void do_SendVideoPacket(QByteArray to, quint16 seq_num, quint32 timestamp, QByteArray data);
 
 };
 

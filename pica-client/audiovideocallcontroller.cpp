@@ -1,0 +1,785 @@
+/*
+	(c) Copyright  2012 - 2018 Anton Sviridenko
+	https://picapica.im
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, version 3.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+#include "audiovideocallcontroller.h"
+#include "globals.h"
+#include "skynet.h"
+#include "settings.h"
+#include "callsettings.h"
+#include "accounts.h"
+#include <QByteArray>
+#include <QDebug>
+#include <QMetaObject>
+
+
+AudioVideoCallController::AudioVideoCallController(QObject *parent)
+ : QObject(parent), callwindow(0), ringdevice(0), m_state(CallIdle),
+   m_audioPlaybackStarted(false), m_videoPlaybackStarted(false),
+   m_audioSeq(0),
+   m_videoSeq(0), m_videoFrameTimestamp(0), m_videoFrameStarted(false),
+   m_requestedFrameRate(0)
+{
+	connect(skynet, SIGNAL(IncomingCall(QByteArray)), this, SLOT(call_from(QByteArray)));
+	connect(skynet, SIGNAL(CallFailed(QByteArray,QString)), this, SLOT(call_failed(QByteArray,QString)));
+	connect(skynet, SIGNAL(CallAccepted(QByteArray)), this, SLOT(call_accepted(QByteArray)));
+	connect(skynet, SIGNAL(CallRejected(QByteArray)), this, SLOT(call_rejected(QByteArray)));
+	connect(skynet, SIGNAL(CallHungup(QByteArray)), this, SLOT(call_hungup(QByteArray)));
+	connect(skynet, SIGNAL(c2cClosed(QByteArray)), this, SLOT(peer_disconnected(QByteArray)));
+
+	// setEchoCanceller() is invoked through the audio threads' event queues
+	qRegisterMetaType<EchoCancellerPtr>("EchoCancellerPtr");
+
+	connect(skynet, SIGNAL(IncomingAudioParams(QByteArray,QString,quint16)), this, SLOT(incoming_audio_params(QByteArray,QString,quint16)));
+	connect(skynet, SIGNAL(IncomingAudioPacket(QByteArray,quint16,quint32,QByteArray)), this, SLOT(incoming_audio_packet(QByteArray,quint16,quint32,QByteArray)));
+
+	connect(skynet, SIGNAL(IncomingVideoParams(QByteArray,QString,quint16,quint16)), this, SLOT(incoming_video_params(QByteArray,QString,quint16,quint16)));
+	connect(skynet, SIGNAL(IncomingVideoPacket(QByteArray,quint16,quint32,QByteArray)), this, SLOT(incoming_video_packet(QByteArray,quint16,quint32,QByteArray)));
+
+	connect(skynet, SIGNAL(CallMediaTransportChanged(QByteArray,bool,QString,quint32)), this, SLOT(media_transport_changed(QByteArray,bool,QString,quint32)));
+
+	// Earpiece tones (ringback/busy/unreachable) and the incoming call bell
+	// are played by two TonePlayer instances, each living on its own
+	// QThread since TonePlayer::play() blocks the calling thread for the
+	// duration of the tone sequence.
+	toneplayer = new TonePlayer();
+	toneplayer->moveToThread(&toneplayer_thread);
+	toneplayer_thread.start();
+
+	ringtoneplayer = new TonePlayer();
+	ringtoneplayer->moveToThread(&ringtoneplayer_thread);
+	ringtoneplayer_thread.start();
+
+	// Mic capture+encode and remote-audio decode+playback - same
+	// one-object-per-thread pattern as the tone players above, since
+	// AudioDevice::Capture()/Play() block their thread for the call's
+	// duration too.
+	microphone = new AudioDevice();
+	microphone->moveToThread(&microphone_thread);
+	connect(microphone, SIGNAL(packetReady(QByteArray)), this, SLOT(send_audio_packet(QByteArray)));
+
+	// Queued rather than direct: this crosses from the capture thread, and
+	// warn_capture_clipping() only logs today but is where a UI notice would
+	// go.
+	connect(microphone, SIGNAL(captureClipping(double,double)), this,
+	        SLOT(capture_clipping(double,double)), Qt::QueuedConnection);
+	microphone_thread.start();
+
+	output = new AudioDevice();
+	output->moveToThread(&output_thread);
+	output_thread.start();
+
+	// Camera capture+encode and remote video decode - same arrangement as
+	// the audio devices above.
+	cam = new VideoDevice();
+	cam->moveToThread(&cam_thread);
+	connect(cam, SIGNAL(captureStarted(QString,int,int,double)), this, SLOT(video_capture_started(QString,int,int,double)));
+	connect(cam, SIGNAL(packetReady(QByteArray,bool)), this, SLOT(send_video_packet(QByteArray,bool)));
+	cam_thread.start();
+
+	remotevideo = new VideoDevice();
+	remotevideo->moveToThread(&remotevideo_thread);
+	remotevideo_thread.start();
+}
+
+AudioVideoCallController::~AudioVideoCallController()
+{
+	stopTones();
+	stopAudioPipeline();
+	stopVideoPipeline();
+
+	toneplayer_thread.quit();
+	toneplayer_thread.wait();
+	delete toneplayer;
+
+	ringtoneplayer_thread.quit();
+	ringtoneplayer_thread.wait();
+	delete ringtoneplayer;
+
+	microphone_thread.quit();
+	microphone_thread.wait();
+	delete microphone;
+
+	output_thread.quit();
+	output_thread.wait();
+	delete output;
+
+	cam_thread.quit();
+	cam_thread.wait();
+	delete cam;
+
+	remotevideo_thread.quit();
+	remotevideo_thread.wait();
+	delete remotevideo;
+}
+
+void AudioVideoCallController::playEarpieceTone(void (TonePlayer::*tone)())
+{
+	Settings st(config_dbname);
+	QString dev = st.loadValue("audio.playback_device", "default").toString();
+
+	toneplayer->stop();
+	QMetaObject::invokeMethod(toneplayer, "setDeviceName", Qt::QueuedConnection, Q_ARG(QString, dev));
+	if (tone == &TonePlayer::playCallInProgress)
+		QMetaObject::invokeMethod(toneplayer, "playCallInProgress", Qt::QueuedConnection);
+	else if (tone == &TonePlayer::playUnreachable)
+		QMetaObject::invokeMethod(toneplayer, "playUnreachable", Qt::QueuedConnection);
+	else if (tone == &TonePlayer::playBusy)
+		QMetaObject::invokeMethod(toneplayer, "playBusy", Qt::QueuedConnection);
+}
+
+void AudioVideoCallController::playRingTone()
+{
+	Settings st(config_dbname);
+	QString dev = st.loadValue("audio.ring_device", "default").toString();
+
+	ringtoneplayer->stop();
+	QMetaObject::invokeMethod(ringtoneplayer, "setDeviceName", Qt::QueuedConnection, Q_ARG(QString, dev));
+	QMetaObject::invokeMethod(ringtoneplayer, "playClassicRingtone", Qt::QueuedConnection);
+}
+
+void AudioVideoCallController::stopTones()
+{
+	toneplayer->stop();
+	ringtoneplayer->stop();
+}
+
+void AudioVideoCallController::startAudioPipeline()
+{
+	Settings st(config_dbname);
+	QString capDev = st.loadValue("audio.capture_device", "default").toString();
+	const CallSettings cs = CallSettings::load();
+
+	// What we capture and encode at, announced to the peer in the 0x74
+	// message. It follows from the codec - see callAudioSampleRate().
+	//
+	// The playback direction is NOT this: it follows whatever the peer
+	// announces in its own 0x74 (see incoming_audio_params()), so a call with
+	// a peer that picked a different codec or rate keeps working.
+	const int sampleRate = callAudioSampleRate(cs.audioCodec);
+
+	// G.722 and A-law spend a fixed number of bits per sample and have no rate
+	// to ask for; the setting only means anything to Opus.
+	const int bitrate = callAudioBitrateAdjustable(cs.audioCodec)
+	                    ? cs.audioBitrateKbps * 1000
+	                    : 0;
+
+	m_audioSeq = 0;
+	m_callClock.start();
+	m_audioPlaybackStarted = false;
+
+	// Before anything is queued for them - see MediaCallSession. output is
+	// opened here as well, although it is only started once the peer's 0x74
+	// arrives.
+	microphone->openSession(m_caller_id, m_callee_id);
+	output->openSession(m_caller_id, m_callee_id);
+
+	// One canceller for the call, shared by both directions: the playback
+	// side feeds it what it is about to play, the capture side subtracts the
+	// echo of that from the microphone. Ownership is shared because
+	// stopAudioPipeline() does not join either thread, so this has to outlive
+	// whichever of them returns last.
+	//
+	// Only for EchoCancellationOwn. The other two settings mean something
+	// below us is doing the job or nobody is, and either way running this as
+	// well would only take a second bite out of the speech - the devices are
+	// opened accordingly, see AudioDevice::captureNative().
+	//
+	// Built at the rate the codec runs at rather than at a fixed one, so that
+	// choosing a codec does not quietly switch cancellation off: the capture
+	// side drops a canceller whose rate does not match its own.
+	if (AudioDevice::EchoCancellation() == EchoCancellationOwn)
+		m_echoCanceller = EchoCancellerPtr(new EchoCanceller(sampleRate));
+	else
+		m_echoCanceller.clear();
+
+	if (m_echoCanceller && !m_echoCanceller->isValid())
+		m_echoCanceller.clear();
+
+	// Queued like the calls that start the loops, and ahead of them: the
+	// loops of the previous call may still be on their way out, and they read
+	// the canceller they were given on their own threads.
+	QMetaObject::invokeMethod(microphone, "setEchoCanceller", Qt::QueuedConnection,
+	                           Q_ARG(EchoCancellerPtr, m_echoCanceller));
+	QMetaObject::invokeMethod(output, "setEchoCanceller", Qt::QueuedConnection,
+	                           Q_ARG(EchoCancellerPtr, m_echoCanceller));
+
+	// Declare our outgoing codec to the peer, then start capturing and
+	// encoding right away - the peer's decoder is only ready once it has
+	// processed this 0x74 message, but since the call is carried over TCP,
+	// packets sent immediately after are guaranteed to arrive after it.
+	skynet->SendAudioParams(m_peer_id, cs.audioCodec, (quint16)sampleRate);
+
+	QMetaObject::invokeMethod(microphone, "configureCapture", Qt::QueuedConnection,
+	                           Q_ARG(QString, capDev), Q_ARG(QString, cs.audioCodec),
+	                           Q_ARG(int, sampleRate), Q_ARG(int, bitrate),
+	                           Q_ARG(QByteArray, m_caller_id), Q_ARG(QByteArray, m_callee_id));
+	QMetaObject::invokeMethod(microphone, "Capture", Qt::QueuedConnection);
+
+	// output is configured lazily, once the peer's own 0x74 (see
+	// incoming_audio_params()) tells us what codec/rate it is sending.
+}
+
+void AudioVideoCallController::stopAudioPipeline()
+{
+	// Close() only touches a QAtomicInt and wakes a QWaitCondition, both
+	// safe to reach from any thread - it must be called directly rather
+	// than via invokeMethod()/QueuedConnection: microphone/output's own
+	// thread is blocked inside Capture()/Play() for the call's duration,
+	// so its event loop cannot deliver a queued call back to itself until
+	// that blocking call returns - which is exactly what Close() is
+	// supposed to make happen. Routing it through the event queue would
+	// deadlock (the thread would never quit, and the app would hang on
+	// exit after a call).
+	microphone->Close();
+	output->Close();
+
+	// Drop our reference. The two audio threads still hold theirs until they
+	// come out of Capture()/Play(), and the canceller goes away with the last
+	// of them.
+	m_echoCanceller.clear();
+}
+
+void AudioVideoCallController::startVideoPipeline()
+{
+	Settings st(config_dbname);
+	QString camDev = st.loadValue("video.capture_device", QString()).toString();
+	const CallSettings cs = CallSettings::load();
+
+	// Before anything is queued for them - see MediaCallSession. And before
+	// the check for a camera below: remotevideo does not depend on having one.
+	m_videoPlaybackStarted = false;
+	cam->openSession(m_caller_id, m_callee_id);
+	remotevideo->openSession(m_caller_id, m_callee_id);
+
+	// Unlike the audio devices, which fall back to the platform's "default"
+	// device, there is no such name for cameras - so with nothing configured
+	// yet (the setting is only written once the settings dialog has been
+	// visited) pick the first camera found.
+	if (camDev.isEmpty())
+	{
+		VideoDevice enumerator;
+		QList<MediaDeviceInfo> cams = enumerator.Enumerate(CAPTURE);
+
+		if (!cams.isEmpty())
+			camDev = cams.first().device;
+	}
+
+	// No camera at all - the call simply carries no outgoing video. Incoming
+	// video is unaffected, it only depends on what the peer sends.
+	if (camDev.isEmpty())
+		return;
+
+	m_videoSeq = 0;
+	m_videoFrameTimestamp = 0;
+	m_videoFrameStarted = false;
+
+	// Datagram sized from the start, even though the call begins on the c2c
+	// connection where a 0x77 message could hold far more: a media connection
+	// may come up at any moment during the call, and frames whose fragments
+	// were cut before that would not fit into a datagram. Over TCP this only
+	// costs a few more message headers.
+	cam->setMaxFragmentSize(PICA_MEDIA_SAFE_PAYLOAD);
+
+	bool preferCompressed = st.loadValue("video.prefer_compressed", 0).toBool();
+
+	// Kept so that video_capture_started() can tell whether the camera
+	// honoured it, which is not something the camera reports.
+	m_requestedFrameRate = cs.captureFrameRate;
+
+	// The peer is told what we are sending only once the camera is open and
+	// the format is settled - with a compressed camera stream being forwarded
+	// as-is, the codec is the camera's choice, not ours (see
+	// video_capture_started()).
+	QMetaObject::invokeMethod(cam, "configureCapture", Qt::QueuedConnection,
+	                           Q_ARG(QString, camDev),
+	                           Q_ARG(int, cs.captureWidth), Q_ARG(int, cs.captureHeight),
+	                           Q_ARG(int, cs.captureFrameRate),
+	                           Q_ARG(bool, preferCompressed),
+	                           Q_ARG(QString, cs.videoCodec), Q_ARG(int, cs.videoBitrateKbps * 1000),
+	                           Q_ARG(int, cs.videoEncodingAcceleration),
+	                           Q_ARG(QByteArray, m_caller_id), Q_ARG(QByteArray, m_callee_id));
+	QMetaObject::invokeMethod(cam, "Capture", Qt::QueuedConnection);
+
+	// remotevideo is configured lazily, once the peer's own 0x75 (see
+	// incoming_video_params()) tells us what it is sending.
+}
+
+void AudioVideoCallController::stopVideoPipeline()
+{
+	// Direct calls, for the same reason stopAudioPipeline() uses them.
+	cam->Close();
+	remotevideo->Close();
+
+	m_videoAssembler.reset();
+}
+
+void AudioVideoCallController::finishCall(bool notify_peer)
+{
+	const CallState state = m_state;
+
+	m_state = CallIdle;
+
+	stopTones();
+	stopAudioPipeline();
+	stopVideoPipeline();
+
+	if (!notify_peer)
+		return;
+
+	if (state == CallDialing || state == CallActive)
+		skynet->HangupCall(m_peer_id);
+	else if (state == CallRinging)
+		skynet->RejectCall(m_peer_id);
+}
+
+void AudioVideoCallController::call_failed(QByteArray peer_id, QString reason)
+{
+	qDebug() << "Call failed: " << reason << "\n";
+
+	/* Only starting a call and answering one can fail in a way that matters
+	   here; anything else arrives when the call is already over. */
+	if (peer_id != m_peer_id || (m_state != CallDialing && m_state != CallActive))
+		return;
+
+	const bool was_active = (m_state == CallActive);
+
+	finishCall(false);
+
+	/* After a failed attempt to call the window is left as it is, so that
+	   "Call" can be pressed again. */
+	if (was_active && callwindow)
+		callwindow->call_ended();
+
+	/* play unreachable */
+	playEarpieceTone(&TonePlayer::playUnreachable);
+}
+
+void AudioVideoCallController::call_accepted(QByteArray peer_id)
+{
+	/* SkyNet lives in its own thread, so this signal is queued: by the time
+	   it is delivered the local side may have already hung up and closed the
+	   call window, or moved on to a different peer entirely. Either way the
+	   call it refers to is gone - do not bring the audio pipeline up for it. */
+	if (peer_id != m_peer_id || m_state != CallDialing || !callwindow)
+		return;
+
+	stopTones();
+	m_state = CallActive;
+	callwindow->call_started();
+	startAudioPipeline();
+	startVideoPipeline();
+}
+
+void AudioVideoCallController::call_rejected(QByteArray peer_id)
+{
+	if (peer_id != m_peer_id || m_state != CallDialing)
+		return;
+
+	finishCall(false);
+
+	/* play busy tone */
+	playEarpieceTone(&TonePlayer::playBusy);
+}
+
+void AudioVideoCallController::call_hungup(QByteArray peer_id)
+{
+	/* queued from the SkyNet thread - the call may already be over here */
+	if (peer_id != m_peer_id || m_state == CallIdle)
+		return;
+
+	const bool was_ringing = (m_state == CallRinging);
+
+	finishCall(false);
+
+	if (was_ringing)
+	{
+		/* The caller gave up before the call was answered. Nothing is left
+		   for the window to offer. */
+		if (callwindow)
+			callwindow->close();
+
+		return;
+	}
+
+	if (callwindow)
+		callwindow->call_ended();
+
+	/* play busy tone */
+	playEarpieceTone(&TonePlayer::playBusy);
+}
+
+void AudioVideoCallController::peer_disconnected(QByteArray peer_id)
+{
+	if (peer_id != m_peer_id || m_state == CallIdle)
+		return;
+
+	if (m_state == CallDialing)
+	{
+		finishCall(false);
+		playEarpieceTone(&TonePlayer::playUnreachable);
+		return;
+	}
+
+	/* No hangup message is going to come over a connection that is gone, and
+	   for the call it amounts to the same thing. */
+	call_hungup(peer_id);
+}
+
+void AudioVideoCallController::start_call(QByteArray peer_id)
+{
+	if (callwindow)
+	{
+		callwindow->show();
+
+		/* one call at a time, and this one is not over yet */
+		if (m_state != CallIdle)
+		{
+			callwindow->raise();
+			return;
+		}
+
+		/* re-create callwindow for a new call */
+		callwindow->close();
+	}
+
+	m_peer_id = peer_id;
+	m_caller_id = Accounts::GetCurrentAccount().id;
+	m_callee_id = peer_id;
+	callwindow = new CallWindow(peer_id, false);
+	connect(callwindow, SIGNAL(start_call_pressed()), this, SLOT(initiate_call()));
+	connect(callwindow, SIGNAL(hang_call_pressed()), this, SLOT(end_call()));
+	connect(callwindow, SIGNAL(callwindow_closed(CallWindow*)), this, SLOT(callwindow_closed(CallWindow*)));
+	/* decoded frames arrive from remotevideo's thread, so this is a queued
+	   connection; it dies with the window, which is deleted on close */
+	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
+	connect(callwindow, SIGNAL(video_area_changed(QSize)), this, SLOT(video_area_changed(QSize)));
+#ifdef HAVE_VAAPI
+	connect(remotevideo, SIGNAL(hwFrameReady(AVFramePtr)), callwindow, SLOT(showRemoteHwFrame(AVFramePtr)));
+	connect(callwindow, SIGNAL(video_rendering_failed()), this, SLOT(video_rendering_failed()));
+#endif
+	callwindow->show();
+}
+
+void AudioVideoCallController::call_from(QByteArray peer_id)
+{
+	/* One call at a time: busy. The peer hears the busy tone and our own call
+	   is not disturbed. */
+	if (m_state != CallIdle)
+	{
+		skynet->RejectCall(peer_id);
+		return;
+	}
+
+	/* A window left open with no call in it - one where "Call" has not been
+	   pressed, or whose call is over - gives way to the incoming call. */
+	if (callwindow)
+		callwindow->close();
+
+	m_state = CallRinging;
+	m_peer_id = peer_id;
+	m_caller_id = peer_id;
+	m_callee_id = Accounts::GetCurrentAccount().id;
+	callwindow = new CallWindow(peer_id, true);
+	connect(callwindow, SIGNAL(accept_call_pressed()), this, SLOT(accept_call()));
+	connect(callwindow, SIGNAL(hang_call_pressed()), this, SLOT(end_call()));
+	connect(callwindow, SIGNAL(callwindow_closed(CallWindow*)), this, SLOT(callwindow_closed(CallWindow*)));
+	/* see the same connections in start_call() */
+	connect(remotevideo, SIGNAL(frameReady(QImage)), callwindow, SLOT(showRemoteFrame(QImage)));
+	connect(callwindow, SIGNAL(video_area_changed(QSize)), this, SLOT(video_area_changed(QSize)));
+#ifdef HAVE_VAAPI
+	connect(remotevideo, SIGNAL(hwFrameReady(AVFramePtr)), callwindow, SLOT(showRemoteHwFrame(AVFramePtr)));
+	connect(callwindow, SIGNAL(video_rendering_failed()), this, SLOT(video_rendering_failed()));
+#endif
+	callwindow->show();
+
+	/* play ring tone */
+	playRingTone();
+}
+
+void AudioVideoCallController::initiate_call()
+{
+	/* "Call" pressed again while the first press is still ringing */
+	if (m_state != CallIdle)
+		return;
+
+	m_state = CallDialing;
+	skynet->StartCall(m_peer_id);
+	/* play ringing tone */
+	playEarpieceTone(&TonePlayer::playCallInProgress);
+}
+
+void AudioVideoCallController::accept_call()
+{
+	if (m_state != CallRinging)
+		return;
+
+	stopTones();
+	skynet->AcceptCall(m_peer_id);
+	m_state = CallActive;
+	callwindow->call_started();
+	startAudioPipeline();
+	startVideoPipeline();
+}
+
+void AudioVideoCallController::end_call()
+{
+	/* the call ends with its window, see callwindow_closed() */
+	if (callwindow)
+		callwindow->close();
+}
+
+void AudioVideoCallController::callwindow_closed(CallWindow *sender_window)
+{
+	if (sender_window != callwindow)
+		return;
+
+	/* However the window got closed - "Hang Up", its close button, or being
+	   replaced for a new call - whatever call was in it goes with it. */
+	finishCall(true);
+	callwindow = 0;
+}
+
+void AudioVideoCallController::send_audio_packet(QByteArray data)
+{
+	if (m_state != CallActive)
+		return;
+
+	quint16 seq = m_audioSeq++;
+	quint32 timestamp = (quint32)m_callClock.elapsed();
+
+	skynet->SendAudioPacket(m_peer_id, seq, timestamp, data);
+}
+
+// Rate limited by AudioDevice, which reports at most once every couple of
+// seconds of audio, so this can log unconditionally.
+//
+// Only a warning, and deliberately: clipping happens in the converter, before
+// anything here sees a sample, so nothing in this process can undo it. The
+// fix is less gain ahead of the ADC, which is the capture device's own mixer
+// control and the user's to set.
+void AudioVideoCallController::capture_clipping(double pinnedPercent, double peakDb)
+{
+	qWarning("Microphone is clipping: %.2f%% of samples at full scale, peak %.1f dBFS - "
+	         "turn the recording level down, it distorts the speech and stops the echo "
+	         "canceller converging",
+	         pinnedPercent, peakDb);
+}
+
+
+void AudioVideoCallController::incoming_audio_params(QByteArray peer_id, QString codec, quint16 sample_rate)
+{
+	if (m_state != CallActive || peer_id != m_peer_id)
+		return;
+
+	// The codec name is peer-supplied and would otherwise be handed straight
+	// to the FFmpeg decoder - accept only the ones the client itself sends.
+	if (!callAudioCodecAccepted(codec))
+	{
+		qWarning() << "rejecting unsupported call audio codec from peer:" << codec;
+		return;
+	}
+
+	Settings st(config_dbname);
+	QString playDev = st.loadValue("audio.playback_device", "default").toString();
+
+	if (!m_audioPlaybackStarted)
+	{
+		m_audioPlaybackStarted = true;
+		QMetaObject::invokeMethod(output, "configurePlayback", Qt::QueuedConnection,
+		                           Q_ARG(QString, playDev), Q_ARG(QString, codec), Q_ARG(int, (int)sample_rate),
+		                           Q_ARG(QByteArray, m_caller_id), Q_ARG(QByteArray, m_callee_id));
+	}
+	else
+	{
+		// The peer changed what it is sending in the middle of the call.
+		// Direct call, not invokeMethod()/QueuedConnection - see the comment
+		// in stopAudioPipeline(): output's thread is blocked inside Play(),
+		// which starts over with the new parameters.
+		output->changePlayback(playDev, codec, (int)sample_rate);
+	}
+
+	// Queued in both cases. If Play() is running, this one only gets its turn
+	// when the call is over and returns at once; but if Play() has given up -
+	// on a codec that would not open, say - this is what starts it again for
+	// the new parameters.
+	QMetaObject::invokeMethod(output, "Play", Qt::QueuedConnection);
+}
+
+void AudioVideoCallController::incoming_audio_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	Q_UNUSED(timestamp);
+
+	if (m_state != CallActive || peer_id != m_peer_id)
+		return;
+
+	// Direct call, not invokeMethod()/QueuedConnection - see the comment in
+	// stopAudioPipeline(). enqueuePacket() is mutex-protected and safe to
+	// call from any thread; queuing it behind output's own blocking Play()
+	// call would mean it's never delivered, and Play() would sit forever
+	// pulling from an empty jitter buffer.
+	output->enqueuePacket(seq_num, data);
+}
+
+void AudioVideoCallController::video_capture_started(QString codec, int width, int height,
+                                                     double frameRate)
+{
+	if (m_state != CallActive)
+		return;
+
+	// Logged rather than announced: the 0x74 message has no field for it, and
+	// the peer does not need one - every frame carries its own timestamp. It
+	// is worth a line in the log all the same, since a camera that quietly
+	// substituted a lower rate than was asked for is otherwise invisible from
+	// the other end of a complaint about choppy video.
+	if (frameRate > 0.0 && frameRate < m_requestedFrameRate - 0.5)
+		qWarning() << QString("Camera delivering %1 fps, not the %2 that was requested")
+		              .arg(frameRate, 0, 'f', 1).arg(m_requestedFrameRate);
+
+	// Announced only now, because what the camera turned out to deliver
+	// decides it: a compressed camera stream is forwarded in the camera's own
+	// codec and at the camera's own size, rather than in ours.
+	skynet->SendVideoParams(m_peer_id, codec, (quint16)width, (quint16)height);
+}
+
+void AudioVideoCallController::send_video_packet(QByteArray data, bool is_last_fragment)
+{
+	if (m_state != CallActive)
+		return;
+
+	// Every fragment of one encoded frame carries the timestamp taken when
+	// that frame's first fragment was sent, so the receiving side can tell
+	// the fragments of one frame from those of the next.
+	if (!m_videoFrameStarted)
+	{
+		m_videoFrameTimestamp = (quint32)m_callClock.elapsed();
+		m_videoFrameStarted = true;
+	}
+
+	quint16 seq = m_videoSeq & VideoFrameAssembler::SeqNumMask;
+	m_videoSeq = (m_videoSeq + 1) & VideoFrameAssembler::SeqNumMask;
+
+	if (is_last_fragment)
+	{
+		seq |= VideoFrameAssembler::LastFragmentFlag;
+		// The next fragment emitted belongs to a new frame.
+		m_videoFrameStarted = false;
+	}
+
+	skynet->SendVideoPacket(m_peer_id, seq, m_videoFrameTimestamp, data);
+}
+
+void AudioVideoCallController::media_transport_changed(QByteArray peer_id, bool direct_udp, QString ciphersuitename, quint32 max_payload)
+{
+	if (peer_id != m_peer_id)
+		return;
+
+	// Fragments stay datagram sized for the whole call (see
+	// startVideoPipeline()); this only lowers the size further, for when the
+	// media connection turns out to carry less than was assumed. Direct call,
+	// not invokeMethod()/QueuedConnection - see the comment in
+	// stopAudioPipeline(): cam's thread is blocked inside Capture().
+	cam->setMaxFragmentSize(qMin((int)max_payload, (int)PICA_MEDIA_SAFE_PAYLOAD));
+
+	if (callwindow)
+		callwindow->setMediaTransport(direct_udp, ciphersuitename);
+
+	qDebug() << "call media transport:" << (direct_udp ? "direct UDP/DTLS" : "c2c connection")
+	         << ciphersuitename << "max payload" << max_payload;
+}
+
+void AudioVideoCallController::incoming_video_params(QByteArray peer_id, QString codec, quint16 width, quint16 height)
+{
+	if (m_state != CallActive || peer_id != m_peer_id)
+		return;
+
+	// As in incoming_audio_params(): the peer-supplied codec name must be one
+	// we actually send before it reaches avcodec_find_decoder_by_name().
+	if (!callVideoCodecAccepted(codec))
+	{
+		qWarning() << "rejecting unsupported call video codec from peer:" << codec;
+		return;
+	}
+
+	Settings st(config_dbname);
+	const CallSettings cs = CallSettings::load();
+	bool vaapiRendering = st.loadValue("video.vaapi_rendering", 0).toBool();
+
+#ifdef HAVE_VAAPI
+	// A call started after one where drawing GPU frames turned out not to work
+	// would otherwise begin with a blank video area all over again.
+	if (VaapiRenderWidget::renderingKnownBroken())
+		vaapiRendering = false;
+#endif
+
+	if (!m_videoPlaybackStarted)
+	{
+		m_videoPlaybackStarted = true;
+		QMetaObject::invokeMethod(remotevideo, "configurePlayback", Qt::QueuedConnection,
+		                           Q_ARG(QString, codec), Q_ARG(int, (int)width), Q_ARG(int, (int)height),
+		                           Q_ARG(int, cs.videoDecodingAcceleration), Q_ARG(bool, vaapiRendering),
+		                           Q_ARG(QByteArray, m_caller_id), Q_ARG(QByteArray, m_callee_id));
+	}
+	else
+	{
+		// The peer changed what it is sending in the middle of the call - as
+		// in incoming_audio_params(). A fragment of a frame in the old format
+		// that is still being put together is of no use to the new decoder.
+		m_videoAssembler.reset();
+		remotevideo->changePlayback(codec, (int)width, (int)height,
+		                            cs.videoDecodingAcceleration, vaapiRendering);
+	}
+
+	// Queued in both cases, see incoming_audio_params().
+	QMetaObject::invokeMethod(remotevideo, "Play", Qt::QueuedConnection);
+}
+
+void AudioVideoCallController::incoming_video_packet(QByteArray peer_id, quint16 seq_num, quint32 timestamp, QByteArray data)
+{
+	if (m_state != CallActive || peer_id != m_peer_id)
+		return;
+
+	QByteArray frame = m_videoAssembler.addFragment(seq_num, timestamp, data);
+
+	// Still waiting for the rest of this frame's fragments.
+	if (frame.isEmpty())
+		return;
+
+	// Direct call, not invokeMethod()/QueuedConnection - same reason as in
+	// incoming_audio_packet().
+	remotevideo->enqueueFrame(frame);
+}
+
+void AudioVideoCallController::video_area_changed(QSize area)
+{
+	// Direct call rather than invokeMethod() - same reason as in
+	// incoming_video_packet(): remotevideo's thread is blocked inside Play().
+	remotevideo->setDisplaySize(area);
+}
+
+#ifdef HAVE_VAAPI
+void AudioVideoCallController::video_rendering_failed()
+{
+	// The window cannot draw frames that stayed in GPU memory, so stop keeping
+	// them there: the decoder brings them down into system memory instead and
+	// the window's label shows them. Decoding itself is unaffected and the
+	// call carries on.
+	//
+	// Direct call rather than invokeMethod() - same reason as in
+	// incoming_video_packet(): remotevideo's thread is blocked inside Play().
+	remotevideo->disableHardwareRendering();
+}
+#endif
+
