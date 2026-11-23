@@ -30,6 +30,21 @@
 // recognizable on screen.
 static const QSize kMinVideoSize(160, 120);
 
+// Style sheet for the call control buttons, with the colours filled in. Many
+// native styles ignore a background-color unless the border is set by the
+// style sheet too, so the whole frame is given here. The disabled state matters
+// for "Hang Up", which call_ended() leaves disabled in the window.
+static QString callButtonStyle(const char *normal, const char *hover, const char *pressed)
+{
+	return QString(
+	    "QPushButton { background-color: %1; color: white; font-weight: bold;"
+	    " border: 1px solid %3; border-radius: 4px; padding: 4px 16px; }"
+	    "QPushButton:hover { background-color: %2; }"
+	    "QPushButton:pressed { background-color: %3; }"
+	    "QPushButton:disabled { background-color: #a0a0a0; border-color: #909090; color: #e0e0e0; }").
+	    arg(normal).arg(hover).arg(pressed);
+}
+
 CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	: m_peer_id(peer_id), is_incoming(incoming), videoAreaOpened(false)
 {
@@ -41,6 +56,9 @@ CallWindow::CallWindow(QByteArray peer_id, bool incoming)
 	pbAccept = new QPushButton(tr("Accept"), this);
 	pbCall = new QPushButton(tr("Call"), this);
 	pbHang = new QPushButton(tr("Hang Up"), this);
+	pbAccept->setStyleSheet(callButtonStyle("#2e9e3e", "#36b548", "#237a30"));
+	pbCall->setStyleSheet(callButtonStyle("#2e9e3e", "#36b548", "#237a30"));
+	pbHang->setStyleSheet(callButtonStyle("#d03030", "#e04040", "#a52424"));
 	lbTimer = new QLabel(this);
 	lbTimer->setAlignment(Qt::AlignCenter);
 	lbTimer->hide();
