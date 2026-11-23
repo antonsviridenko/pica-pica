@@ -72,6 +72,15 @@
 #define PICA_MEDIA_PUNCH_TIMEOUT 10000
 /* and the handshake has this long to complete once it is */
 #define PICA_MEDIA_PUNCH_HANDSHAKE_TIMEOUT 10000
+/* A private address of the peer is only probed if it is on a private network
+ * this host is on, and there for this long from the start of attempt 2, as
+ * often as given below: a probe that gets through at all does so within a few
+ * milliseconds on a local network. One arriving at the peer's socket before
+ * the peer starts sending probes waits there for it, so a peer starting late
+ * still selects the address - and answers from it.
+ */
+#define PICA_MEDIA_LAN_PROBE_TIMEOUT 200
+#define PICA_MEDIA_LAN_PROBE_INTERVAL 50
 
 /* How long 0x70 and 0x71 wait for the node to report the address of the
  * media socket before they are sent without it, in milliseconds.
@@ -196,6 +205,9 @@ struct PICA_media_channel
 
 	/* attempt 2 */
 	uint64_t last_probe;
+	/* when the probes started, and the last one to a private address */
+	uint64_t punch_started;
+	uint64_t last_lan_probe;
 	/* the first DTLS datagram has arrived from the selected address, the
 	 * peer no longer needs probes */
 	int dtls_seen;

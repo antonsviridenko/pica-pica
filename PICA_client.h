@@ -157,12 +157,20 @@ typedef u_short in_port_t;
 #define PICA_DIRECTC2C_MAX_ACCEPTED 32
 
 /* How long an outgoing direct connection may take to connect and finish its
- * TLS handshake before the next announced address is tried. Without it, an
- * address that silently drops the packets - a private address of the peer's
- * network, seen from another one - would hold up the addresses after it for
- * as long as the system keeps retrying the connection, minutes.
+ * TLS handshake before the next announced address is tried, in milliseconds.
+ * Without it, an address that silently drops the packets would hold up the
+ * addresses after it for as long as the system keeps retrying the
+ * connection, minutes.
  */
-#define PICA_DIRECTC2C_CONNECT_TIMEOUT 5
+#define PICA_DIRECTC2C_CONNECT_TIMEOUT 5000
+
+/* How long the TCP connection to a private address may take, in
+ * milliseconds. Only one on a private network this host is on is tried at
+ * all, and there the round trip is a matter of a few milliseconds; the TLS
+ * handshake, which can take longer on a slow machine, then gets the rest of
+ * PICA_DIRECTC2C_CONNECT_TIMEOUT.
+ */
+#define PICA_DIRECTC2C_LAN_CONNECT_TIMEOUT 200
 
 /* Most addresses of a received 0x0B message that are tried, and most that
  * a listener announces.
@@ -327,10 +335,13 @@ struct PICA_directc2c
 
 	enum PICA_directc2c_connection_state state;
 
-	/* when the connection to the current address was started, see
+	/* PICA_media_now() when the connection to the current address was
+	 * started, and when it has to be connected by - the TCP connection, or
+	 * in PICA_DIRECTC2C_CONNSTATE_WAITINGTLS the TLS handshake as well, see
 	 * PICA_DIRECTC2C_CONNECT_TIMEOUT
 	 */
-	time_t attempt_started;
+	uint64_t attempt_started;
+	uint64_t attempt_deadline;
 
 	/* When this incoming connection was accepted, used to reap it if its TLS
 	 * handshake never completes. Only meaningful for accepted (incoming)

@@ -243,17 +243,77 @@ static struct PICA_media_channel *media_channel_new(struct PICA_c2c *c2c)
 	return m;
 }
 
+/* "address:port", for the log; buf has PICA_MEDIA_ADDRSTRSIZE octets */
+#define PICA_MEDIA_ADDRSTRSIZE (INET6_ADDRSTRLEN + 6)
+
+static const char *media_addrstr(const struct sockaddr_in *a, char *buf)
+{
+	const unsigned char *ip = (const unsigned char*)&a->sin_addr.s_addr;
+
+	sprintf(buf, "%u.%u.%u.%u:%u", ip[0], ip[1], ip[2], ip[3], (unsigned int)ntohs(a->sin_port));
+
+	return buf;
+}
+
 /* Whether an address from the peer's 0x70/0x71 is one worth sending probes
- * to: a unicast address of a host, not of this one, and a port.
+ * to: a unicast address of a host, and a port. A private one only if it is
+ * on one of the private networks this host is on, given by ifaddrs/ifmasks
+ * - anywhere else it belongs to some other network, as for 0x0B. Logs the
+ * decision.
  */
-static int is_probe_target(const struct sockaddr_in *a)
+static int is_probe_target(const struct sockaddr_in *a, const in_addr_t *ifaddrs,
+                           const in_addr_t *ifmasks, int ifcount)
 {
 	in_addr_t addr = a->sin_addr.s_addr;
+	char addrstr[PICA_MEDIA_ADDRSTRSIZE];
+	int i;
+
+	media_addrstr(a, addrstr);
 
 	if (a->sin_port == 0)
+	{
+		fprintf(stderr, "media: call address %s - ignored: no port number\n", addrstr);
 		return 0;
+	}
 
-	return PICA_is_private_addr_ipv4(addr) || !PICA_is_reserved_addr_ipv4(addr);
+	if (!PICA_is_private_addr_ipv4(addr))
+	{
+		if (PICA_is_reserved_addr_ipv4(addr))
+		{
+			fprintf(stderr, "media: call address %s - ignored: reserved address\n", addrstr);
+			return 0;
+		}
+
+		fprintf(stderr, "media: call address %s - public, will be probed for %u ms\n", addrstr,
+		        PICA_MEDIA_PUNCH_TIMEOUT);
+		return 1;
+	}
+
+	if (ifcount == 0)
+	{
+		fprintf(stderr, "media: call address %s - private, ignored: this host is on no private network\n", addrstr);
+		return 0;
+	}
+
+	i = PICA_find_subnet_ipv4(addr, ifaddrs, ifmasks, ifcount);
+
+	if (i < 0)
+	{
+		fprintf(stderr, "media: call address %s - private, ignored: not on a private network of this host\n",
+		        addrstr);
+		return 0;
+	}
+
+	{
+		const unsigned char *ip = (const unsigned char*)&ifaddrs[i];
+		const unsigned char *mask = (const unsigned char*)&ifmasks[i];
+
+		fprintf(stderr, "media: call address %s - private, on the network of local address %u.%u.%u.%u "
+		        "netmask %u.%u.%u.%u, will be probed for %u ms\n", addrstr,
+		        ip[0], ip[1], ip[2], ip[3], mask[0], mask[1], mask[2], mask[3], PICA_MEDIA_LAN_PROBE_TIMEOUT);
+	}
+
+	return 1;
 }
 
 /* Stops a request for the call socket's address still waiting for the node,
@@ -435,6 +495,8 @@ unsigned int PICA_media_call_write_info(struct PICA_c2c *c2c, unsigned char *buf
 int PICA_media_call_read_info(struct PICA_c2c *c2c, const unsigned char *buf, unsigned int len)
 {
 	struct PICA_media_call *mc = c2c->media_call;
+	in_addr_t ifaddrs[PICA_IFADDRS_MAX], ifmasks[PICA_IFADDRS_MAX];
+	int ifcount;
 	unsigned int pos;
 	int addresses = 0;
 
@@ -449,6 +511,8 @@ int PICA_media_call_read_info(struct PICA_c2c *c2c, const unsigned char *buf, un
 
 	memcpy(mc->peer_token, buf, PICA_PROTO_CALL_TOKENSIZE);
 	pos = PICA_PROTO_CALL_TOKENSIZE;
+
+	ifcount = PICA_get_private_ifaddrs_ipv4(ifaddrs, ifmasks, PICA_IFADDRS_MAX);
 
 	while (pos < len && addresses < PICA_PROTO_CALL_MAXADDRS)
 	{
@@ -467,7 +531,7 @@ int PICA_media_call_read_info(struct PICA_c2c *c2c, const unsigned char *buf, un
 			memcpy(&a->sin_addr.s_addr, buf + pos + 1, 4);
 			memcpy(&a->sin_port, buf + pos + 5, 2);
 
-			if (is_probe_target(a))
+			if (is_probe_target(a, ifaddrs, ifmasks, ifcount))
 				mc->peer_addrs_count++;
 
 			pos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
@@ -646,20 +710,38 @@ static void media_send_probe_to(struct PICA_media_channel *m, const struct socka
 static void media_send_probes(struct PICA_media_channel *m, uint64_t now)
 {
 	struct PICA_media_call *mc = m->c2c->media_call;
+	int lan_due, public_due;
 	int i;
 
-	if (m->dtls_seen || now - m->last_probe < PICA_MEDIA_PROBE_INTERVAL)
+	if (m->dtls_seen)
 		return;
 
-	m->last_probe = now;
+	public_due = now - m->last_probe >= PICA_MEDIA_PROBE_INTERVAL;
 
-	if (m->state == PICA_MEDIA_STATE_PUNCHING)
+	if (m->state != PICA_MEDIA_STATE_PUNCHING)
 	{
-		for (i = 0; i < mc->peer_addrs_count; i++)
-			media_send_probe_to(m, &mc->peer_addrs[i]);
+		if (public_due)
+		{
+			m->last_probe = now;
+			media_send_probe_to(m, NULL);
+		}
+
+		return;
 	}
-	else
-		media_send_probe_to(m, NULL);
+
+	/* the private addresses only at first, see PICA_MEDIA_LAN_PROBE_TIMEOUT */
+	lan_due = now - m->punch_started <= PICA_MEDIA_LAN_PROBE_TIMEOUT
+	          && now - m->last_lan_probe >= PICA_MEDIA_LAN_PROBE_INTERVAL;
+
+	if (lan_due)
+		m->last_lan_probe = now;
+
+	if (public_due)
+		m->last_probe = now;
+
+	for (i = 0; i < mc->peer_addrs_count; i++)
+		if (PICA_is_private_addr_ipv4(mc->peer_addrs[i].sin_addr.s_addr) ? lan_due : public_due)
+			media_send_probe_to(m, &mc->peer_addrs[i]);
 }
 
 /* Attempt 2, by hole punching between the call sockets. */
@@ -683,11 +765,14 @@ static int media_punch_start(struct PICA_c2c *c2c)
 	m->owns_sck = 0;
 	m->is_dtls_client = mc->is_caller;
 	m->state = PICA_MEDIA_STATE_PUNCHING;
-	m->deadline = PICA_media_now() + PICA_MEDIA_PUNCH_TIMEOUT;
+	m->punch_started = PICA_media_now();
+	m->deadline = m->punch_started + PICA_MEDIA_PUNCH_TIMEOUT;
 
 	c2c->media = m;
 
-	media_send_probes(m, PICA_media_now());
+	fprintf(stderr, "media: hole punching, probing %i addresses of the peer\n", mc->peer_addrs_count);
+
+	media_send_probes(m, m->punch_started);
 
 	return PICA_OK;
 }
@@ -831,6 +916,13 @@ static void media_activate(struct PICA_media_channel *m)
 
 	m->state = PICA_MEDIA_STATE_ACTIVE;
 
+	{
+		char addrstr[PICA_MEDIA_ADDRSTRSIZE];
+
+		fprintf(stderr, "media: connection with %s established by attempt %i\n",
+		        media_addrstr(&m->peer_addr, addrstr), m->attempt);
+	}
+
 	PICA_media_transport_changed(m->c2c, PICA_CALL_TRANSPORT_MEDIAC2C, SSL_get_cipher_name(m->ssl));
 }
 
@@ -932,7 +1024,12 @@ static int is_our_probe(struct PICA_media_channel *m, const unsigned char *buf, 
  */
 static void media_punch_select(struct PICA_media_channel *m, const struct sockaddr_in *from)
 {
+	char addrstr[PICA_MEDIA_ADDRSTRSIZE];
+
 	PICA_TRACEFUNC
+
+	fprintf(stderr, "media: hole punching, the peer's probe arrived from %s after %u ms, selected\n",
+	        media_addrstr(from, addrstr), (unsigned int)(PICA_media_now() - m->punch_started));
 
 	m->peer_addr = *from;
 

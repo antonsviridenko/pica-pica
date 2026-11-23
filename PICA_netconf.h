@@ -129,6 +129,25 @@ int PICA_is_private_addr_ipv4(in_addr_t);
  */
 int PICA_get_ifaddrs_ipv4(in_addr_t *addrs, int maxcount);
 
+/**
+ * The private addresses (see PICA_is_private_addr_ipv4()) of the network
+ * interfaces that are up, with their netmasks, i.e. the private networks
+ * this host is on.
+ * \param addrs, masks filled with the addresses and their netmasks, network
+ * byte order
+ * \param maxcount size of addrs and masks
+ * \return number of addresses stored, 0 if there are none or the system
+ * cannot be asked
+ */
+int PICA_get_private_ifaddrs_ipv4(in_addr_t *addrs, in_addr_t *masks, int maxcount);
+
+/**
+ * Looks for the interface address of PICA_get_private_ifaddrs_ipv4() whose
+ * network addr is on.
+ * \return its index, or -1 if addr is on none of them
+ */
+int PICA_find_subnet_ipv4(in_addr_t addr, const in_addr_t *addrs, const in_addr_t *masks, int count);
+
 in_addr_t PICA_guess_listening_addr_ipv4();
 
 /**

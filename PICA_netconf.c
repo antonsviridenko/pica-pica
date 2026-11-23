@@ -194,6 +194,138 @@ int PICA_get_ifaddrs_ipv4(in_addr_t *addrs, int maxcount)
 }
 #endif
 
+/* Stores a private interface address with its mask, skipping duplicates
+ * and masks that would make every address look local.
+ */
+static void private_ifaddr_add(in_addr_t *addrs, in_addr_t *masks, int maxcount, int *count,
+                               in_addr_t a, in_addr_t mask)
+{
+	int i;
+
+	if (!PICA_is_private_addr_ipv4(a) || mask == 0)
+		return;
+
+	for (i = 0; i < *count; i++)
+		if (addrs[i] == a)
+			return;
+
+	if (*count < maxcount)
+	{
+		addrs[*count] = a;
+		masks[*count] = mask;
+		(*count)++;
+	}
+}
+
+#ifndef WIN32
+int PICA_get_private_ifaddrs_ipv4(in_addr_t *addrs, in_addr_t *masks, int maxcount)
+{
+	struct ifaddrs *ifaddr, *ifa;
+	int count = 0;
+
+	if (!addrs || !masks || maxcount <= 0)
+		return 0;
+
+	if (getifaddrs(&ifaddr) == -1)
+		return 0;
+
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
+	{
+		if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET || ifa->ifa_netmask == NULL)
+			continue;
+
+		if (ifa->ifa_flags & IFF_LOOPBACK)
+			continue;
+
+		if (!((ifa->ifa_flags & IFF_RUNNING) && (ifa->ifa_flags & IFF_UP)))
+			continue;
+
+		private_ifaddr_add(addrs, masks, maxcount, &count,
+		                   ((struct sockaddr_in*)ifa->ifa_addr)->sin_addr.s_addr,
+		                   ((struct sockaddr_in*)ifa->ifa_netmask)->sin_addr.s_addr);
+	}
+
+	freeifaddrs(ifaddr);
+
+	return count;
+}
+#else
+#ifndef MIB_IPADDR_DISCONNECTED
+#define MIB_IPADDR_DISCONNECTED 0x0008
+#endif
+#ifndef MIB_IPADDR_DELETED
+#define MIB_IPADDR_DELETED 0x0040
+#endif
+
+/* GetAdaptersAddresses() only reports the prefix length from Vista on, and
+ * only to code built for Vista; GetIpAddrTable() has the mask on every
+ * version.
+ */
+int PICA_get_private_ifaddrs_ipv4(in_addr_t *addrs, in_addr_t *masks, int maxcount)
+{
+	PMIB_IPADDRTABLE table = NULL;
+	ULONG size = 0;
+	DWORD ret;
+	DWORD i;
+	int count = 0;
+	int tries;
+
+	if (!addrs || !masks || maxcount <= 0)
+		return 0;
+
+	/* as in PICA_get_ifaddrs_ipv4(), the size needed is only known by
+	 * trying */
+	for (tries = 0; tries < 3; tries++)
+	{
+		ret = GetIpAddrTable(table, &size, FALSE);
+
+		if (ret == NO_ERROR)
+			break;
+
+		free(table);
+		table = NULL;
+
+		if (ret != ERROR_INSUFFICIENT_BUFFER)
+			return 0;
+
+		table = (PMIB_IPADDRTABLE)malloc(size);
+
+		if (!table)
+			return 0;
+	}
+
+	if (ret != NO_ERROR || !table)
+	{
+		free(table);
+		return 0;
+	}
+
+	for (i = 0; i < table->dwNumEntries; i++)
+	{
+		if (table->table[i].wType & (MIB_IPADDR_DISCONNECTED | MIB_IPADDR_DELETED))
+			continue;
+
+		private_ifaddr_add(addrs, masks, maxcount, &count,
+		                   (in_addr_t)table->table[i].dwAddr, (in_addr_t)table->table[i].dwMask);
+	}
+
+	free(table);
+
+	return count;
+}
+#endif
+
+int PICA_find_subnet_ipv4(in_addr_t addr, const in_addr_t *addrs, const in_addr_t *masks, int count)
+{
+	int i;
+
+	for (i = 0; i < count; i++)
+		if ((addr & masks[i]) == (addrs[i] & masks[i]))
+			return i;
+
+	return -1;
+}
+
 in_addr_t PICA_guess_listening_addr_ipv4()
 {
 	in_addr_t addrs[PICA_IFADDRS_MAX];

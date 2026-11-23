@@ -632,9 +632,25 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, vo
 	return 1;
 }
 
+/* "address:port", for the log; buf has PICA_DIRECTC2C_ADDRSTRSIZE octets */
+#define PICA_DIRECTC2C_ADDRSTRSIZE (INET6_ADDRSTRLEN + 6)
+
+static const char *directc2c_addrstr(const struct sockaddr_in *a, char *buf)
+{
+	char ip[INET6_ADDRSTRLEN];
+
+	if (!inet_ntop(AF_INET, &a->sin_addr, ip, sizeof(ip)))
+		strcpy(ip, "?");
+
+	sprintf(buf, "%s:%u", ip, (unsigned int)ntohs(a->sin_port));
+
+	return buf;
+}
+
 static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *c2c)
 {
 	PICA_TRACEFUNC
+	char addrstr[PICA_DIRECTC2C_ADDRSTRSIZE];
 	int ret;
 
 	if (dc2c->ssl)
@@ -651,9 +667,10 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 		dc2c->addrpos += 2;
 
 	if (dc2c->addrpos + PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE > *(uint16_t*)dc2c->addrlist + 2)
+	{
+		fprintf(stderr, "directc2c: no more addresses to try\n");
 		return PICA_ERRNOTFOUND;
-
-	dc2c->attempt_started = time(0);
+	}
 
 	switch(dc2c->addrlist[dc2c->addrpos])
 	{
@@ -667,7 +684,15 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 		dc2c->addr.sin_addr.s_addr = *((in_addr_t*)(dc2c->addrlist + dc2c->addrpos + 1));
 		dc2c->addr.sin_port = *((uint16_t*)(dc2c->addrlist + dc2c->addrpos + 5));
 
-		printf("received direct IPv4 addr %s port %i\n", inet_ntoa(dc2c->addr.sin_addr), ntohs(dc2c->addr.sin_port));
+		/* the list only holds private addresses of a network this host is
+		 * on, see directc2c_addrlist_ipv4() */
+		dc2c->attempt_started = PICA_media_now();
+		dc2c->attempt_deadline = dc2c->attempt_started
+		                         + (PICA_is_private_addr_ipv4(dc2c->addr.sin_addr.s_addr)
+		                            ? PICA_DIRECTC2C_LAN_CONNECT_TIMEOUT : PICA_DIRECTC2C_CONNECT_TIMEOUT);
+
+		fprintf(stderr, "directc2c: connecting to %s, timeout %u ms\n", directc2c_addrstr(&dc2c->addr, addrstr),
+		        (unsigned int)(dc2c->attempt_deadline - dc2c->attempt_started));
 
 		dc2c->state = PICA_DIRECTC2C_CONNSTATE_CONNECTING;
 
@@ -676,7 +701,10 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 		ret = process_first_async_connect_result(ret);
 
 		if (ret != PICA_OK)
+		{
+			fprintf(stderr, "directc2c: connection to %s failed\n", addrstr);
 			dc2c->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
+		}
 
 		dc2c->addrpos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
 		break;
@@ -688,8 +716,56 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
 	return PICA_OK;
 }
 
+/* Whether an IPv4 address of a received address list is worth connecting
+ * to. A private one is only if it is on a private network this host is on:
+ * anywhere else it is some other network's address, which leads nowhere or
+ * to the wrong host. Logs the decision.
+ */
+static int directc2c_addr_usable(const struct sockaddr_in *a, const in_addr_t *ifaddrs,
+                                 const in_addr_t *ifmasks, int ifcount)
+{
+	char addrstr[PICA_DIRECTC2C_ADDRSTRSIZE];
+	char ifaddr[INET6_ADDRSTRLEN], ifmask[INET6_ADDRSTRLEN];
+	int i;
+
+	directc2c_addrstr(a, addrstr);
+
+	if (!PICA_is_private_addr_ipv4(a->sin_addr.s_addr))
+	{
+		fprintf(stderr, "directc2c: 0x0B address %s - public, will be tried\n", addrstr);
+		return 1;
+	}
+
+	if (ifcount == 0)
+	{
+		fprintf(stderr, "directc2c: 0x0B address %s - private, ignored: this host is on no private network\n", addrstr);
+		return 0;
+	}
+
+	i = PICA_find_subnet_ipv4(a->sin_addr.s_addr, ifaddrs, ifmasks, ifcount);
+
+	if (i < 0)
+	{
+		fprintf(stderr, "directc2c: 0x0B address %s - private, ignored: not on a private network of this host\n",
+		        addrstr);
+		return 0;
+	}
+
+	if (!inet_ntop(AF_INET, &ifaddrs[i], ifaddr, sizeof(ifaddr)))
+		strcpy(ifaddr, "?");
+
+	if (!inet_ntop(AF_INET, &ifmasks[i], ifmask, sizeof(ifmask)))
+		strcpy(ifmask, "?");
+
+	fprintf(stderr, "directc2c: 0x0B address %s - private, on the network of local address %s netmask %s, will be tried\n",
+	        addrstr, ifaddr, ifmask);
+
+	return 1;
+}
+
 /* Picks the IPv4 elements out of a received address list, in their order,
- * into list, behind a length field in host byte order.
+ * into list, behind a length field in host byte order - those worth
+ * connecting to, see directc2c_addr_usable().
  * Elements of the other types are stepped over by their size, see the 0xA4
  * message. An element of an unknown type ends the list, as there is no
  * knowing where it ends; so does a truncated one.
@@ -697,38 +773,69 @@ static int directc2c_connect_next(struct PICA_directc2c *dc2c, struct PICA_c2c *
  */
 static unsigned int directc2c_addrlist_ipv4(const unsigned char *items, unsigned int len, uint8_t *list)
 {
+	in_addr_t ifaddrs[PICA_IFADDRS_MAX], ifmasks[PICA_IFADDRS_MAX];
+	int ifcount;
 	unsigned int pos = 0;
 	uint16_t n = 0;
+
+	ifcount = PICA_get_private_ifaddrs_ipv4(ifaddrs, ifmasks, PICA_IFADDRS_MAX);
+
+	fprintf(stderr, "directc2c: received 0x0B, %u octets of addresses\n", len);
 
 	while (pos < len && n < PICA_DIRECTC2C_MAX_ADDRS)
 	{
 		switch (items[pos])
 		{
 		case PICA_PROTO_DIRECTC2C_IPV4:
-			if (pos + PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE > len)
-				goto end;
+		{
+			struct sockaddr_in a;
 
-			memcpy(list + 2 + n * PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE,
-			       items + pos, PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE);
-			n++;
+			if (pos + PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE > len)
+			{
+				fprintf(stderr, "directc2c: 0x0B truncated IPv4 address, end of list\n");
+				goto end;
+			}
+
+			memset(&a, 0, sizeof(a));
+			a.sin_family = AF_INET;
+			memcpy(&a.sin_addr.s_addr, items + pos + 1, 4);
+			memcpy(&a.sin_port, items + pos + 5, 2);
+
+			if (directc2c_addr_usable(&a, ifaddrs, ifmasks, ifcount))
+			{
+				memcpy(list + 2 + n * PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE,
+				       items + pos, PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE);
+				n++;
+			}
+
 			pos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
 			break;
+		}
 
 		case PICA_PROTO_DIRECTC2C_IPV6:
+			fprintf(stderr, "directc2c: 0x0B IPv6 address - ignored, not supported\n");
 			pos += PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV6_SIZE;
 			break;
 
 		case PICA_PROTO_DIRECTC2C_DNS:
 			if (pos + 1 >= len)
+			{
+				fprintf(stderr, "directc2c: 0x0B truncated DNS name, end of list\n");
 				goto end;
+			}
 
+			fprintf(stderr, "directc2c: 0x0B DNS name - ignored, not supported\n");
 			pos += 2 + items[pos + 1] + 2;
 			break;
 
 		default:
+			fprintf(stderr, "directc2c: 0x0B unknown address type 0x%02X, end of list\n", items[pos]);
 			goto end;
 		}
 	}
+
+	if (pos < len)
+		fprintf(stderr, "directc2c: 0x0B more than %i usable addresses, the rest is ignored\n", PICA_DIRECTC2C_MAX_ADDRS);
 
 end:
 	*(uint16_t*)list = n * PICA_PROTO_DIRECTC2C_ADDRLIST_ITEM_IPV4_SIZE;
@@ -3339,8 +3446,14 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 				*pdprev = dnext;
 				d->next = NULL;
 
+				char addrstr[PICA_DIRECTC2C_ADDRSTRSIZE];
+
+				directc2c_addrstr(&d->addr, addrstr);
+
 				if ((c2c = find_matching_c2c(c2n, d)) && (PICA_verify_peer_cert_common(&d->peer_cert, d->ssl, c2c->peer_id) == PICA_OK))
 				{
+					fprintf(stderr, "directc2c: incoming connection from %s accepted\n", addrstr);
+
 					if (c2c->direct)
 						PICA_close_directc2c(c2c->direct);
 
@@ -3362,6 +3475,8 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 				}
 				else
 				{
+					fprintf(stderr, "directc2c: incoming connection from %s rejected: %s\n", addrstr,
+					        c2c ? "the certificate is not the peer's" : "no connection is waiting for it");
 					PICA_close_directc2c(d);
 				}
 				/* pdprev stays put: d was spliced out above */
@@ -3395,14 +3510,25 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 		if (c2c->directc2c_state == PICA_DIRECTC2C_STATE_CONNECTING)
 		{
+			char addrstr[PICA_DIRECTC2C_ADDRSTRSIZE];
+
 			d = c2c->direct;
 			ret = PICA_OK;
 
-			/* on to the next address, see PICA_DIRECTC2C_CONNECT_TIMEOUT */
+			directc2c_addrstr(&d->addr, addrstr);
+
+			/* On to the next address, see PICA_DIRECTC2C_CONNECT_TIMEOUT -
+			 * unless the socket has something for us: the event loop may
+			 * not have run for a while, and a connection that has made it
+			 * meanwhile is not a late one.
+			 */
 			if ((d->state == PICA_DIRECTC2C_CONNSTATE_CONNECTING || d->state == PICA_DIRECTC2C_CONNSTATE_WAITINGTLS)
-			        && time(0) - d->attempt_started > PICA_DIRECTC2C_CONNECT_TIMEOUT)
+			        && PICA_media_now() >= d->attempt_deadline
+			        && !FD_ISSET(d->sck, wfds) && !FD_ISSET(d->sck, rfds))
 			{
-				printf("direct connection to %s port %i timed out\n", inet_ntoa(d->addr.sin_addr), ntohs(d->addr.sin_port));
+				fprintf(stderr, "directc2c: connection to %s failed: %s timed out after %u ms\n", addrstr,
+				        d->state == PICA_DIRECTC2C_CONNSTATE_CONNECTING ? "TCP connection" : "TLS handshake",
+				        (unsigned int)(PICA_media_now() - d->attempt_started));
 				d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
 			}
 
@@ -3416,10 +3542,26 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 					if (ret == PICA_OK)
 					{
+						fprintf(stderr, "directc2c: TCP connection to %s made in %u ms, TLS handshake\n", addrstr,
+						        (unsigned int)(PICA_media_now() - d->attempt_started));
+
+						/* the TLS handshake gets the rest of the full timeout,
+						 * also for a private address, see
+						 * PICA_DIRECTC2C_LAN_CONNECT_TIMEOUT */
+						d->attempt_deadline = d->attempt_started + PICA_DIRECTC2C_CONNECT_TIMEOUT;
+
 						ret = directc2c_stage2_starttls(d, c2c);
+
+						if (ret != PICA_OK)
+						{
+							fprintf(stderr, "directc2c: connection to %s failed: TLS could not be started\n", addrstr);
+							d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
+						}
 					}
 					else
 					{
+						fprintf(stderr, "directc2c: connection to %s failed: TCP connection refused or unreachable\n",
+						        addrstr);
 						d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
 					}
 				}
@@ -3436,6 +3578,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 						if (ret != PICA_OK)
 						{
+							fprintf(stderr, "directc2c: connection to %s failed: TLS handshake failed\n", addrstr);
 							d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
 						}
 
@@ -3446,6 +3589,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 					if (ret != PICA_OK)
 					{
+						fprintf(stderr, "directc2c: connection to %s failed: the certificate is not the peer's\n", addrstr);
 						d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
 						break;
 					}
@@ -3454,9 +3598,13 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 
 					if (ret != PICA_OK)
 					{
+						fprintf(stderr, "directc2c: connection to %s failed: could not send 0x0D\n", addrstr);
 						d->state = PICA_DIRECTC2C_CONNSTATE_FAILED;
 						break;
 					}
+
+					fprintf(stderr, "directc2c: connection to %s established in %u ms\n", addrstr,
+					        (unsigned int)(PICA_media_now() - d->attempt_started));
 
 					d->state = PICA_DIRECTC2C_CONNSTATE_ACTIVE;
 

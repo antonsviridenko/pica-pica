@@ -369,6 +369,13 @@ The connecting client tries the addresses one at a time, in the order of the
 list. It skips the elements of a type it does not connect to (e.g. 0xA1 without
 IPv6 connectivity), stepping over them by their size as given in the 0xA4
 description; such elements are not an error.
+A private address (the subnets above, and 100.64.0.0/10) is only tried if it
+is on the network of a private address of one of the connecting client's own
+network interfaces, as given by that interface's netmask; any other private
+address belongs to some other network and is skipped without a connection
+attempt. Since such an address is on the local network, the TCP connection to
+it is given up after 200 milliseconds, while the TLS handshake that follows
+has as long as for any other address.
 Having received the announcement, the other client can create a connection to
 that address and close the connection through the node.
 The announced port numbers are used both for TCP directc2c connections and for
@@ -625,7 +632,14 @@ list. Each side uses its media socket for the call - the one its address list
 was made for - and the caller acts as the DTLS client.
 
 1. Each side sends a media connection probe to every address of the peer's
-list, repeating every 200 milliseconds.
+list, repeating every 200 milliseconds. A private address in the list is
+handled as in the 0x0B message: it is skipped unless it is on the network of
+a private address of one of the side's own network interfaces. One that is
+not skipped is local, and is sent probes only during the first 200
+milliseconds, every 50 milliseconds. A probe that arrives before the
+receiving side has started sending its own waits on that side's media
+socket, so a side starting later than the other still selects the address in
+step 2 and answers from it.
 2. When a side receives a probe carrying its own probe token, it selects the
 address the probe came from. That address need not be in the peer's list: a
 NAT can map the peer's socket to another port for this destination than for
