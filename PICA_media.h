@@ -78,13 +78,11 @@
  */
 #define PICA_MEDIA_LEARN_TIMEOUT 2000
 
-/* An established media connection with no datagram received for this many
- * seconds is considered broken; media falls back to the c2c connection.
- */
-#define PICA_MEDIA_SILENCE_TIMEOUT 10
-
 /* Ping is sent over an established media connection after this many seconds
  * without anything being sent, to hold NAT and firewall state open.
+ * An established media connection is kept for the rest of the call however
+ * long nothing arrives over it: loss on the path does not mean the c2c
+ * connection would carry the media any better.
  */
 #define PICA_MEDIA_KEEPALIVE_INTERVAL 4
 
@@ -201,7 +199,6 @@ struct PICA_media_channel
 	/* the first DTLS datagram has arrived from the selected address, the
 	 * peer no longer needs probes */
 	int dtls_seen;
-	time_t last_rx;
 	time_t last_tx;
 
 	unsigned int max_payload;
@@ -275,8 +272,9 @@ unsigned int PICA_media_max_payload(const struct PICA_c2c *c2c);
 
 /**
  * Sends one already formatted protocol message over the media connection.
- * The message is dropped, and PICA_OK returned, if the send would block -
- * for real time media that is the wanted behaviour.
+ * The message is dropped, and PICA_OK returned, if the send would block or
+ * the system reports an error for it (e.g. an ICMP error caused by an
+ * earlier datagram) - for real time media that is the wanted behaviour.
  */
 int PICA_media_send(struct PICA_c2c *c2c, const unsigned char *buf, unsigned int len);
 

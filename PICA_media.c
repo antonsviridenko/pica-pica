@@ -20,9 +20,13 @@
 #include "PICA_proto.h"
 #include "PICA_common.h"
 #include "PICA_netconf.h"
+#include <openssl/err.h>
 #include <openssl/rand.h>
 #include <string.h>
 #include <time.h>
+#ifndef WIN32
+#include <errno.h>
+#endif
 
 #define PICA_DEBUG
 
@@ -137,11 +141,15 @@ void PICA_media_listener_close(struct PICA_media_listener *ml)
 	if (!ml)
 		return;
 
+	/* A call using the socket keeps it until it ends, as if it had opened
+	 * it itself: closing the listener stops new connections, not this one.
+	 */
 	if (ml->channel)
 	{
 		ml->channel->listener = NULL;
-		ml->channel->sck = -1;
+		ml->channel->owns_sck = 1;
 		ml->channel = NULL;
+		ml->sck = -1;
 	}
 
 	if (ml->sck >= 0)
@@ -230,7 +238,6 @@ static struct PICA_media_channel *media_channel_new(struct PICA_c2c *c2c)
 	m->c2c = c2c;
 	m->sck = -1;
 	m->started = time(0);
-	m->last_rx = m->started;
 	m->last_tx = m->started;
 
 	return m;
@@ -786,20 +793,16 @@ int PICA_media_send(struct PICA_c2c *c2c, const unsigned char *buf, unsigned int
 		return PICA_OK;
 	}
 
-	switch (SSL_get_error(m->ssl, ret))
-	{
-	case SSL_ERROR_WANT_WRITE:
-	case SSL_ERROR_WANT_READ:
-		/* The send buffer is full - the packet is dropped rather than
-		 * queued. Delaying live media is worse than losing a frame of it,
-		 * and the receiving side is built to cope with losses anyway.
-		 */
-		return PICA_OK;
+	/* The send buffer is full, or the system reports an error such as an
+	 * ICMP message caused by an earlier datagram - either way the packet is
+	 * dropped rather than queued. Delaying live media is worse than losing
+	 * a frame of it, and the receiving side is built to cope with losses
+	 * anyway. DTLS drops a record that could not be written and carries on
+	 * with the next one, so none of this ends the connection.
+	 */
+	ERR_clear_error();
 
-	default:
-		media_fail(m);
-		return PICA_ERRSSL;
-	}
+	return PICA_OK;
 }
 
 static void media_activate(struct PICA_media_channel *m)
@@ -827,7 +830,6 @@ static void media_activate(struct PICA_media_channel *m)
 #endif
 
 	m->state = PICA_MEDIA_STATE_ACTIVE;
-	m->last_rx = time(0);
 
 	PICA_media_transport_changed(m->c2c, PICA_CALL_TRANSPORT_MEDIAC2C, SSL_get_cipher_name(m->ssl));
 }
@@ -1010,14 +1012,19 @@ static void media_punch_read(struct PICA_media_channel *m)
 	}
 }
 
-/* Takes the probes that are still arriving after an address was selected
- * off the socket, before DTLS gets to read it - a DTLS record never starts
- * with the octet of a probe.
+/* Takes off the socket, before DTLS gets to read it:
+ * - the probes that are still arriving after an address was selected - a
+ * DTLS record never starts with the octet of a probe;
+ * - errors the system reports for earlier datagrams, e.g. an ICMP port
+ * unreachable from the peer's NAT. Reading one clears it, and left to DTLS
+ * it would be taken for the end of the connection.
  * \return 1 if a datagram other than a probe is waiting
  */
 static int media_skip_probes(struct PICA_media_channel *m)
 {
 	unsigned char buf[PICA_MEDIA_READBUFSIZE];
+	/* an error that does not clear itself must not keep us here */
+	int errors = 0;
 	int ret;
 
 	while (1)
@@ -1028,7 +1035,19 @@ static int media_skip_probes(struct PICA_media_channel *m)
 		ret = recv(m->sck, (char*)buf, sizeof(buf), MSG_PEEK);
 
 		if (ret < 0)
-			return 0;
+		{
+#ifdef WIN32
+			if (WSAGetLastError() == WSAEWOULDBLOCK)
+				return 0;
+#else
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				return 0;
+#endif
+			if (++errors > 16)
+				return 0;
+
+			continue;
+		}
 
 		if (ret == 0 || buf[0] == PICA_PROTO_MEDIAPROBE)
 		{
@@ -1070,8 +1089,8 @@ static void media_read(struct PICA_media_channel *m)
 	 */
 	while (1)
 	{
-		/* a late probe of a hole punched connection */
-		if (m->attempt == 2 && SSL_pending(m->ssl) == 0 && !media_skip_probes(m))
+		/* a late probe of a hole punched connection, or a socket error */
+		if (SSL_pending(m->ssl) == 0 && !media_skip_probes(m))
 			return;
 
 		ret = SSL_read(m->ssl, m->read_buf, PICA_MEDIA_READBUFSIZE);
@@ -1084,14 +1103,22 @@ static void media_read(struct PICA_media_channel *m)
 			case SSL_ERROR_WANT_WRITE:
 				return;
 
+			case SSL_ERROR_SYSCALL:
+				/* A socket error that arrived after media_skip_probes()
+				 * looked. It says nothing about the connection, the same as
+				 * a lost datagram.
+				 */
+				ERR_clear_error();
+				return;
+
 			default:
+				/* the peer closed the connection or sent a fatal alert */
 				fprintf(stderr, "media connection read failed\n");
 				media_fail(m);
 				return;
 			}
 		}
 
-		m->last_rx = time(0);
 		m->read_pos = (unsigned int)ret;
 
 		/* A datagram carries exactly one message. Anything that does not
@@ -1202,13 +1229,6 @@ void PICA_media_process(struct PICA_c2n *c2n, fd_set *rfds)
 
 			if (!PICA_media_is_active(c2c))
 				break;
-
-			if ((now - m->last_rx) > PICA_MEDIA_SILENCE_TIMEOUT)
-			{
-				fprintf(stderr, "media connection went silent\n");
-				media_fail(m);
-				break;
-			}
 
 			if ((now - m->last_tx) >= PICA_MEDIA_KEEPALIVE_INTERVAL)
 				PICA_media_send_ping(c2c, 0);

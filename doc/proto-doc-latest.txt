@@ -608,7 +608,11 @@ When a call becomes active - for the callee when it sends 0x71, for the
 caller when 0x71 arrives - each side makes up to two attempts to establish a
 mediac2c connection, one after another. Until one succeeds, and for the rest
 of the call if neither does, the media packets travel over the c2c or
-directc2c connection.
+directc2c connection. Once established, the mediac2c connection carries the
+media until the call ends: lost datagrams, a time without any arriving, or
+errors the system reports for datagrams sent (e.g. ICMP port unreachable) do
+not end it. Only the DTLS session ending - a close_notify or a fatal alert
+from the peer - does.
 
 Attempt 1, over the directc2c address. Made only if the c2c connection the
 call belongs to has an established directc2c connection, as described in the

@@ -282,6 +282,7 @@ static int c2n_alloc_c2c(struct PICA_c2n *ci, struct PICA_c2c **chn, const unsig
 
 	chnl->conn = ci;
 	chnl->outgoing = is_outgoing;
+	chnl->directc2c_config = ci->directc2c_config;
 	memcpy(chnl->peer_id, peer_id, PICA_ID_SIZE);
 
 	chnl->acc = ci->acc;
@@ -578,7 +579,7 @@ static unsigned int procmsg_C2CCONNREQ(unsigned char* buf, unsigned int nb, void
 
 		callbacks.c2c_established_cb(cc->peer_id, SSL_get_cipher_name(cc->ssl));
 
-		if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+		if (cc->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
 			PICA_send_directc2caddrlist(cc);
 	}
 	else
@@ -614,7 +615,7 @@ static unsigned int procmsg_INITRESP_c2c(unsigned char* buf, unsigned int nb, vo
 		cc->state = PICA_C2C_STATE_ACTIVE;
 		callbacks.c2c_established_cb(cc->peer_id, SSL_get_cipher_name(cc->ssl));
 
-		if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+		if (cc->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
 			PICA_send_directc2caddrlist(cc);
 
 		break;
@@ -741,7 +742,7 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 	struct PICA_c2c *cc = (struct PICA_c2c *)p;
 	int ret;
 
-	if (cc->conn->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
+	if (cc->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
 	{
 		if (cc->directc2c_state != PICA_DIRECTC2C_STATE_INACTIVE && cc->directc2c_state != PICA_DIRECTC2C_STATE_WAITINGINCOMING)
 			return 0;
@@ -750,7 +751,7 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 		if (cc->direct)
 			return 1;
 
-		if (cc->outgoing == PICA_C2C_OUTGOING || cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_CONNECTONLY)
+		if (cc->outgoing == PICA_C2C_OUTGOING || cc->directc2c_config == PICA_DIRECTC2C_CFG_CONNECTONLY)
 			cc->directc2c_state = PICA_DIRECTC2C_STATE_CONNECTING;
 
 		cc->direct = calloc(1, sizeof(struct PICA_directc2c));
@@ -769,7 +770,7 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_ADDRLIST(unsigned char* buf, un
 		directc2c_addrlist_ipv4(buf + 4, nb - 4, cc->direct->addrlist);
 		cc->direct->addrpos = 0;
 
-		if (cc->outgoing == PICA_C2C_INCOMING && cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+		if (cc->outgoing == PICA_C2C_INCOMING && cc->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
 			return 1;//connect later, if no incoming connection is accepted and DIRECTC2C_FAILED is received
 
 		ret = directc2c_connect_next(cc->direct, cc);
@@ -792,7 +793,7 @@ static unsigned int procmsg_PICA_PROTO_DIRECTC2C_FAILED(unsigned char* buf, unsi
 	if (cc->directc2c_state != PICA_DIRECTC2C_STATE_WAITINGINCOMING)
 		return 0;
 
-	if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_DISABLED)
+	if (cc->directc2c_config == PICA_DIRECTC2C_CFG_DISABLED)
 		return 0;
 
 	if (cc->outgoing != PICA_C2C_INCOMING)
@@ -821,7 +822,7 @@ unsigned int procmsg_PICA_PROTO_DIRECTC2C_SWITCH(unsigned char* buf, unsigned in
 	struct PICA_c2c *cc = (struct PICA_c2c *)p;
 	int ret;
 
-	if (cc->conn->directc2c_config == PICA_DIRECTC2C_CFG_DISABLED)
+	if (cc->directc2c_config == PICA_DIRECTC2C_CFG_DISABLED)
 		return 0;
 
 	if (cc->directc2c_state != PICA_DIRECTC2C_STATE_ACTIVE && cc->directc2c_state != PICA_DIRECTC2C_STATE_CONNECTING)
@@ -2786,6 +2787,13 @@ static int directc2c_stage2_starttls(struct PICA_directc2c *d, struct PICA_c2c *
 }
 
 
+void PICA_c2n_set_directc2c(struct PICA_c2n *c2n, enum PICA_directc2c_config direct_c2c_mode,
+                            struct PICA_listener *l)
+{
+	c2n->directc2c_config = direct_c2c_mode;
+	c2n->directc2c_listener = direct_c2c_mode == PICA_DIRECTC2C_CFG_ALLOWINCOMING ? l : NULL;
+}
+
 int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int port,
                  enum PICA_directc2c_config direct_c2c_mode, int multilogin,
                  struct PICA_listener *l, struct PICA_c2n **ci)
@@ -2806,13 +2814,8 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
 
 	cid->acc = acc;
 
-	cid->directc2c_config = direct_c2c_mode;
+	PICA_c2n_set_directc2c(cid, direct_c2c_mode, l);
 	cid->multilogin_policy = multilogin;
-
-	if (direct_c2c_mode == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
-	{
-		cid->directc2c_listener = l;
-	}
 
 	cid->read_buf = calloc(PICA_CONNREADBUFSIZE, 1);//(2)
 	if (!cid->read_buf)
@@ -3377,7 +3380,7 @@ static void process_directc2c(struct PICA_c2n *c2n, fd_set *rfds, fd_set *wfds)
 	{
 		if (c2c->directc2c_state == PICA_DIRECTC2C_STATE_FAILEDTOCONNECT)
 		{
-			if (c2c->outgoing == PICA_C2C_OUTGOING && c2c->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+			if (c2c->outgoing == PICA_C2C_OUTGOING && c2c->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
 			{
 				ret = PICA_send_directc2cfailed(c2c);
 
@@ -3832,11 +3835,10 @@ int PICA_event_loop(struct PICA_c2n **connections, int timeout)
 				}
 			}
 
-			//processing direct c2c connections associated with current c2n
-			if ((*ic2n)->directc2c_config != PICA_DIRECTC2C_CFG_DISABLED)
-			{
-				process_directc2c(*ic2n, &rfds, &wfds);
-			}
+			/* processing direct c2c connections associated with current c2n -
+			 * even with them disabled now, those of c2c connections made
+			 * before that */
+			process_directc2c(*ic2n, &rfds, &wfds);
 
 			//processing media connections of calls in progress
 			PICA_media_process(*ic2n, &rfds);
@@ -4142,7 +4144,7 @@ static int listener_addrlist(const struct PICA_listener *l, struct PICA_listener
 int PICA_send_directc2caddrlist(struct PICA_c2c *chn)
 {
 	PICA_TRACEFUNC
-	if (chn->conn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING && chn->conn->directc2c_listener)
+	if (chn->directc2c_config == PICA_DIRECTC2C_CFG_ALLOWINCOMING && chn->conn->directc2c_listener)
 	{
 		struct PICA_proto_msg *mp;
 		struct PICA_listener_addr list[PICA_DIRECTC2C_MAX_ADDRS];

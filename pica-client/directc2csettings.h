@@ -90,6 +90,19 @@ struct DirectC2CSettings
 		}
 	}
 
+	// Whether a listener set up for o would be set up the same way for these
+	// settings: the port and the list only matter in manual configuration.
+	bool sameListener(const DirectC2CSettings &o) const
+	{
+		if (upnp != o.upnp || addrConfig != o.addrConfig)
+			return false;
+
+		if (addrConfig != AddrConfigManual)
+			return true;
+
+		return localPort == o.localPort && formatAddrs(addrs) == formatAddrs(o.addrs);
+	}
+
 	void store(Settings &st) const
 	{
 		st.storeValue("direct_c2c.state", QString::number(state));

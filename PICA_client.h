@@ -364,6 +364,10 @@ struct PICA_c2c
 	struct PICA_c2c *next;
 	struct PICA_c2c *prev;
 	enum PICA_c2c_state state;
+	/* the c2n connection's directc2c_config when this connection was made;
+	 * the direct connection is negotiated by it, whatever the setting is
+	 * changed to later on */
+	enum PICA_directc2c_config directc2c_config;
 	enum PICA_directc2c_state directc2c_state;
 	time_t timestamp;
 	int sendfilestate;
@@ -595,6 +599,16 @@ int PICA_new_c2n(const struct PICA_acc *acc, const char *nodeaddr, unsigned int 
                  struct PICA_listener *l, struct PICA_c2n **ci);
 
 int PICA_new_c2c(struct PICA_c2n *ci, const unsigned char *peer_id, struct PICA_listener *l, struct PICA_c2c **chn);
+
+/**
+ * Changes the direct connection setting of an established or connecting c2n
+ * connection, as given to PICA_new_c2n(). It applies to the c2c connections
+ * made from then on; those already there carry on as they were negotiated.
+ * \param l the listener for PICA_DIRECTC2C_CFG_ALLOWINCOMING, ignored
+ * otherwise. A listener taken away from every c2n connection can be closed.
+ */
+void PICA_c2n_set_directc2c(struct PICA_c2n *c2n, enum PICA_directc2c_config direct_c2c_mode,
+                            struct PICA_listener *l);
 /**
  * Opens the TCP port for incoming direct c2c connections bypassing nodes, and
  * the UDP port with the same number for the media of calls.

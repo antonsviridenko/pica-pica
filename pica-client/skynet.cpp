@@ -83,7 +83,7 @@ SkyNet::SkyNet()
 	this->direct_listener = NULL;
 	listener_setup_pending = false;
 	listener_failed = false;
-	join_wanted = false;
+	join_deferred = false;
 
 	qRegisterMetaType<quintptr>("quintptr");
 
@@ -566,35 +566,17 @@ void SkyNet::do_Join(const Accounts::AccountRecord &accrec)
 
 	dcs.load(st);
 
-	directc2c_cfg = (PICA_directc2c_config)dcs.state;
 	multilogin = st.loadValue("multiple_logins.state", PICA_MULTILOGIN_PROHIBIT).toInt();
 
-	join_wanted = true;
-
-	if (!listener && directc2c_cfg == PICA_DIRECTC2C_CFG_ALLOWINCOMING)
+	// joined from listener_ready(), once the listener is there
+	if (sync_listener(dcs, true))
 	{
-		if (listener_failed)
-		{
-			directc2c_cfg = PICA_DIRECTC2C_CFG_CONNECTONLY;
-		}
-		else
-		{
-			// joined from listener_ready(), once the listener is there
-			if (!listener_setup_pending)
-			{
-				listener_setup_pending = true;
-
-				QMetaObject::invokeMethod(direct_listener, "setup", Qt::QueuedConnection,
-				                          Q_ARG(quintptr, (quintptr)acc),
-				                          Q_ARG(int, dcs.addrConfig),
-				                          Q_ARG(bool, dcs.upnp),
-				                          Q_ARG(int, dcs.localPort),
-				                          Q_ARG(QString, DirectC2CSettings::formatAddrs(dcs.addrs)));
-			}
-
-			return;
-		}
+		join_deferred = true;
+		return;
 	}
+
+	join_deferred = false;
+	directc2c_cfg = effective_directc2c_config(dcs.state);
 
 	if (!connecting_nodes.empty())
 	{
@@ -628,26 +610,142 @@ void SkyNet::Exit()
 	QMetaObject::invokeMethod(this, "do_Exit", Qt::AutoConnection);
 }
 
+void SkyNet::ApplyDirectC2CSettings()
+{
+	QMetaObject::invokeMethod(this, "do_ApplyDirectC2CSettings", Qt::AutoConnection);
+}
+
+void SkyNet::do_ApplyDirectC2CSettings()
+{
+	Settings st(config_dbname, network_sql_connection_name);
+	DirectC2CSettings dcs;
+
+	dcs.load(st);
+
+	// the user may have just fixed what made it fail
+	listener_failed = false;
+
+	// Offline, do_Join() sets the listener up when it is time to.
+	sync_listener(dcs, online());
+
+	set_nodelinks_directc2c(dcs.state);
+}
+
+bool SkyNet::online() const
+{
+	return self_aware || !connecting_nodes.isEmpty();
+}
+
+bool SkyNet::sync_listener(const DirectC2CSettings &dcs, bool start)
+{
+	bool wanted = dcs.state == PICA_DIRECTC2C_CFG_ALLOWINCOMING;
+
+	if (listener && (!wanted || !dcs.sameListener(listener_cfg)))
+		drop_listener();
+
+	// One being set up for settings that have changed since is dealt with
+	// in listener_ready().
+	if (listener_setup_pending)
+		return true;
+
+	if (!wanted || listener || listener_failed || !start)
+		return false;
+
+	start_listener_setup(dcs);
+
+	return true;
+}
+
+void SkyNet::start_listener_setup(const DirectC2CSettings &dcs)
+{
+	listener_cfg = dcs;
+	listener_setup_pending = true;
+
+	QMetaObject::invokeMethod(direct_listener, "setup", Qt::QueuedConnection,
+	                          Q_ARG(quintptr, (quintptr)acc),
+	                          Q_ARG(int, dcs.addrConfig),
+	                          Q_ARG(bool, dcs.upnp),
+	                          Q_ARG(int, dcs.localPort),
+	                          Q_ARG(QString, DirectC2CSettings::formatAddrs(dcs.addrs)));
+}
+
+void SkyNet::drop_listener()
+{
+	struct PICA_listener *l = listener;
+
+	listener = NULL;
+
+	// no node connection may refer to it once it is closed
+	set_nodelinks_directc2c(listener_cfg.state);
+
+	PICA_close_listener(l);
+
+	// deletes the UPnP port mapping
+	QMetaObject::invokeMethod(direct_listener, "release", Qt::QueuedConnection);
+
+	emit StatusMsg(tr("Stopped listening for incoming direct connections"), false);
+}
+
+PICA_directc2c_config SkyNet::effective_directc2c_config(int state) const
+{
+	if (state == PICA_DIRECTC2C_CFG_ALLOWINCOMING && !listener)
+		return PICA_DIRECTC2C_CFG_CONNECTONLY;
+
+	return (PICA_directc2c_config)state;
+}
+
+void SkyNet::set_nodelinks_directc2c(int state)
+{
+	PICA_directc2c_config cfg = effective_directc2c_config(state);
+
+	if (active_nodelink)
+		PICA_c2n_set_directc2c(active_nodelink, cfg, listener);
+
+	for (int i = 0; i < connecting_nodes.size(); i++)
+		PICA_c2n_set_directc2c(connecting_nodes[i].first, cfg, listener);
+}
+
 void SkyNet::listener_ready(quintptr l, QString upnp_addr, int upnp_port)
 {
+	Settings st(config_dbname, network_sql_connection_name);
+	DirectC2CSettings dcs;
+
 	listener_setup_pending = false;
 
-	if (l)
+	dcs.load(st);
+
+	if (dcs.state != PICA_DIRECTC2C_CFG_ALLOWINCOMING || !dcs.sameListener(listener_cfg))
+	{
+		// the settings changed while it was being set up
+		if (l)
+		{
+			PICA_close_listener((struct PICA_listener *)l);
+			QMetaObject::invokeMethod(direct_listener, "release", Qt::QueuedConnection);
+		}
+
+		if (sync_listener(dcs, join_deferred || online()))
+			return;
+	}
+	else if (l)
 	{
 		listener = (struct PICA_listener *)l;
 
-		if (!upnp_addr.isEmpty())
-			PICA_listener_set_upnp_addr(listener, upnp_addr.toLatin1().constData(), upnp_port);
+		// also when there is no mapping: a change reported for the mapping
+		// of a listener closed before may have arrived in between
+		PICA_listener_set_upnp_addr(listener, upnp_addr.isEmpty() ? NULL : upnp_addr.toLatin1().constData(),
+		                            upnp_port);
 	}
 	else
 	{
-		// connect-only until the next start, rather than failing again on
-		// every reconnection
+		// connect-only until the settings are changed or the client is
+		// restarted, rather than failing again on every reconnection
 		listener_failed = true;
 	}
 
-	if (join_wanted)
+	if (join_deferred)
 		do_Join(skynet_account);
+	else
+		set_nodelinks_directc2c(dcs.state);
 }
 
 void SkyNet::listener_upnp_changed(QString upnp_addr, int upnp_port)
@@ -668,7 +766,7 @@ void SkyNet::listener_status_msg(QString msg, bool is_critical)
 
 void SkyNet::do_Exit()
 {
-	join_wanted = false;
+	join_deferred = false;
 
 	if (self_aware && active_nodelink)
 	{

@@ -96,7 +96,9 @@ void PicaActionCenter::exit()
 void PicaActionCenter::showsettings()
 {
 	SettingsDialog sd;
-	sd.exec();
+
+	if (sd.exec())
+		skynet->ApplyDirectC2CSettings();
 }
 
 void PicaActionCenter::shownodes()

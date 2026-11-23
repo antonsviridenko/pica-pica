@@ -23,6 +23,7 @@
 #include "../PICA_proto.h"
 #include "accounts.h"
 #include "directlistener.h"
+#include "directc2csettings.h"
 #include <QObject>
 #include <QThread>
 #include <QMap>
@@ -39,6 +40,9 @@ public:
 	~SkyNet();
 	void Join(const Accounts::AccountRecord &accrec);
 	void Exit();
+	// Reads the direct connection settings again, after the settings dialog
+	// stored them: starts, restarts or stops the listener as they say.
+	void ApplyDirectC2CSettings();
 
 	void SendMessage(QByteArray to, QString msg);
 	void SendFile(QByteArray to, QString filepath);
@@ -127,9 +131,11 @@ private:
 	QThread direct_listener_thread;
 	bool listener_setup_pending;
 	bool listener_failed;
-	// Join() was called and Exit() has not been since, so that a listener
-	// arriving late does not bring the client back online.
-	bool join_wanted;
+	// the settings the listener was, or is being, set up for
+	DirectC2CSettings listener_cfg;
+	// do_Join() waits for the listener to be set up; cleared by Exit(), so
+	// that a listener arriving late does not bring the client back online
+	bool join_deferred;
 	Accounts::AccountRecord skynet_account;
 
 	QMap<QByteArray, QList<QString> > msgqueues;
@@ -272,6 +278,18 @@ private:
 
 	static void call_media_transport_cb(const unsigned char *peer_id, int transport, const char *ciphersuitename, unsigned int max_payload);
 
+	bool online() const;
+	// Closes a listener that dcs no longer want and, with start set, begins
+	// setting up the one they do. Returns whether a listener is being set
+	// up, i.e. there will be one to wait for.
+	bool sync_listener(const DirectC2CSettings &dcs, bool start);
+	void start_listener_setup(const DirectC2CSettings &dcs);
+	void drop_listener();
+	// what the node connections are told: connect-only while there is no
+	// listener for incoming connections
+	PICA_directc2c_config effective_directc2c_config(int state) const;
+	void set_nodelinks_directc2c(int state);
+
 private slots:
 	void nodelink_activated(PICA_c2n *c2n);
 	void nodelink_closed(PICA_c2n *c2n, int error);
@@ -309,6 +327,7 @@ private slots:
 	// direct call if already on that thread, queued otherwise.
 	void do_Join(const Accounts::AccountRecord &accrec);
 	void do_Exit();
+	void do_ApplyDirectC2CSettings();
 
 	void do_SendMessage(QByteArray to, QString msg);
 	void do_SendFile(QByteArray to, QString filepath);

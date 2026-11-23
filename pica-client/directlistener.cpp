@@ -91,6 +91,9 @@ void DirectListener::setup(quintptr accp, int addrConfig, bool useUpnp, int loca
 	int port = 0;
 	int i, ret;
 
+	// the mapping made for a listener set up before, if it was not released
+	release();
+
 	if (useUpnp)
 		discoverUpnp();
 
