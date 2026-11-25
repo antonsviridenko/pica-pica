@@ -120,7 +120,7 @@ void client_tree_print(struct client *c)
 
 void client_tree_remove(struct client* ci)
 {
-	struct client** p_link;//указывает на left или right в родительском узле
+	struct client** p_link;//points to left or right in the parent node
 
 	if (!ci->up)
 	{
@@ -159,7 +159,7 @@ void client_tree_remove(struct client* ci)
 	{
 		struct client *lm;
 		lm = ci->right;
-		while(lm->left) lm = lm->left; //поиск самого левого узла правого поддерева
+		while(lm->left) lm = lm->left; //find the leftmost node of the right subtree
 
 		if (lm != ci->right)
 		{

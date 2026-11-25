@@ -412,8 +412,8 @@ unsigned int procmsg_CONNID(unsigned char* buf, unsigned int size, void* ptr)
 
 	{
 		struct client *c;
-//проверка IP адреса.
-//IP адрес должен совпадать с адресом  клиента в управляющем соединении
+//IP address check.
+//IP address must match the client's address in the control connection
 
 		if (link->state == PICA_CCLINK_LOCAL_WAITCONNCLE || link->state == PICA_CCLINK_N2NCLE_WAITCONNCLE)
 			c = link->p2;
@@ -449,7 +449,7 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 	if (buf[2] == PICA_PROTO_VER_HIGH &&
 	        buf[3] == PICA_PROTO_VER_LOW)
 	{
-		////-прием входящего подключения
+		////-accepting incoming connection
 		//--------------------------
 		nc->state = PICA_NEWCONN_SENDINGOK;
 		/*struct nodelink *nl;
@@ -520,7 +520,7 @@ int nodelink_send_searchreq(const unsigned char *id)
 
 unsigned int procmsg_CONNREQOUTG(unsigned char* buf, unsigned int size, void* ptr)
 {
-	struct client *i, *o; //i - указатель на вызывающего клиента, o - вызываемого(если найден)
+	struct client *i, *o; //i - pointer to the calling client, o - to the callee (if found)
 	unsigned char *callee_id;
 	struct PICA_proto_msg *mp;
 
@@ -545,7 +545,7 @@ unsigned int procmsg_CONNREQOUTG(unsigned char* buf, unsigned int size, void* pt
 			return 1;
 		}
 
-		//отправить o _CONNREQINC
+		//send _CONNREQINC to o
 		if ((mp = client_wbuf_push(o, PICA_PROTO_CONNREQINC, PICA_PROTO_CONNREQINC_SIZE)))
 		{
 			memcpy(mp->tail, i->id, PICA_ID_SIZE);
@@ -556,7 +556,7 @@ unsigned int procmsg_CONNREQOUTG(unsigned char* buf, unsigned int size, void* pt
 			return 1;
 		}
 
-		return 1;//сообщение отправить не удалось, но все равно возвращаем 1
+		return 1;//failed to send the message, but return 1 anyway
 	}
 
 	if (cclink_list_findwaitsearch(callee_id)/*search request for this id is already in progress*/
@@ -566,7 +566,7 @@ unsigned int procmsg_CONNREQOUTG(unsigned char* buf, unsigned int size, void* pt
 		return 1;
 	}
 
-//отправить i _NOTFOUND
+//send _NOTFOUND to i
 	if ((mp = client_wbuf_push(i, PICA_PROTO_NOTFOUND, PICA_PROTO_NOTFOUND_SIZE)))
 	{
 		memcpy(mp->tail, callee_id, PICA_ID_SIZE);
@@ -634,7 +634,7 @@ unsigned int procmsg_CONNDENY(unsigned char* buf, unsigned int size, void* ptr)
 
 	if (link->state == PICA_CCLINK_LOCAL_WAITREP)
 	{
-		//отправить caller _NOTFOUND
+		//send _NOTFOUND to caller
 		if ((mp = client_wbuf_push(caller, PICA_PROTO_NOTFOUND, PICA_PROTO_NOTFOUND_SIZE)))
 		{
 			memcpy(mp->tail, callee->id, PICA_ID_SIZE);
@@ -642,7 +642,7 @@ unsigned int procmsg_CONNDENY(unsigned char* buf, unsigned int size, void* ptr)
 	}
 	else if (link->state == PICA_CCLINK_N2NCLE_WAITREP)
 	{
-		//отправить caller N2NNOTFOUND
+		//send N2NNOTFOUND to caller
 		if ((mp = nodelink_wbuf_push(link->caller_node, PICA_PROTO_N2NNOTFOUND, PICA_PROTO_N2NNOTFOUND_SIZE)))
 		{
 			memcpy(mp->tail, caller_id, PICA_ID_SIZE);
@@ -1113,7 +1113,7 @@ unsigned int procmsg_NODELISTREQ(unsigned char* buf, unsigned int size, void* pt
 
 	{
 		//TEMP FIXME CONF
-//собственный адрес узла
+//node's own address
 		nl_buf[nl_size] = PICA_PROTO_NEWNODE_IPV4;
 		*((in_addr_t*)(nl_buf + nl_size + 1)) = inet_addr(my_addr);
 		*((in_port_t*)(nl_buf + nl_size + 5)) = (nodecfg.listen_port ? htons(atoi(nodecfg.listen_port)) :  htons(PICA_COMM_PORT)); //CONF
@@ -1510,7 +1510,7 @@ void cclink_list_delete(struct cclink *l)
 		}
 	}
 
-//удаление из глобального списка
+//removal from the global list
 	if (l->prev)
 		l->prev->next = l->next;
 	else
@@ -1640,7 +1640,7 @@ struct cclink* cclink_list_add(struct client *clr, struct client *cle)
 	l->p1 = clr;
 	l->p2 = cle;
 
-//добавление в глобальный список
+//adding to the global list
 	if (cclink_list_head)
 	{
 		cclink_list_end->next = l;
@@ -2095,9 +2095,9 @@ void newconns_init()
 	}
 }
 
-//функция ищет свободный элемент в массиве структур newconn и возвращает на него указатель
-//В случае, если свободный элемент не найден, возвращается элемент с наиболее поздней отметкой времени,
-//при этом соединение закрывается
+//finds a free element in the newconn structure array and returns a pointer to it
+//If no free element is found, the element with the latest timestamp is returned,
+//and its connection is closed
 struct newconn* newconn_add(struct newconn *ncs, int *pos)
 {
 	time_t min;
@@ -2255,7 +2255,7 @@ void client_attach_multi_secondary(struct client *primary, struct client *second
 
 void client_tree_remove(struct client* ci)
 {
-	struct client** p_link;//указывает на left или right в родительском узле
+	struct client** p_link;//points to left or right in the parent node
 
 	if (!ci->up)
 	{
@@ -2294,7 +2294,7 @@ void client_tree_remove(struct client* ci)
 	{
 		struct client *lm;
 		lm = ci->right;
-		while(lm->left) lm = lm->left; //поиск самого левого узла правого поддерева
+		while(lm->left) lm = lm->left; //find the leftmost node of the right subtree
 
 		if (lm != ci->right)
 		{
@@ -2405,7 +2405,7 @@ void client_list_delete(struct client* ci)
 
 	PICA_debug1("client_list_delete(%p)", (void*)ci);
 	SSL_free(ci->ssl_comm);
-//удаление из списка
+//removal from the list
 	if (ci->prev)
 		ci->prev->next = ci->next;
 	else
@@ -2416,7 +2416,7 @@ void client_list_delete(struct client* ci)
 	else
 		client_list_end = ci->prev;
 
-//удаление из дерева
+//removal from the tree
 	s = client_tree_search(ci->id);
 
 	if (s == ci)
@@ -3448,7 +3448,7 @@ void process_c2n_write(evutil_socket_t s, short event, void *arg)
 			}
 		}
 		if (ret == 1)
-			//проверить сертификат пользователя
+			//check the user's certificate
 		{
 			X509* client_cert;
 			struct client *primary;
@@ -3458,7 +3458,7 @@ void process_c2n_write(evutil_socket_t s, short event, void *arg)
 			client_cert = SSL_get_peer_certificate (i_ptr->ssl_comm);
 			if (!client_cert)
 			{
-				//ERR_CHECK //нет сертификата
+				//ERR_CHECK //no certificate
 				kill_ptr = i_ptr;
 			}
 
@@ -3499,7 +3499,7 @@ void process_c2n_write(evutil_socket_t s, short event, void *arg)
 			}
 			if (!ret)
 			{
-				//ERR_CHECK  //не уникальный id
+				//ERR_CHECK  //id is not unique
 				kill_ptr = i_ptr;
 			}
 		}
@@ -4172,7 +4172,7 @@ int pica_node_main(int argc, char** argv)
 		          );
 	}
 
-	PICA_node_joinskynet(nodecfg.nodes_db_file, nodecfg.announced_addr);//CONF-CONF имя файла с адресами узлов, свой адрес
+	PICA_node_joinskynet(nodecfg.nodes_db_file, nodecfg.announced_addr);//CONF-CONF node addresses file name, own address
 
 	my_addr = nodecfg.announced_addr;//TEMP FIXME
 

@@ -14,7 +14,7 @@
 	You should have received a copy of the GNU General Public License
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-// Описание структур и функций для работы со списком адресов узлов
+// Structures and functions for working with the node address list
 //
 #ifndef PICA_NODEADDRLIST_H
 #define PICA_NODEADDRLIST_H
@@ -57,10 +57,10 @@ struct PICA_nodeaddr_dns
 
 struct PICA_nodeaddr
 {
-	char addr[256];//макс. длина DNS имени 255 символов
-	int inactive_count;//кол-во зафиксированных подряд случаев недоступности узла
+	char addr[256];//max. DNS name length is 255 characters
+	int inactive_count;//number of consecutive times the node was found unreachable
 	time_t last_active;//
-	in_port_t port;//номер порта - host byte order
+	in_port_t port;//port number - host byte order
 
 	struct PICA_nodeaddr *next;
 };

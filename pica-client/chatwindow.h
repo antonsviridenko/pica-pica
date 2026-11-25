@@ -58,7 +58,7 @@ signals:
 public slots:
 	void msg_from_peer(QString msg);
 	void msg_delivered();
-	void msg_informational(QString text);//юзер в оффлайне, набирает сообщение, и т.д. серым шрифтом, курсив
+	void msg_informational(QString text);//user is offline, is typing, etc. - gray italic font
 	void set_peer_name();
 	void update_status(QString status);
 

@@ -132,11 +132,11 @@ struct client
 	unsigned int r_pos;
 	unsigned int w_pos;
 
-	unsigned int btw_ssl;//кол-во отправляемых байтов, передаваемое функции SSL_write
-//Если требуется повторный вызов SSL_write,то нужно передавать те же значения аргументов,а w_pos может быть увеличен
+	unsigned int btw_ssl;//number of bytes to send, passed to SSL_write
+//If SSL_write has to be retried, the same argument values must be passed, while w_pos may be increased
 //
 	int state;
-	struct client* next;//структура client может быть одновременно в составе дерева и линейного списка
+	struct client* next;//a client structure can be in a tree and a linked list at the same time
 	struct client* prev;
 
 	time_t tmst;
@@ -155,7 +155,7 @@ struct client
 	time_t udpaddr_req_tmst;
 };
 
-struct cclink //структура, описывающая соединение двух клиентов между собой через сервер
+struct cclink //describes a connection between two clients through the server
 {
 //unsigned int cclink_id;
 	unsigned int state;
@@ -198,7 +198,7 @@ enum newconn_type
 	NEWCONN_N2N
 };
 
-struct newconn //структура, описывающая новое подключение (клиента)
+struct newconn //describes a new (client) connection
 {
 	SOCKET sck;
 	SSL *anonssl;
@@ -222,8 +222,8 @@ struct nodelink
 	SOCKET sck;
 	SSL *anonssl;
 
-	unsigned int addr_type;//тип адреса узла - PICA_PROTO_NEWNODE_IPV4,PICA_PROTE_NEWNODE_IPV6,...
-	void *node_addr;//указатель на структуру адреса {PICA_nodeaddr_ipv4, PICA_nodeaddr_ipv6,PICA_nodeaddr_dns,..}
+	unsigned int addr_type;//node address type - PICA_PROTO_NEWNODE_IPV4,PICA_PROTE_NEWNODE_IPV6,...
+	void *node_addr;//pointer to the address structure {PICA_nodeaddr_ipv4, PICA_nodeaddr_ipv6,PICA_nodeaddr_dns,..}
 
 	unsigned char *r_buf;
 	unsigned char *w_buf;

@@ -20,8 +20,8 @@
 #include "PICA_msgproc.h"
 
 
-//возвращает размер сообщения либо UINT_MAX,если количество прочитанных байт недостаточно для определения размера
-//либо 0 при ошибочных данных
+//returns the message size, or UINT_MAX if not enough bytes have been read to determine the size,
+//or 0 if the data is invalid
 unsigned int PICA_msggetsize(unsigned char *buf, unsigned int nb, struct PICA_msginfo *msgs, unsigned int nmsg)
 {
 	unsigned int i;
@@ -61,7 +61,7 @@ unsigned int PICA_msggetsize(unsigned char *buf, unsigned int nb, struct PICA_ms
 	return 0;
 }
 
-//Определяет тип сообщения размера size, находящегося в буфере buf, вызывает соответствующий обработчик и передает обработчику аргумент arg. Возвращает значение, которое вернула функция-обработчик сообщения. Если тип сообщения неизвестен, возвращает 0
+//Determines the type of the message of size size located in buffer buf, calls the corresponding handler and passes it the argument arg. Returns the value returned by the message handler. Returns 0 if the message type is unknown
 unsigned int PICA_processmsg(unsigned char *buf, unsigned int size, void* arg, struct PICA_msginfo *msgs, unsigned int nmsg)
 {
 	int i;
@@ -95,7 +95,7 @@ unsigned int PICA_processdatastream(unsigned char *buf, unsigned int *read_pos, 
 
 		*read_pos -= uret;
 
-		memmove(buf, buf + uret, *read_pos); //сдвиг содержимого буфера к началу
+		memmove(buf, buf + uret, *read_pos); //move the buffer contents to the beginning
 	}
 
 	return 1;

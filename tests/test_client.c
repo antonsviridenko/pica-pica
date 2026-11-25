@@ -54,7 +54,7 @@ int accept_cb(const unsigned char *id)
 	return 1;
 }
 
-//получение сообщения.
+//message received.
 void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb, int type)
 {
 
@@ -87,13 +87,13 @@ void newmsg_cb(const unsigned char *peer_id, const char* msgbuf, unsigned int nb
 	printf(" %s: ", PICA_id_to_base64(peer_id, NULL));
 	puts(buf);
 }
-//получение подтверждения о доставке сообщения
+//message delivery confirmation received
 void msgok_cb(const unsigned char *peer_id)
 {
 	delivery_acks_count++;
 	puts("[V]");
 }
-//создание канала с собеседником
+//channel with the peer created
 void c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitename)
 {
 	c2c_active = 1;
@@ -109,9 +109,9 @@ void c2c_failed_cb(const unsigned char *peer_id)
 	chn = 0;
 }
 
-//входящий запрос на создание канала от пользователя с номером caller_id
+//incoming channel request from the user with id caller_id
 //<<int accept_cb(unsigned int caller_id);
-//запрошенный пользователь не найден, в оффлайне или отказался от общения
+//requested user not found, offline, or refused to talk
 void notfound_cb(const unsigned char *callee_id)
 {
 	puts("notfound_cb");

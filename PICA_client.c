@@ -1053,7 +1053,7 @@ static unsigned int procmsg_NOTFOUND(unsigned char* buf, unsigned int nb, void* 
 	}
 
 	if (!rq)
-		return 0;// ERR_CHECK -левое сообщение, такой запрос не посылался
+		return 0;// ERR_CHECK - bogus message, no such request was sent
 
 //puts("procmsg_NOTFOUND_chkp0");//debug
 	PICA_close_c2c(rq);
@@ -1089,7 +1089,7 @@ static unsigned int procmsg_FOUND(unsigned char* buf, unsigned int nb, void* p)
 	}
 
 	if (!rq)
-		return 0;// ERR_CHECK -левое сообщение, такой запрос не посылался
+		return 0;// ERR_CHECK - bogus message, no such request was sent
 
 	ret = c2c_start(rq);
 
