@@ -2132,6 +2132,11 @@ ret:
 	ncs[*pos].sck = -1;
 	ncs[*pos].pos = 0;
 	ncs[*pos].tmst = time(0);
+	//a slot handed over by newconn_free() still carries the type of its
+	//previous connection, which the request handlers would take for a second
+	//request on this one
+	ncs[*pos].type = NEWCONN_UNKNOWN;
+	ncs[*pos].iconn.cl = NULL;
 	return &ncs[(*pos)++];
 }
 
