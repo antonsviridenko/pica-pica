@@ -180,8 +180,8 @@ AC_SUBST([QT_DEPENDENCIES_LIBS])
 AC_CHECK_PROGS([UIC], [$QT_UIC_NAMES], [notfound])
 AC_CHECK_PROGS([MOC], [$QT_MOC_NAMES], [notfound])
 #fail if not found ...
-AS_IF([test "x$UIC" = xnotfound],[AC_MSG_ERROR(["uic program not found. Please install Qt development package"])])
-AS_IF([test "x$MOC" = xnotfound],[AC_MSG_ERROR(["moc program not found. Please install Qt development package"])])
+AS_IF([test "x$UIC" = xnotfound],[AC_MSG_ERROR(["uic program not found. Please install the Qt development package"])])
+AS_IF([test "x$MOC" = xnotfound],[AC_MSG_ERROR(["moc program not found. Please install the Qt development package"])])
 
 #check for FFmpeg libraries
 PKG_CHECK_MODULES([FFMPEG],["libavcodec libavdevice libavformat libavutil libswresample libswscale"])

@@ -41,7 +41,7 @@ Package: pica-node
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, adduser (>= 3.11)
 Description: node component for Pica Pica IM system
- Pica Pica node serves Pica Pica distributed IM network.
+ Pica Pica node serves the Pica Pica distributed IM network.
  It authenticates users, provides info about other existing
- nodes and online users, routes encrypted connections between
+ nodes and online users, and routes encrypted connections between
  users.

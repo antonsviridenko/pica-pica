@@ -298,7 +298,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	connect(audioDriver, SIGNAL(currentIndexChanged(int)), this, SLOT(audioDriverChanged(int)));
 #endif
 
-	QLabel *lbAudioCaptureDev = new QLabel(tr("Microphone Device 🎙️"));
+	QLabel *lbAudioCaptureDev = new QLabel(tr("Microphone device 🎙️"));
 	QLabel *lbAudioPlaybackDev = new QLabel(tr("Playback device 🎧"));
 	QLabel *lbAudioRingDev = new QLabel(tr("Ring device 🔔☎️"));
 
@@ -336,7 +336,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	                               "Works with any microphone and any sound system, and is the "
 	                               "only option where the platform provides nothing."));
 
-	rbEchoCancelPlatform = new QRadioButton(tr("Use platform provided echo cancellation"), gbEchoCancel);
+	rbEchoCancelPlatform = new QRadioButton(tr("Use platform-provided echo cancellation"), gbEchoCancel);
 
 	rbEchoCancelNone = new QRadioButton(tr("Disable echo cancellation"), gbEchoCancel);
 	rbEchoCancelNone->setToolTip(tr("Nothing is removed from the microphone signal. Right with a "
@@ -456,9 +456,9 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	cbPreferCompressed = new QCheckBox(tr("Prefer compressed formats if provided by the camera"), this);
 
 #ifdef HAVE_VAAPI
-	cbVaapiEncoding = new QCheckBox(tr("enable VAAPI-accelerated hardware encoding"), this);
-	cbVaapiDecoding = new QCheckBox(tr("enable VAAPI-accelerated hardware decoding"), this);
-	cbVaapiRendering = new QCheckBox(tr("enable VAAPI accelerated hardware rendering"), this);
+	cbVaapiEncoding = new QCheckBox(tr("Enable VAAPI-accelerated hardware encoding"), this);
+	cbVaapiDecoding = new QCheckBox(tr("Enable VAAPI-accelerated hardware decoding"), this);
+	cbVaapiRendering = new QCheckBox(tr("Enable VAAPI-accelerated hardware rendering"), this);
 	// Drawing a VA surface means having decoded into one first, so rendering
 	// brings decoding along with it whether or not it was asked for.
 	cbVaapiRendering->setToolTip(tr("Requires hardware decoding, which is enabled along with it"));
@@ -670,7 +670,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 	calltab->setLayout(callLayout);
 
 	tabW->addTab(directc2ctab, tr("Direct Connections"));
-	tabW->addTab(multilogintab, tr("Multiple logins"));
+	tabW->addTab(multilogintab, tr("Multiple Logins"));
 	tabW->addTab(audiodevtab, tr("Audio Devices"));
 	tabW->addTab(videodevtab, tr("Video Devices"));
 	tabW->addTab(calltab, tr("Call Settings"));

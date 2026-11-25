@@ -233,7 +233,7 @@ void FileTransferController::send_file(QByteArray peer_id)
 
 	if (ftdialogs_out.contains(peer_id))
 	{
-		msguirouter->notification(tr("There is already file transfer in progress. Wait until it is finished."), true);
+		msguirouter->notification(tr("There is already a file transfer in progress. Wait until it is finished."), true);
 		return;
 	}
 

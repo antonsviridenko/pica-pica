@@ -74,7 +74,7 @@ void NodesDialog::Add()
 	QRegExp rx("(.+):(\\d{1,5})");
 	bool ok;
 	QString input = QInputDialog::getText(this, tr("Add New Node"),
-			tr("hostname:port (ex. picanode.example:com:2299 1.2.3.4:1234)"), QLineEdit::Normal, NULL, &ok);
+			tr("hostname:port (e.g. picanode.example.com:2299 or 1.2.3.4:1234)"), QLineEdit::Normal, NULL, &ok);
 
 	if (ok && rx.exactMatch(input))
 	{

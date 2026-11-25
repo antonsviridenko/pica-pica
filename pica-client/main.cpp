@@ -191,7 +191,7 @@ static bool update_database()
 
 	QSqlQuery query;
 
-	//checking if table schema_version exists. If not, then database belongs to pica-client before 0.5.3 version
+	//checking if the schema_version table exists. If not, the database belongs to a pica-client version older than 0.5.3
 	query.exec("select count(*) from sqlite_master where name='schema_version'");
 	query.next();
 

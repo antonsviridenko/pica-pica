@@ -154,7 +154,7 @@ public:
 	// That is how Windows and macOS are handled. Both provide acoustic echo
 	// cancellation, but only to streams that declare themselves part of a
 	// voice call - AudioCategory_Communications on WASAPI, the
-	// VoiceProcessingIO audio unit on CoreAudio - and libavdevice's
+	// VoiceProcessingIO audio unit on CoreAudio - and libavdevice's "dsound"
 	// and "audiotoolbox" wrappers have no way to ask for either. Rather than
 	// open the sound card the plain way and then cancel the echo ourselves on
 	// platforms that would have done a better job of it below us, we talk to

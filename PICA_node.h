@@ -98,9 +98,9 @@
 
 #define PICA_NETWORKNAME "TESTNET" // TEMP //CONF
 
-#define NEWCONN_BUFSIZE 58 //FIXME this is the size of CONNID packet, this packet is followed by TLS session negotiation data.
-//TLS data must not be interpreted as some PICA packet by PICA_processdatastream(),
-//so buffer size is limited by the size of CONNID.
+#define NEWCONN_BUFSIZE 58 //FIXME this is the size of the CONNID packet, which is followed by TLS session negotiation data.
+//TLS data must not be interpreted as a PICA packet by PICA_processdatastream(),
+//so the buffer size is limited by the size of CONNID.
 
 #define DEFAULT_BUF_SIZE 4096
 
@@ -140,7 +140,7 @@ struct client
 	struct client* prev;
 
 	time_t tmst;
-	int disconnect_ticking;//on sending message TO client this var is set to 1, on receiving some message FROM client this var is reset to 0
+	int disconnect_ticking;//on sending a message TO the client this var is set to 1, on receiving any message FROM the client it is reset to 0
 	struct event *ev_read;
 	struct event *ev_write;
 
@@ -222,7 +222,7 @@ struct nodelink
 	SOCKET sck;
 	SSL *anonssl;
 
-	unsigned int addr_type;//node address type - PICA_PROTO_NEWNODE_IPV4,PICA_PROTE_NEWNODE_IPV6,...
+	unsigned int addr_type;//node address type - PICA_PROTO_NEWNODE_IPV4,PICA_PROTO_NEWNODE_IPV6,...
 	void *node_addr;//pointer to the address structure {PICA_nodeaddr_ipv4, PICA_nodeaddr_ipv6,PICA_nodeaddr_dns,..}
 
 	unsigned char *r_buf;

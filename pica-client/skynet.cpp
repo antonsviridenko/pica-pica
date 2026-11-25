@@ -303,7 +303,7 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 			{
 			case PICA_ERRPROTONEW:
 
-				emit StatusMsg(QString("Node %1:%2 has newer protocol version. Please check if update for pica-client is available")
+				emit StatusMsg(QString("Node %1:%2 has a newer protocol version. Please check if an update for pica-client is available")
 				               .arg(connecting_nodes[i].second.address)
 				               .arg(connecting_nodes[i].second.port),
 				               true);
@@ -311,7 +311,7 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 
 			case PICA_ERRPROTOOLD:
 
-				emit StatusMsg(QString("Node %1:%2 has older protocol. Disconnected.")
+				emit StatusMsg(QString("Node %1:%2 has an older protocol version. Disconnected.")
 				               .arg(connecting_nodes[i].second.address)
 				               .arg(connecting_nodes[i].second.port),
 				               true);
@@ -333,7 +333,7 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 
 void SkyNet::multilogin_event(quint64 timestamp, QString node_addr, quint16 node_port)
 {
-	emit StatusMsg(QString("%3 Detected new login of your account at node %1:%2")
+	emit StatusMsg(QString("%3 Detected a new login to your account at node %1:%2")
 				.arg(node_addr).arg(node_port).arg(QDateTime::fromTime_t(timestamp).toString("yyyy-MM-dd hh:mm:ss")),
 				true);
 
@@ -1028,7 +1028,7 @@ void SkyNet::do_AcceptCall(QByteArray from)
 		ret = PICA_pickup_call(iptr);
 
 		if (ret != PICA_OK)
-			emit CallFailed(from, QString(tr("Failed to pickup the call: %1")).arg(ret));
+			emit CallFailed(from, QString(tr("Failed to pick up the call: %1")).arg(ret));
 		else
 			call_active_set(true, from);
 
@@ -1036,7 +1036,7 @@ void SkyNet::do_AcceptCall(QByteArray from)
 	}
 
 	/* the connection the call came in on is gone */
-	emit CallFailed(from, QString(tr("Failed to pickup the call: not connected")));
+	emit CallFailed(from, QString(tr("Failed to pick up the call: not connected")));
 }
 
 void SkyNet::RejectCall(QByteArray from)
@@ -1514,7 +1514,7 @@ void SkyNet::c2c_failed(const unsigned char *peer_id)
 
 int SkyNet::accept_cb(const unsigned char *caller_id)
 {
-	return 1; //implement black list
+	return 1; //implement blacklist
 }
 
 void SkyNet::notfound_cb(const unsigned char *callee_id)

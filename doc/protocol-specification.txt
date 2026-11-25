@@ -16,7 +16,7 @@ There are 5 types of connections between Pica Pica nodes and clients.
 Apart from them, a node accepts single UDP datagrams from clients, see the "Get
 my UDP address" messages.
 
--client to node (c2n) - a control connection from client to node
+-client to node (c2n) - a control connection from a client to a node
 
 -client to client (c2c) - a data connection between clients through a node
 acting as a proxy
@@ -223,7 +223,7 @@ Get my TCP address.
 
 Sent by a client. Requests the node to respond with the client
 address and TCP port as seen by the node. The response should
-be one packet of the type A0 or A1 corresponding to protocol used for this
+be one packet of the type A0 or A1 corresponding to the protocol used for this
 TCP connection - IPv4 or IPv6
 
 [0x0F 0x0F][2 pseudo-random octets]
@@ -331,7 +331,7 @@ Sent by the client.
 
 Upon receiving this message the node checks the UHs. If they do not match, the
 connection is closed. After the check the node switches into data relaying mode
-between the two clients. The calling client initiates TLS connection
+between the two clients. The calling client initiates the TLS connection
 establishment.
 ====================================================
 
@@ -759,7 +759,7 @@ in the list.
 A message can contain only a part of the node list instead of the whole list;
 in that case the whole list is sent in parts. Addresses and port numbers are in
 "network" byte order.
-The whole packet size does not exceed 64kb.
+The whole packet size does not exceed 64 KB.
 ====================================================
 Node list request.
 

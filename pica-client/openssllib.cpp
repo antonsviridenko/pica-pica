@@ -302,7 +302,7 @@ void OpenSSLLibWorker::RunGenRSAKey()
 	quint32 numbits;
 
 	/*
-	 * Generate random-sized key with min size 4096 and multiply of 8.
+	 * Generate random-sized key with min size 4096 and multiple of 8.
 	 * Max size is limited to 4096 + 99*8.
 	 * See https://blog.josefsson.org/2016/11/03/why-i-dont-use-2048-or-4096-rsa-key-sizes/
 	 * "Why I don’t Use 2048 or 4096 RSA Key Sizes"

@@ -212,7 +212,7 @@ void nodewait_start_resolve(struct PICA_nodeaddr *a)
 
 	nw ->addr = *a;
 
-	PICA_debug1("starting to resolve  node address %.255s %u ...", nw->addr.addr, nw->addr.port);
+	PICA_debug1("starting to resolve node address %.255s %u ...", nw->addr.addr, nw->addr.port);
 
 	nw->state = PICA_NODEWAIT_RESOLVING;
 
@@ -247,7 +247,7 @@ void nodewait_start_connect(struct nodewait *nw)
 	HANDLE thread_h;
 #endif
 
-	PICA_debug1("connecting to  node  %.255s %u ...", nw->addr.addr, nw->addr.port);
+	PICA_debug1("connecting to node %.255s %u ...", nw->addr.addr, nw->addr.port);
 
 	nw->state = PICA_NODEWAIT_CONNECTING;
 #ifndef WIN32

@@ -19,7 +19,7 @@
  *
  * A mediac2c connection exists only while a call is in progress. When the
  * call becomes active, up to two attempts are made, one after another - see
- * "Establishing the media connection" in doc/proto-doc-latest.txt:
+ * "Establishing the media connection" in doc/protocol-specification.txt:
  *
  * 1. Over the directc2c connection's address and port number, with UDP
  * instead of TCP, if the call's c2c connection has an established directc2c

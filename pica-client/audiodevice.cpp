@@ -144,7 +144,7 @@ static SwrContext *makeMonoResampler(AVSampleFormat inFmt, int inRate, AVSampleF
 
 // The AVCodecID behind one of the names the 0x74 message carries.
 //
-// Those are FFmpeg *codec* names (see doc/proto-doc-latest.txt), which are not
+// Those are FFmpeg *codec* names (see doc/protocol-specification.txt), which are not
 // always the name of an encoder or decoder for them: FFmpeg names each
 // implementation after itself, so the G.722 codec is "adpcm_g722" while the
 // only encoder and decoder for it are both called "g722". Going through the

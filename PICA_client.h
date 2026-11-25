@@ -493,7 +493,7 @@ struct PICA_client_callbacks
 	 */
 	void (*nodelist_cb)(int type, void *addr_bin, const char *addr_str, unsigned int port);
 	/**
-	 * Peer'c certificate in PEM format. Callback must compare passed cert with
+	 * Peer's certificate in PEM format. Callback must compare passed cert with
 	 * previously stored cert of this peer (if it exists).
 	 * \return verification result
 	 * \retval 1 - verification success
@@ -501,7 +501,7 @@ struct PICA_client_callbacks
 	 */
 	int (*peer_cert_verify_cb)(const unsigned char *peer_id, const char *cert_pem, unsigned int nb);
 	/**
-	 * Received request of file transfer.
+	 * Received file transfer request.
 	 * \return action to perform
 	 * \retval 0  - reject file
 	 * \retval 1 - accept file
@@ -593,13 +593,13 @@ extern "C" {
 #endif
 
 /**
- * Read certificate from cert_file in PEM format, store id in buffer pointed by id
+ * Read certificate from cert_file in PEM format, store id in buffer pointed to by id
  * \param [in] cert_file string with certificate file name
  * \param [out] id buffer to store ID, PICA_ID_SIZE octets
  */
 int PICA_get_id_from_cert_file(const char *cert_file, unsigned char *id);
 /**
- * Read certificate from C string in PEM format, store id in buffer pointed by id.
+ * Read certificate from C string in PEM format, store id in buffer pointed to by id.
  * \param [in] cert_pem - certificate in PEM format
  * \param [out] id buffer to store ID, PICA_ID_SIZE octets
  */
@@ -693,7 +693,7 @@ int PICA_send_msg(struct PICA_c2c *chn, char *buf, unsigned int len);
 int PICA_send_file(struct PICA_c2c *chn, const char *filepath);
 int PICA_accept_file(struct PICA_c2c *chan, char *filename, unsigned int filenamesize);
 int PICA_deny_file(struct PICA_c2c *chan);
-// if sending != 0 then pause sending file, else pause receiving of file
+// if sending != 0 then pause sending file, else pause receiving file
 int PICA_pause_file(struct PICA_c2c *chan, int sending);
 int PICA_resume_file(struct PICA_c2c *chan, int sending);
 int PICA_cancel_file(struct PICA_c2c *chan, int sending);

@@ -255,7 +255,7 @@ void FileTransferDialog::rightbuttonclick()
 	{
 
 		if (QMessageBox::No == QMessageBox::question(this, tr("Cancel File Transfer"),
-		        tr("Are you sure you want to cancel file transfer?"),
+		        tr("Are you sure you want to cancel the file transfer?"),
 		        QMessageBox::Yes | QMessageBox::No, QMessageBox::No))
 			return;
 

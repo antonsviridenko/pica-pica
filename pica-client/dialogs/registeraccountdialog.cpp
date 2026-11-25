@@ -41,7 +41,7 @@ RegisterAccountDialog::RegisterAccountDialog(QWidget *parent) :
 	cbSetPassword = new QCheckBox(tr("Set passphrase for the secret key"));
 	password = new QLineEdit();
 	repeatPassword = new QLineEdit();
-	lbStatus = new QLabel(tr("Enter your name and press\n \"Create\" to create new Pica Pica certificate"));
+	lbStatus = new QLabel(tr("Enter your name and press\n \"Create\" to create a new Pica Pica certificate"));
 	//btOK = new QPushButton(tr("OK"));
 
 	password->setEchoMode(QLineEdit::Password);
@@ -89,7 +89,7 @@ void RegisterAccountDialog::useDevRandomClick()
 	if (cbUseDevRandom->isChecked())
 	{
 		QMessageBox mbx;
-		mbx.setText(tr("Using /dev/random is more preferable for generating long-term high-value cryptographic keys, but it can take 5 - 10 minutes to collect required amount of entropy. You'll have to press random keys on keyboard and move mouse randomly to provide random data. "));
+		mbx.setText(tr("Using /dev/random is preferable for generating long-term high-value cryptographic keys, but it can take 5 - 10 minutes to collect the required amount of entropy. You'll have to press random keys on the keyboard and move the mouse randomly to provide random data. "));
 		mbx.exec();
 	}
 #endif
@@ -144,7 +144,7 @@ void RegisterAccountDialog::Register()
 	if (name.isEmpty())
 	{
 		QMessageBox mbx;
-		mbx.setText(tr("You must enter account name"));
+		mbx.setText(tr("You must enter an account name"));
 		mbx.exec();
 		return;
 	}
@@ -172,7 +172,7 @@ void RegisterAccountDialog::Register()
 	cbSetPassword -> setDisabled(true);
 
 	//1
-	lbStatus->setText(tr("1) generating RSA keypair..."));
+	lbStatus->setText(tr("1) Generating RSA keypair..."));
 
 	nickname->setEnabled(false);
 	btRegister->setEnabled(false);

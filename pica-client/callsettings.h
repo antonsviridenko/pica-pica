@@ -26,7 +26,7 @@
 // means the same thing to each of them.
 //
 // Codec names are FFmpeg names throughout. That is also how the 0x74 and 0x75
-// protocol messages name them (see doc/proto-doc-latest.txt), so what is
+// protocol messages name them (see doc/protocol-specification.txt), so what is
 // stored here goes both onto the wire and into
 // avcodec_find_encoder_by_name() with no translation table in between.
 

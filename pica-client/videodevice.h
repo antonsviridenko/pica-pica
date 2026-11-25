@@ -32,7 +32,7 @@
 
 // Reassembles the fragments of one encoded video frame, as carried by 0x77
 // protocol messages - see the fragmentation description in
-// doc/proto-doc-latest.txt. Used both on the receiving end of a call and by
+// doc/protocol-specification.txt. Used both on the receiving end of a call and by
 // the settings dialog's local pipeline test.
 class VideoFrameAssembler
 {

@@ -155,12 +155,12 @@ int PICA_nodeaddr_update(const char* dbfilename, struct PICA_nodeaddr *naddr, in
 	return 1;
 }
 
-int PICA_nodeaddr_cleanold(const char* dbfilename, int treshold)
+int PICA_nodeaddr_cleanold(const char* dbfilename, int threshold)
 {
 	sqlite3 *db;
 	sqlite3_stmt *stmt;
 	int ret;
-	const char query[] = "delete from nodes where inactive_count > :treshold";
+	const char query[] = "delete from nodes where inactive_count > :threshold";
 
 	ret = sqlite3_open(dbfilename, &db);
 
@@ -180,11 +180,11 @@ int PICA_nodeaddr_cleanold(const char* dbfilename, int treshold)
 		return -1;
 	}
 
-	ret = sqlite3_bind_int(stmt, 1, treshold);
+	ret = sqlite3_bind_int(stmt, 1, threshold);
 
 	if (ret != SQLITE_OK)
 	{
-		PICA_error("Can't bind treshold value: %s\n", sqlite3_errmsg(db));
+		PICA_error("Can't bind threshold value: %s\n", sqlite3_errmsg(db));
 		sqlite3_finalize(stmt);
 		sqlite3_close(db);
 		return -1;

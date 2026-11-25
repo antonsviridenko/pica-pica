@@ -32,7 +32,7 @@ PicaActionCenter::PicaActionCenter(QObject *parent) :
 	QObject(parent)
 {
 	exitAct = new QAction(tr("E&xit"), this);
-	exitAct->setStatusTip(tr("Close Pica Pica messenger and exit"));
+	exitAct->setStatusTip(tr("Close Pica Pica Messenger and exit"));
 	connect(exitAct, SIGNAL(triggered()), this, SLOT(exit()));
 
 	aboutAct = new QAction(tr("A&bout"), this);

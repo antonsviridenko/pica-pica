@@ -88,7 +88,7 @@ typedef u_short in_port_t;
  * A mapping always covers TCP and UDP with the same port number, and the
  * external port number is the same as the local one: the directc2c
  * connection is made over TCP and the media of a call over UDP to the same
- * announced port, see the 0x0B message in doc/proto-doc-latest.txt.
+ * announced port, see the 0x0B message in doc/protocol-specification.txt.
  *
  * A mapping is never permanent, whatever lease is asked for: IGD:2 devices
  * clamp a request for an infinite lease to a week, and any device loses its

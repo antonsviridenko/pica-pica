@@ -328,11 +328,11 @@ unsigned int procmsg_INITREQ(unsigned char* buf, unsigned int size, void* ptr)
 
 		if (buf[2] > PICA_PROTO_VER_HIGH || (buf[2] == PICA_PROTO_VER_HIGH && buf[3] > PICA_PROTO_VER_LOW))
 		{
-			PICA_warn("Client has newer protocol version than node. Please check if update for pica-node is available");
+			PICA_warn("The client has a newer protocol version than the node. Please check if an update for pica-node is available");
 		}
 		else
 		{
-			PICA_info("Client has older protocol version. Disconnecting ...");
+			PICA_info("The client has an older protocol version. Disconnecting...");
 		}
 	}
 
@@ -473,12 +473,12 @@ unsigned int procmsg_NODECONNREQ(unsigned char* buf, unsigned int size, void* pt
 
 		if (buf[2] > PICA_PROTO_VER_HIGH || (buf[2] == PICA_PROTO_VER_HIGH && buf[3] > PICA_PROTO_VER_LOW))
 		{
-			PICA_warn("Node %s has newer protocol version [%u, %u]. Please check if update for pica-node is available",
+			PICA_warn("Node %s has a newer protocol version [%u, %u]. Please check if an update for pica-node is available",
 			          inet_ntoa(nc->addr.sin_addr), buf[2], buf[3]);
 		}
 		else
 		{
-			PICA_info("Node %s has older protocol version. Disconnecting ...", inet_ntoa(nc->addr.sin_addr));
+			PICA_info("Node %s has an older protocol version. Disconnecting...", inet_ntoa(nc->addr.sin_addr));
 		}
 
 		return 0;*/
@@ -926,7 +926,7 @@ unsigned int procmsg_MULTILOGIN_node(unsigned char* buf, unsigned int size, void
 
 	if (!c)
 	{
-		PICA_debug3("no matching client found for receved n2n MULTILOGIN");
+		PICA_debug3("no matching client found for received n2n MULTILOGIN");
 		return 1;
 	}
 
@@ -1018,7 +1018,7 @@ unsigned int procmsg_NODERESP(unsigned char* buf, unsigned int size, void* ptr)
 	case PICA_PROTO_VERDIFFER:
 		if (buf[2] > PICA_PROTO_VER_HIGH ||  (buf[3] > PICA_PROTO_VER_LOW && buf[2] == PICA_PROTO_VER_HIGH))
 		{
-			PICA_warn("make update of node software - peer node has newer protocol version");
+			PICA_warn("update the node software - peer node has newer protocol version");
 		}
 		else
 		{
@@ -1408,7 +1408,7 @@ unsigned int procmsg_N2NMSG(unsigned char* buf, unsigned int size, void* ptr)
 	{
 		if (datalen + cc->bufpos_p1p2 > cc->buflen_p1p2)
 		{
-			cclink_list_delete(cc);//CLOSING CCLINK DUE TO BUFER OVERRUN --------- FIXME FIX FIX FIX
+			cclink_list_delete(cc);//CLOSING CCLINK DUE TO BUFFER OVERRUN --------- FIXME FIX FIX FIX
 			return 1;
 		}
 
@@ -1424,7 +1424,7 @@ unsigned int procmsg_N2NMSG(unsigned char* buf, unsigned int size, void* ptr)
 	{
 		if (datalen + cc->bufpos_p2p1 > cc->buflen_p2p1)
 		{
-			cclink_list_delete(cc);//CLOSING CCLINK DUE TO BUFER OVERRUN --------- FIXME FIX FIX FIX
+			cclink_list_delete(cc);//CLOSING CCLINK DUE TO BUFFER OVERRUN --------- FIXME FIX FIX FIX
 			return 1;
 		}
 
@@ -1625,7 +1625,7 @@ void cclink_list_delete_by_nodelink(struct nodelink *node)
 
 //clr - caller
 //cle - callee
-// null value of clr or cle means that corresponding client is on remote node, is not local client
+// a NULL value of clr or cle means that the corresponding client is on a remote node, not a local one
 struct cclink* cclink_list_add(struct client *clr, struct client *cle)
 {
 	struct cclink *l;
@@ -1925,7 +1925,7 @@ int PICA_node_init()
 
 	ret = listen(listen_comm_sck, 20);
 	if (ret == -1)
-		PICA_fatal("unable to listen socket - %s", strerror(errno));
+		PICA_fatal("unable to listen on socket - %s", strerror(errno));
 
 	{
 		int ret_comm;
@@ -2778,7 +2778,7 @@ void process_timeouts_c2n()
 			}
 			else
 			{
-				//2038 year has come, and this code is still working somewhere with 32bit Unix timestamps :)
+				//the year 2038 has come, and this code is still working somewhere with 32bit Unix timestamps :)
 				if ((i_ptr->tmst - cur_time ) > NOREPLY_TIMEOUT)
 					kill_ptr = i_ptr;
 			}
@@ -2837,7 +2837,7 @@ void process_timeouts_n2n()
 			}
 			else
 			{
-				//2038 year has come, and this code is still working somewhere with 32bit Unix timestamps :)
+				//the year 2038 has come, and this code is still working somewhere with 32bit Unix timestamps :)
 				if ((i_ptr->tmst - cur_time ) > NOREPLY_TIMEOUT)
 					kill_ptr = i_ptr;
 			}
@@ -2884,17 +2884,17 @@ int process_timeouts()
 
 	if (time(0) - skynet_refresh_tmst > SKYNET_REFRESH_TIMEOUT && !nodewait_list)
 	{
-		int clean_treshold = 100 - nodelink_list_count - cclink_list_count;
+		int clean_threshold = 100 - nodelink_list_count - cclink_list_count;
 
-		if (clean_treshold <= 0)
-			clean_treshold = 3;
+		if (clean_threshold <= 0)
+			clean_threshold = 3;
 
 		PICA_debug3("refreshing nodelist database");
 
 		if (nodelink_list_count > 0)
 		{
-			PICA_debug3("trying to clean nodes unreachable after more than %i attempts", clean_treshold);
-			PICA_nodeaddr_cleanold(nodecfg.nodes_db_file, clean_treshold);
+			PICA_debug3("trying to clean nodes unreachable after more than %i attempts", clean_threshold);
+			PICA_nodeaddr_cleanold(nodecfg.nodes_db_file, clean_threshold);
 		}
 
 		PICA_node_joinskynet(nodecfg.nodes_db_file, nodecfg.announced_addr);
@@ -3399,7 +3399,7 @@ void process_c2n_write(evutil_socket_t s, short event, void *arg)
 		if (ret == i_ptr->btw_ssl)
 		{
 			if (ret < i_ptr->w_pos)
-				memmove(i_ptr->w_buf, i_ptr->w_buf + ret, i_ptr->w_pos - ret); //may be it's better to implement ring buffer here
+				memmove(i_ptr->w_buf, i_ptr->w_buf + ret, i_ptr->w_pos - ret); //maybe it's better to implement a ring buffer here
 
 			i_ptr->w_pos -= i_ptr->btw_ssl;
 			i_ptr->btw_ssl = 0;
@@ -3562,7 +3562,7 @@ void process_c2c_write(evutil_socket_t s, short event, void *arg)
 			if (ret > 0)
 			{
 				if (ret < cc->bufpos_p1p2)
-					memmove(cc->buf_p1p2, cc->buf_p1p2 + ret, cc->bufpos_p1p2 - ret); //may be it's better to implement ring buffer here
+					memmove(cc->buf_p1p2, cc->buf_p1p2 + ret, cc->bufpos_p1p2 - ret); //maybe it's better to implement a ring buffer here
 				cc->bufpos_p1p2 -= ret;
 
 				if (cc->bufpos_p1p2 == 0 && cc->sck_p1 != -1)
@@ -3634,7 +3634,7 @@ void process_c2c_write(evutil_socket_t s, short event, void *arg)
 			if (ret > 0)
 			{
 				if (ret < cc->bufpos_p2p1)
-					memmove(cc->buf_p2p1, cc->buf_p2p1 + ret, cc->bufpos_p2p1 - ret); //may be it's better to implement ring buffer here
+					memmove(cc->buf_p2p1, cc->buf_p2p1 + ret, cc->bufpos_p2p1 - ret); //maybe it's better to implement a ring buffer here
 				cc->bufpos_p2p1 -= ret;
 
 				if (cc->bufpos_p2p1 == 0 && cc->sck_p2 != -1)
@@ -3699,7 +3699,7 @@ void process_n2n_write(evutil_socket_t s, short event, void *arg)
 		if (ret == nl->btw_ssl)
 		{
 			if (ret < nl->w_pos)
-				memmove(nl->w_buf, nl->w_buf + ret, nl->w_pos - ret); //may be it's better to implement ring buffer here
+				memmove(nl->w_buf, nl->w_buf + ret, nl->w_pos - ret); //maybe it's better to implement a ring buffer here
 			nl->w_pos -= nl->btw_ssl;
 			nl->btw_ssl = 0;
 		}
@@ -3761,7 +3761,7 @@ void process_nodewait()
 				nodewait_start_connect(nw);
 			else
 			{
-				PICA_debug3("skipping node %.255s %u , connection already exist", nw->addr.addr, nw->addr.port);
+				PICA_debug3("skipping node %.255s %u, connection already exists", nw->addr.addr, nw->addr.port);
 				kill_ptr = nw;
 			}
 		}
@@ -4103,7 +4103,7 @@ int pica_node_main(int argc, char** argv)
 
 	if (!PICA_nodeconfig_load(nodecfg.config_file))
 	{
-		PICA_fatal("Unable to load configuration. Please check if config file %s exists and has correct permissions", nodecfg.config_file);
+		PICA_fatal("Unable to load configuration. Please check if the config file %s exists and has the correct permissions", nodecfg.config_file);
 	}
 
 	PICA_debug1("nodecfg.config_file = %s", nodecfg.config_file);
@@ -4160,14 +4160,14 @@ int pica_node_main(int argc, char** argv)
 
 	if (INADDR_NONE == inet_addr(nodecfg.announced_addr) || INADDR_ANY == inet_addr(nodecfg.announced_addr))
 	{
-		PICA_fatal("announced_addr  (%.16s) is invalid or not configured. Please set correct public IP address of your pica-node instance in config file.",
+		PICA_fatal("announced_addr  (%.16s) is invalid or not configured. Please set the correct public IP address of your pica-node instance in the config file.",
 		           nodecfg.announced_addr
 		          );
 	}
 
 	if (nodecfg.disable_reserved_addrs && PICA_is_reserved_addr_ipv4(inet_addr(nodecfg.announced_addr)))
 	{
-		PICA_fatal("announced_addr  (%.16s) is in private range and is unacceptable for global Internet. Private ranges are disabled by node configuration.",
+		PICA_fatal("announced_addr  (%.16s) is in a private range and is unacceptable for the global Internet. Private ranges are disabled by node configuration.",
 		           nodecfg.announced_addr
 		          );
 	}

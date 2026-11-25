@@ -247,8 +247,8 @@ void ChatWindow::msg_delivered()
 {
 	if (undelivered_msgs.isEmpty())
 	{
-		// undelivered_msgs can be empty if new chatwindow instance was created
-		// and undelivered message from previous chat session is delivered
+		// undelivered_msgs can be empty if a new chatwindow instance was created
+		// and an undelivered message from a previous chat session is delivered
 		// after that.
 
 		QByteArray my_id = Accounts::GetCurrentAccount().id;

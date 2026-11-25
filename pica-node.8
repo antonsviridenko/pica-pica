@@ -1,18 +1,18 @@
  
 .TH pica-node 8   
 .SH NAME
-pica-node \- start the node for Pica Pica Messenger distributed network
+pica-node \- start the node for the Pica Pica Messenger distributed network
 .SH SYNOPSIS
 .B pica-node
 [\-f configuration file] [\-v | \-vv | \-vvv] 
 .SH DESCRIPTION
-Pica Pica node serves Pica Pica distributed network. It provides info about other existing n
-odes and online users, routes encrypted connections between users.
+Pica Pica node serves the Pica Pica distributed network. It provides info about other existing
+nodes and online users, and routes encrypted connections between users.
 .PP
 .B pica-node
-listens for TCP connections from clients and other nodes. On startup it loads
+listens for TCP connections from clients and other nodes. On startup it loads the
 nodelist database and tries to connect to each node listed there. At least one
-node should be alive for successful join to Pica Pica distributed network.
+node should be alive to successfully join the Pica Pica distributed network.
 .B
 
 .SH OPTIONS
@@ -36,10 +36,10 @@ Configuration file. See
 for details
 .TP
 .I /var/lib/pica-node/nodelist.db
-Nodelist database. This is SQLite 3 database file.
+Nodelist database. This is an SQLite 3 database file.
 .TP
 .I /usr/share/pica-node/dhparam4096.pem 
-Diffie-Hellman parameters, requred for TLS connections.
+Diffie-Hellman parameters, required for TLS connections.
 .SH AUTHOR
 Anton Sviridenko (anton (at) picapica.im)
 .SH SEE ALSO

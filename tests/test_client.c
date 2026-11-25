@@ -99,7 +99,7 @@ void c2c_established_cb(const unsigned char *peer_id, const char *ciphersuitenam
 	c2c_active = 1;
 	c2c_in_progress = 0;
 	puts("c2c_established_cb");
-	chn = c->chan_list_head;//hack, its better to pass new c2c pointer as callback arg
+	chn = c->chan_list_head;//hack, it's better to pass the new c2c pointer as a callback arg
 }
 
 void c2c_failed_cb(const unsigned char *peer_id)
@@ -165,7 +165,7 @@ int accept_file_cb(const unsigned char  *peer_id, uint64_t  file_size, const cha
 
 	if (ret != PICA_OK)
 	{
-		printf("faild to accept file, errror %i\n", ret);
+		printf("failed to accept file, error %i\n", ret);
 		return 0;
 	}
 
@@ -378,7 +378,7 @@ int main(int argc, char** argv)
 		-r send random test messages and exit, expects other side to be run in echo mode\n\
 		-M multilogin policy, one from \"prohibit\", \"replace\", \"sync\"\n\
 		-u ask the node for the TCP and UDP addresses it sees this client coming from\n\
-cert_filename should point to file that contains client certificate, private key and Diffie-Hellman parameters in PEM format");
+cert_filename should point to a file that contains the client certificate, private key and Diffie-Hellman parameters in PEM format");
 		return 0;
 	}
 

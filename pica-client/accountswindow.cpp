@@ -38,7 +38,7 @@ AccountsWindow::AccountsWindow(QWidget *parent) :
 	cb_accounts = new QComboBox();
 	bt_login = new QPushButton(tr("Log In"));
 	bt_registernew = new QPushButton(tr("Create New Account..."));
-	bt_addimport = new QPushButton(tr("Add (Import) existing account..."));
+	bt_addimport = new QPushButton(tr("Add (Import) Existing Account..."));
 	bt_delete = new QPushButton(tr("Delete Account"));
 
 	{
@@ -185,7 +185,7 @@ void AccountsWindow::CreateAccount(QString CertFilename, QString PkeyFilename, b
 	}
 	else
 	{
-		ShowPicaIdDialog d(name, id, tr("New account is created"));
+		ShowPicaIdDialog d(name, id, tr("A new account has been created"));
 		d.exec();
 	}
 	LoadAccounts();
@@ -221,10 +221,10 @@ void AccountsWindow::delete_click()
 	QByteArray id = (cb_accounts->itemData(cb_accounts->currentIndex())).toByteArray();
 
 	if (QMessageBox::No ==
-	        QMessageBox::question(this, tr("Deleting account"), tr("Are you sure you want to delete account %1 ?").arg(id.toBase64().constData()), QMessageBox::Yes, QMessageBox::No))
+	        QMessageBox::question(this, tr("Deleting account"), tr("Are you sure you want to delete account %1?").arg(id.toBase64().constData()), QMessageBox::Yes, QMessageBox::No))
 		return;
 
-	//TODO ask user if he wants to wipe certificate and private key too
+	//TODO ask the user whether to wipe the certificate and private key too
 
 	accounts.Delete(id);
 

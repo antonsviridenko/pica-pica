@@ -131,7 +131,7 @@ pkg_preinst() {
 
 pkg_postinst() {
 
-	use node && elog "Set the announced_addr value to your IP address in a config file before running the pica-node"
+	use node && elog "Set the announced_addr value to your IP address in a config file before running pica-node"
 }
 
 

@@ -113,7 +113,7 @@
 #define PICA_PROTO_CALL_AUDIO_PACKET 0x76
 #define PICA_PROTO_CALL_VIDEO_PACKET 0x77
 // The only datagram of a call sent outside of DTLS, see "Establishing the
-// media connection" in doc/proto-doc-latest.txt.
+// media connection" in doc/protocol-specification.txt.
 #define PICA_PROTO_MEDIAPROBE 0x78
 
 //size

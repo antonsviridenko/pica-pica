@@ -10,19 +10,19 @@ reads configuration data from
 .I /etc/pica-node.conf 
 (or the 
 file specified with -f on the command line). The file has .INI file format.
-All options must be contained in 
+All options must be contained in the
 .B [pica-node]
 section. The possible options and their meanings are as follows:
 .TP
 .I announced_addr
 Network address that can be used to reach this instance of pica-node. 
-Can be specified in form of DNS name or IP  adress (Right now only IPv4
+Can be specified in the form of a DNS name or an IP address (right now only the IPv4
 address format is supported. IPv6 and domain name support will be added in 
-future releases). If the computer running pica-node is behind the NAT, external 
- public address of NAT machine must be specified and port forwarding must be 
+future releases). If the computer running pica-node is behind the NAT, the external
+ public address of the NAT machine must be specified and port forwarding must be 
  configured. Default value is "autoconfigure" which makes pica-node try to guess
- its external IP address. If pica-node is build with miniupnpc support, it will
- try to employ UPnP protocol to get external IP from the router and enable port
+ its external IP address. If pica-node is built with miniupnpc support, it will
+ try to employ the UPnP protocol to get the external IP from the router and enable port
  forwarding of both the TCP and the UDP port, see listen_port. The forwarding
  is renewed for as long as pica-node runs.
 .TP
@@ -45,12 +45,12 @@ The default is
 .I /var/lib/pica-node/nodelist.db
 .TP
 .I dh_param_file
-Specifies the path to DH parameters file in .pem format. The default is 
+Specifies the path to the DH parameters file in .pem format. The default is 
 .I /usr/share/pica-node/dhparam4096.pem
 .TP
 .I disable_reserved_addrs
 Disables usage of reserved IP ranges (127.0.0.0/8, 10.0.0.0/8, 192.168.0.0/16 and others).
-If such address is received from other node or is set as "announced_addr" value, it will be 
+If such an address is received from another node or is set as the "announced_addr" value, it will be
 rejected. This option can be set to "yes" or "no". Default is "yes".
 .SH AUTHOR
 Anton Sviridenko (anton (at) picapica.im)

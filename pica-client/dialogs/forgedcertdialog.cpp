@@ -27,9 +27,9 @@ ForgedCertDialog::ForgedCertDialog(QByteArray peer_id, QString received_cert, QS
 	QGridLayout *grid = new QGridLayout(this);
 
 	QLabel *scary_text = new QLabel(tr(
-	                                    "Previously stored and currently present certificates for user %1 do not match.\n\
-This means that probably someone is trying to eavesdrop your communication\n\
-using man-in-the-middle attack or impersonate the user.\n\
+	                                    "The previously stored and currently present certificates for user %1 do not match.\n\
+This probably means that someone is trying to eavesdrop on your communication\n\
+using a man-in-the-middle attack or to impersonate the user.\n\
 Connection aborted.").arg(peer_id.toBase64().constData()));
 
 	btOK = new QPushButton(tr("OK"));
