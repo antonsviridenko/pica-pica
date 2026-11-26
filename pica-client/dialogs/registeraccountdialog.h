@@ -22,7 +22,7 @@
 #include <QLineEdit>
 #include <QLabel>
 #include <QCheckBox>
-#include <QRegExpValidator>
+#include <QRegularExpressionValidator>
 #include "../openssllib.h"
 
 class RegisterAccountDialog : public QDialog
@@ -45,7 +45,7 @@ private:
 	QLabel *lbRepeatPassword;
 	QCheckBox *cbUseDevRandom;
 
-	QRegExpValidator *vld;
+	QRegularExpressionValidator *vld;
 	OpenSSLLib ost;
 	QByteArray cert_buf;
 

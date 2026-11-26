@@ -228,7 +228,7 @@ void ChatWindow::print_history(QList<History::HistoryRecord> H)
 				name = r.peer_id.toBase64();
 		}
 
-		dt.setTime_t(r.timestamp);
+		dt.setSecsSinceEpoch(r.timestamp);
 		//put_message(r.message, r.peer_id, r.is_me);
 		draw_message(r.message, name, dt.toString("yyyy-MM-dd hh:mm:ss"), color, r.is_delivered);
 	}
@@ -352,19 +352,19 @@ void TextSend::keyPressEvent(QKeyEvent *e)
 
 void ChatWindow::show_history24h()
 {
-	print_history(hist.GetMessages(peer_id_, QDateTime::currentDateTime().addDays(-1).toTime_t(),
-	                               QDateTime::currentDateTime().toTime_t()));
+	print_history(hist.GetMessages(peer_id_, QDateTime::currentDateTime().addDays(-1).toSecsSinceEpoch(),
+	                               QDateTime::currentDateTime().toSecsSinceEpoch()));
 }
 
 void ChatWindow::show_history1w()
 {
-	print_history(hist.GetMessages(peer_id_, QDateTime::currentDateTime().addDays(-7).toTime_t(),
-	                               QDateTime::currentDateTime().toTime_t()));
+	print_history(hist.GetMessages(peer_id_, QDateTime::currentDateTime().addDays(-7).toSecsSinceEpoch(),
+	                               QDateTime::currentDateTime().toSecsSinceEpoch()));
 }
 
 void ChatWindow::show_historyAll()
 {
-	print_history(hist.GetMessages(peer_id_, 0, QDateTime::currentDateTime().toTime_t()));
+	print_history(hist.GetMessages(peer_id_, 0, QDateTime::currentDateTime().toSecsSinceEpoch()));
 }
 
 void ChatWindow::show_historySearch()

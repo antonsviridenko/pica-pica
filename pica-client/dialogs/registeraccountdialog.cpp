@@ -70,7 +70,7 @@ RegisterAccountDialog::RegisterAccountDialog(QWidget *parent) :
 
 	setLayout(layout);
 
-	vld = new QRegExpValidator(QRegExp("[^\\#\\$&\"\'=\\(\\)\\\\/\\|`!<>\\{\\}\\[\\]\\+]+"), this);
+	vld = new QRegularExpressionValidator(QRegularExpression("[^\\#\\$&\"\'=\\(\\)\\\\/\\|`!<>\\{\\}\\[\\]\\+]+"), this);
 	nickname->setValidator(vld);
 
 	//connect(btOK, SIGNAL(clicked()), this, SLOT(OK()));
@@ -131,7 +131,7 @@ void RegisterAccountDialog::Register()
 {
 	//check name
 	QString name = nickname->text();
-	QString rand = QString::null;
+	QString rand;
 
 	if (name.toUtf8().size() > 63) //64 bytes - CN length in X509 certificate
 	{

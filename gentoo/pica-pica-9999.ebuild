@@ -20,7 +20,7 @@ HOMEPAGE="http://picapica.im/"
 LICENSE="GPL-3"
 SLOT="0"
 
-IUSE="+client node qt4 +qt5 upnp +vaapi pulseaudio X"
+IUSE="+client node upnp +vaapi pulseaudio X"
 
 DEPEND=">=dev-libs/openssl-1.0.2r
 	upnp? ( >=net-libs/miniupnpc-2.0 )
@@ -33,22 +33,10 @@ DEPEND=">=dev-libs/openssl-1.0.2r
 		)
 
 	client? (
-		qt4? (
-			>dev-qt/qtgui-4.0.0
-			>dev-qt/qtcore-4.0.0
-			>dev-qt/qtsql-4.0.0[sqlite]
-		)
-		qt5? (
-			>dev-qt/qtcore-5.10.0
-			>dev-qt/qtwidgets-5.10.0
-			>dev-qt/qtgui-5.10.0
-			>dev-qt/qtnetwork-5.10.0
-			>dev-qt/qtsql-5.10.0[sqlite]
-		)
+		dev-qt/qtbase:6[gui,network,sql,sqlite,widgets]
 		virtual/pkgconfig
 		x11-misc/xdg-utils
 		media-sound/alsa-utils
-		dev-qt/qtchooser
 
 		media-libs/alsa-lib
 		|| (
@@ -56,16 +44,12 @@ DEPEND=">=dev-libs/openssl-1.0.2r
 			media-libs/webrtc-audio-processing:2
 		)
 
-		# audio and video calls: FFmpeg does the capturing, encoding,
-		# decoding and playback. v4l for cameras, alsa for the ALSA
-		# driver, opus for the audio codec and x264 for the video one -
-		# there is no native H.264 encoder to fall back on, so without
-		# it software video encoding is not possible at all.
 		>=media-video/ffmpeg-4.2:=[alsa,opus,v4l,x264,pulseaudio?,vaapi?]
 
 		pulseaudio? ( media-libs/libpulse )
 
 		vaapi? (
+			dev-qt/qtbase:6[opengl]
 			media-libs/libva:=[drm(+),X?]
 			media-libs/libglvnd[X?]
 			X? ( x11-libs/libX11 )
@@ -88,13 +72,6 @@ src_prepare() {
 fi
 
 src_configure() {
-	qtflags="--with-qt=qt5"
-	if use qt5; then
-		qtflags=$(use_with qt5 qt qt5)
-	elif use qt4; then
-		qtflags=$(use_with qt4 qt qt4)
-	fi
-
 	# VAAPI and the PulseAudio device listing are autodetected by
 	# configure, so they have to be asked for explicitly - otherwise the
 	# USE flags would only say what may be linked, not what is. The X11
@@ -104,7 +81,7 @@ src_configure() {
 		vaapiflags="--enable-vaapi $(use_enable X vaapi-x11)"
 	fi
 
-	econf $(use_with upnp miniupnpc)  $(use_enable client) $(use_enable node) $qtflags \
+	econf $(use_with upnp miniupnpc)  $(use_enable client) $(use_enable node) --with-qt=qt6 \
 		${vaapiflags} $(use_enable pulseaudio pulse)
 }
 

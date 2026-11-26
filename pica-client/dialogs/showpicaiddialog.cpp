@@ -33,11 +33,11 @@ ShowPicaIdDialog::ShowPicaIdDialog(QString name, QByteArray id, QString caption,
 	picaid_ ->setText(id.toBase64().constData());
 	picaid_->setReadOnly(true);
 	picaid_->setSelection(0, picaid_->text().size());
-	picaid_->setMinimumWidth(picaid_->fontMetrics().width(picaid_->text()) + 16 + 2 * picaid_->style()->pixelMetric(QStyle::PM_DefaultFrameWidth));
+	picaid_->setMinimumWidth(picaid_->fontMetrics().horizontalAdvance(picaid_->text()) + 16 + 2 * picaid_->style()->pixelMetric(QStyle::PM_DefaultFrameWidth));
 
 	btok_ = new QPushButton(tr("OK"));
 	btok_->setDefault(true);
-	btok_->setMaximumWidth(btok_->fontMetrics().width(btok_->text()) * 3 / 2 + 2 * btok_->style()->pixelMetric(QStyle::PM_ButtonMargin));
+	btok_->setMaximumWidth(btok_->fontMetrics().horizontalAdvance(btok_->text()) * 3 / 2 + 2 * btok_->style()->pixelMetric(QStyle::PM_ButtonMargin));
 
 	layout->addWidget(lbname_);
 	layout->addWidget(picaid_);

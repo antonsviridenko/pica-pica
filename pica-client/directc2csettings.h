@@ -117,7 +117,7 @@ struct DirectC2CSettings
 	{
 		QList<Addr> l;
 
-		foreach (const QString &item, s.split(';', QString::SkipEmptyParts))
+		foreach (const QString &item, s.split(';', Qt::SkipEmptyParts))
 		{
 			Addr a;
 			QString entry = item.trimmed();

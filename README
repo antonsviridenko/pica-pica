@@ -25,8 +25,8 @@ Dependencies:
 SQLite3 library (libsqlite3) and sqlite3 command line client
 
 	2) pica-client - OpenSSL libraries (libssl and libcrypto) >=1.0.1 and openssl command line tool,
-Qt 4 libraries (QtCore, QtGui, QtSql, QtNetwork), Qt4 tools (uic and moc), pkg-config, xdg-utils (for menu 
-item installation)
+Qt 6 libraries (QtCore, QtGui, QtWidgets, QtSql, QtNetwork), Qt 6 tools (uic and moc), pkg-config, xdg-utils (for menu
+item installation). Qt 5 can be used instead by passing --with-qt=qt5 to the configure script
 
 You can disable building of pica-node or pica-client by passing the appropriate option to the configure script:
 	--disable-node

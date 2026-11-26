@@ -18,7 +18,7 @@
 #define MSGUIROUTER_H
 
 #include <QObject>
-#include <QLinkedList>
+#include <QList>
 #include <QMap>
 #include "chatwindow.h"
 #include "skynet.h"
@@ -50,7 +50,7 @@ public slots:
 private:
 	QMap<QByteArray, ChatWindow*> chatwindows;
 	QMap<QByteArray, QString> connstatus;
-	QLinkedList<QByteArray> blinkqueue;
+	QList<QByteArray> blinkqueue;
 
 	void create_chatwindow(QByteArray peer_id);
 

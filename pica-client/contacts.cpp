@@ -145,7 +145,7 @@ QString Contacts::GetContactCert(QByteArray id)
 	lasterr = query.lastError();
 
 	if (lasterr.isValid())
-		return QString::null;
+		return QString();
 
 	query.next();
 
@@ -164,7 +164,7 @@ QString Contacts::GetContactName(QByteArray id)
 	lasterr = query.lastError();
 
 	if (lasterr.isValid())
-		return QString::null;
+		return QString();
 
 	query.next();
 

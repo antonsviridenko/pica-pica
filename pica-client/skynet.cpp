@@ -334,7 +334,7 @@ void SkyNet::nodelink_failed(PICA_c2n *c2n, int error)
 void SkyNet::multilogin_event(quint64 timestamp, QString node_addr, quint16 node_port)
 {
 	emit StatusMsg(QString("%3 Detected a new login to your account at node %1:%2")
-				.arg(node_addr).arg(node_port).arg(QDateTime::fromTime_t(timestamp).toString("yyyy-MM-dd hh:mm:ss")),
+				.arg(node_addr).arg(node_port).arg(QDateTime::fromSecsSinceEpoch(timestamp).toString("yyyy-MM-dd hh:mm:ss")),
 				true);
 
 	if (active_nodelink->multilogin_policy == PICA_MULTILOGIN_REPLACE)
@@ -431,11 +431,13 @@ void SkyNet::reconnect_c2c()
 
 	if (self_aware)
 	{
-		QMap<QByteArray, QList<QString> > queues = msgqueues;
-		queues.unite(sndfilequeues);
 		time_t t = time(NULL);
 
-		QList<QByteArray> c2c_peer_ids = queues.uniqueKeys();
+		QList<QByteArray> c2c_peer_ids = msgqueues.keys();
+
+		foreach (const QByteArray &peer_id, sndfilequeues.keys())
+			if (!msgqueues.contains(peer_id))
+				c2c_peer_ids.append(peer_id);
 
 		c2c_peer_ids = filter_existing_chans(c2c_peer_ids);
 

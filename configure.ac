@@ -32,10 +32,10 @@ AC_ARG_WITH([miniupnpc],
   [with_miniupnpc=yes])
 
 AC_ARG_WITH([qt],
-  [AS_HELP_STRING([--with-qt=qt4|qt5 qt5 is default],
-  [Select Qt version, 4 or 5])],
+  [AS_HELP_STRING([--with-qt=qt4|qt5|qt6 qt6 is default],
+  [Select Qt version, 4, 5 or 6])],
   [qt_version=$withval],
-  [qt_version=qt5])
+  [qt_version=qt6])
 
 AS_IF([test "x$with_miniupnpc" != xno],
   [AC_CHECK_LIB([miniupnpc], [main],
@@ -44,7 +44,20 @@ AS_IF([test "x$with_miniupnpc" != xno],
       [miniupnpc test failed (--without-miniupnpc to disable)])],
   [])])
 
-AS_IF([test "x$qt_version" = xqt5],
+#QT_OPENGL_MODULES is what the VAAPI renderer needs on top of QT_MODULES:
+#Qt 6 moved QOpenGLWidget and QOpenGLShaderProgram out of QtWidgets and QtGui
+#into modules of their own, Qt 5 has them in the ones above already.
+QT_OPENGL_MODULES=
+AS_IF([test "x$qt_version" = xqt6],
+	[
+	QT_MODULES="Qt6Core Qt6Gui Qt6Sql Qt6Network Qt6Widgets"
+	QT_OPENGL_MODULES="Qt6OpenGL Qt6OpenGLWidgets"
+	QT_UIC_NAMES="uic-qt6 uic6 uic"
+	QT_MOC_NAMES="moc-qt6 moc6 moc"
+	CFLAGS="-fPIC $CFLAGS"
+	CXXFLAGS="-fPIC $CXXFLAGS"
+	],
+  [test "x$qt_version" = xqt5],
 	[
 	QT_MODULES="Qt5Core Qt5Gui Qt5Sql Qt5Network Qt5Widgets"
 	QT_UIC_NAMES="uic-qt5 uic5 uic"
@@ -177,8 +190,14 @@ AS_CASE([$host],
 )
 AC_SUBST([QT_DEPENDENCIES_CFLAGS])
 AC_SUBST([QT_DEPENDENCIES_LIBS])
-AC_CHECK_PROGS([UIC], [$QT_UIC_NAMES], [notfound])
-AC_CHECK_PROGS([MOC], [$QT_MOC_NAMES], [notfound])
+#Qt 6 installs moc and uic in its libexec directory, which is not in PATH -
+#a plain "moc" found there is likely Qt 5's, or qtchooser. Look in the
+#directory pkg-config names first.
+QT_TOOL_PATH=$PATH
+AS_IF([test "x$qt_version" = xqt6],
+	[QT_TOOL_PATH=`$PKG_CONFIG --variable=libexecdir Qt6Core`$PATH_SEPARATOR$PATH])
+AC_PATH_PROGS([UIC], [$QT_UIC_NAMES], [notfound], [$QT_TOOL_PATH])
+AC_PATH_PROGS([MOC], [$QT_MOC_NAMES], [notfound], [$QT_TOOL_PATH])
 #fail if not found ...
 AS_IF([test "x$UIC" = xnotfound],[AC_MSG_ERROR(["uic program not found. Please install the Qt development package"])])
 AS_IF([test "x$MOC" = xnotfound],[AC_MSG_ERROR(["moc program not found. Please install the Qt development package"])])
@@ -285,8 +304,10 @@ AS_IF([test "x$enable_pulse" != "xno"], [
 #check for VAAPI libraries, unless explicitly disabled
 #libva is the accelerator itself, libva-drm opens it through a DRM render node,
 #and EGL is what lets a decoded surface be handed to OpenGL without a copy.
+#With Qt 6 the Qt OpenGL modules the renderer is built on are checked here as
+#well, so that their absence turns VAAPI off rather than breaking the build.
 AS_IF([test "x$enable_vaapi" != "xno"], [
-  PKG_CHECK_MODULES([VAAPI], [libva libva-drm egl],
+  PKG_CHECK_MODULES([VAAPI], [libva libva-drm egl $QT_OPENGL_MODULES],
     [
       PICA_VAAPI_ENABLED=yes
       AC_DEFINE([HAVE_VAAPI], [1], [Define to 1 if VAAPI accelerated video is available])
@@ -295,8 +316,8 @@ AS_IF([test "x$enable_vaapi" != "xno"], [
     ],
     [
       AS_IF([test "x$enable_vaapi" = "xyes"],
-        [AC_MSG_ERROR(["VAAPI support was requested but libva, libva-drm or EGL was not found"])],
-        [AC_MSG_WARN(["libva, libva-drm or EGL not found - building without VAAPI acceleration"])])
+        [AC_MSG_ERROR(["VAAPI support was requested but libva, libva-drm, EGL or Qt OpenGL support was not found"])],
+        [AC_MSG_WARN(["libva, libva-drm, EGL or Qt OpenGL support not found - building without VAAPI acceleration"])])
     ])
 ])
 

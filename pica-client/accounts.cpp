@@ -112,7 +112,7 @@ QString Accounts::GetName(QByteArray id)
 	lasterr = query.lastError();
 
 	if (lasterr.isValid())
-		return QString::null;
+		return QString();
 
 	query.next();
 
