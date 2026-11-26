@@ -4,7 +4,7 @@
 
 EAPI=8
 
-inherit autotools desktop git-r3
+inherit autotools desktop git-r3 xdg
 
 if [[ ${PV} == "9999" ]] ; then
     EGIT_REPO_URI="https://github.com/antonsviridenko/pica-pica.git"
@@ -97,6 +97,7 @@ src_install() {
 }
 
 pkg_preinst() {
+	xdg_pkg_preinst
 
 	if use node; then
 		fowners -R pica-node:pica-node "/var/lib/pica-node"
@@ -107,6 +108,7 @@ pkg_preinst() {
 }
 
 pkg_postinst() {
+	xdg_pkg_postinst
 
 	use node && elog "Set the announced_addr value to your IP address in a config file before running pica-node"
 }
