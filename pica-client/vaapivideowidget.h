@@ -62,7 +62,6 @@ signals:
 protected:
 	void initializeGL() override;
 	void paintGL() override;
-	void resizeGL(int w, int h) override;
 
 private:
 	// Builds the two textures for the current frame out of the surface's

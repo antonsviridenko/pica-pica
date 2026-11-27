@@ -178,8 +178,13 @@ bool VaapiX11Widget::putFrame()
 	// Letterbox rather than stretch, matching what the software path does with
 	// Qt::KeepAspectRatio. Everything the picture does not cover keeps the
 	// window's black background.
-	int windowWidth = width();
-	int windowHeight = height();
+	//
+	// vaPutSurface() works in the X window's real pixels, while width() and
+	// height() are in Qt's device-independent ones - the two differ by the
+	// display scale factor, which Qt 6 always applies.
+	const qreal dpr = devicePixelRatioF();
+	int windowWidth = qRound(width() * dpr);
+	int windowHeight = qRound(height() * dpr);
 	int destWidth = windowWidth;
 	int destHeight = (int)((qint64)windowWidth * frameHeight / frameWidth);
 

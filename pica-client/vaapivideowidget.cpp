@@ -334,6 +334,13 @@ bool VaapiVideoWidget::importFrame()
 
 void VaapiVideoWidget::paintGL()
 {
+	// The framebuffer is in real pixels, width() and height() are in Qt's
+	// device-independent ones - the two differ by the display scale factor,
+	// which Qt 6 always applies. Set here rather than in resizeGL() so that
+	// it follows the widget to a screen with a different scale as well.
+	const qreal dpr = devicePixelRatioF();
+	glViewport(0, 0, qRound(width() * dpr), qRound(height() * dpr));
+
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	if (!m_working || !m_program || !m_frame)
@@ -402,11 +409,6 @@ void VaapiVideoWidget::paintGL()
 	// Done with this frame's handles - holding on to them would leak a set of
 	// file descriptors for every frame drawn.
 	releaseImports();
-}
-
-void VaapiVideoWidget::resizeGL(int w, int h)
-{
-	glViewport(0, 0, w, h);
 }
 
 #endif // HAVE_VAAPI
