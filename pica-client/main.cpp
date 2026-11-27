@@ -520,6 +520,7 @@ int main(int argc, char *argv[])
 	// Before Qt opens its X connection, which is the only time Xlib will
 	// listen - see the comment on the function itself.
 	VaapiContext::initX11Threading();
+	VaapiContext::preferEglOnX11();
 #endif
 
 	QApplication a(argc, argv);

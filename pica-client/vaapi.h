@@ -81,6 +81,12 @@ public:
 	// X11 rendering support.
 	static void initX11Threading();
 
+	// Asks Qt for EGL rather than GLX OpenGL contexts in an X11 session, so
+	// that decoded surfaces can be drawn as EGL images instead of through
+	// vaPutSurface(). Has to run before QApplication is constructed. A choice
+	// the user made through QT_XCB_GL_INTEGRATION is left alone.
+	static void preferEglOnX11();
+
 	// Works out whether this session needs the X11 drawing path - that is,
 	// whether Qt's OpenGL contexts come from GLX, leaving no way to import a
 	// surface as an EGL image - and if so remembers Qt's X connection to open

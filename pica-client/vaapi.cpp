@@ -150,6 +150,29 @@ namespace
 			return nullptr;
 		}
 
+		// Mesa's VA drivers (radeonsi, r600, nouveau and the other Gallium ones)
+		// cannot be drawn with across more than one window. They keep what
+		// vaPutSurface() presents with per display, for one window at a time,
+		// and drawing on another window throws away the X server's
+		// confirmation that the old window's last frame was shown - so the
+		// first frame on the new window waits for it forever, holding the
+		// driver lock and freezing the GUI thread and the decoder along with
+		// it. Every call opens a new window while this display lives for the
+		// whole process, which makes it the second window that hangs. Seen with
+		// Mesa 26.1, in dri3_set_drawable() in vl_winsys_dri3.c.
+		//
+		// Leave such drivers to a DRM render node, as if this session had no
+		// X11 path: drawn as EGL images when Qt is on EGL, which
+		// preferEglOnX11() asks for, and in software when it is not.
+		const QByteArray vendor(vaQueryVendorString(va_display));
+
+		if (vendor.startsWith("Mesa Gallium"))
+		{
+			qDebug() << "VAAPI: not drawing with vaPutSurface(), it deadlocks with" << vendor;
+			vaTerminate(va_display);
+			return nullptr;
+		}
+
 		AVBufferRef *ref = wrapVaDisplay(va_display);
 
 		if (!ref)
@@ -268,6 +291,22 @@ void VaapiContext::initX11Threading()
 	// an X11 one at all.
 	XInitThreads();
 #endif
+}
+
+void VaapiContext::preferEglOnX11()
+{
+	// Qt makes GLX contexts in an X11 session unless told otherwise, and with
+	// GLX the only way to get a decoded surface on screen is vaPutSurface() -
+	// which Mesa's VA drivers deadlock in, see createX11Device(). With EGL the
+	// surface is imported as an EGL image instead, and that works with every
+	// driver.
+	//
+	// The variable only moves xcb_egl to the front of the list Qt tries, so if
+	// EGL cannot be initialised Qt still falls back to GLX, and the video to
+	// the X11 path or to software. Read only by the xcb platform plugin, so
+	// harmless in a Wayland session or on another platform.
+	if (!qEnvironmentVariableIsSet("QT_XCB_GL_INTEGRATION"))
+		qputenv("QT_XCB_GL_INTEGRATION", "xcb_egl");
 }
 
 void VaapiContext::detectX11Display()
